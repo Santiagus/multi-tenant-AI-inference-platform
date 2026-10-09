@@ -25,7 +25,7 @@ Commit (`<type>(mXX): …`, see `.gitmessage`) before starting the next mileston
 
 | ID | Milestone | Primary outcome | Status |
 |---|---|---|---|
-| M00 | GitHub Foundation | Monorepo layout, local CI and security gate | todo |
+| M00 | GitHub Foundation | Monorepo layout, local CI and security gate | done |
 | M01 | Architecture | Target architecture, boundaries, ADRs, contracts | todo |
 | M02 | Local Platform Skeleton | Compose, API, DB, storage, queue abstractions | todo |
 | M03 | Async Inference | Job lifecycle, retries, idempotency, DLQ | todo |
