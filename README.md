@@ -122,16 +122,40 @@ This project is built using disciplined agentic pair-programming governed by:
 
 ## Getting Started
 
-*(Milestone M00 is currently in progress. Run prerequisites and local gates will be populated upon M00 completion.)*
+### Prerequisites
 
-### Pre-commit Secret Scanning
-This repository uses [Gitleaks](https://github.com/gitleaks/gitleaks) to prevent accidental credential commits.
+- **Make**: Standard build automation tool
+- **Python 3.11+**: Base runtime for validation scripts and tests
+- **Gitleaks**: Fast credential detection tool ([Installation guide](https://github.com/gitleaks/gitleaks))
+
+### Local Validation Gate
+
+Run the full local CI gate before submitting pull requests or committing code:
+
 ```bash
-# Verify Gitleaks is installed
+# Run all checks: formatting, linting, types, unit tests, secrets/PII, and milestone handoff
+make ci
+```
+
+Individual validation targets:
+```bash
+make format-check    # Check line endings, trailing whitespace, and EOF newlines
+make lint            # Check Python and JSON syntax compilation
+make typecheck       # Validate type annotations
+make test            # Run automated test suites
+make scan            # Run Gitleaks and PII pattern scanning
+make handoff-check   # Validate milestone protocol compliance (.agents/README.md)
+```
+
+### Pre-Commit Secret Scanning
+
+This repository strictly enforces secret prevention:
+```bash
+# Verify Gitleaks installation
 gitleaks version
 
-# Run manual scan
-gitleaks detect --verbose
+# Run standalone detection against repository
+gitleaks detect --source=. --config=.gitleaks.toml --no-git --verbose
 ```
 
 ---

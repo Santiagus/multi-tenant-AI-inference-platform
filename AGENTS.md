@@ -67,7 +67,7 @@ Before declaring work done or proposing a commit: format → lint → typecheck 
 Tests verify behavior: unit for domain logic, integration at component boundaries, contract tests for providers, security tests for tenant isolation, load/failure/benchmark tests for capacity and performance claims.
 
 Commit only when the user or the milestone explicitly authorizes it. Never push unless asked.
-One milestone = one commit (or a short series) in Conventional Commits format with the milestone as scope, e.g. `feat(m03): async job lifecycle`. Follow `.gitmessage`.
+Commits must be atomic, self-contained, and focused on related changes. Prefer a short series of reduced file updates over monolithic commits. Use Conventional Commits format with the milestone as scope and concise single-line messages, e.g. `feat(m03): async job lifecycle`. Follow `.gitmessage`.
 
 ## Milestone protocol
 
