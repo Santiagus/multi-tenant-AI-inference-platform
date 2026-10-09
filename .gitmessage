@@ -1,0 +1,20 @@
+
+# <type>(<scope>)[!]: <subject>
+#   subject: ≤50 chars, imperative ("add", not "added"), no trailing period
+#
+# <body>: wrap at 72; explain WHY and trade-offs, not how
+#
+# <trailers>: after a blank line, one "Key: value" per line
+# ---------------------------------------------------------------------
+# Types:  feat · fix · perf · refactor · test · docs · build · ci
+#         chore · style (formatting only) · revert
+# Scope:  milestone for milestone commits (m03), else component
+#         (api, worker, inference, infra, dashboard)
+# Break:  feat(api)!: …   and/or footer   BREAKING CHANGE: <impact + migration>
+# Spec:   https://www.conventionalcommits.org/en/v1.0.0/
+#
+# Trailers:
+#   Closes #123                      (GitHub auto-closes the issue on merge)
+#   Refs: #123, ADR-0007
+#   Co-authored-by: Name <email>
+#   Signed-off-by: …                 (use `git commit -s`, don't type it)

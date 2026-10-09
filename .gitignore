@@ -1,0 +1,6 @@
+# Editor / agent tool state (extended in M00)
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
