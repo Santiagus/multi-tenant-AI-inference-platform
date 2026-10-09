@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+
+# Ensure ~/.local/bin is in PATH for pre-commit runs (e.g. gitleaks, mypy)
+if [ -d "$HOME/.local/bin" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+echo "🔍 Running pre-commit validation gate (make ci)..."
+make ci
+
