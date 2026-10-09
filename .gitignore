@@ -1,8 +1,65 @@
-# Editor / agent tool state (extended in M00)
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.cert
+*.crt
+id_rsa*
+
+# Editors & IDEs
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
 .idea/
-.env
-.env.*
-!.env.example
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.tfstate.lock.info
+
+# Test & benchmark outputs
+/coverage/
+/test-results/
+*.log
+
+# Caches and scratch
+.cache/
+tmp/
