@@ -10,5 +10,6 @@ description: Monorepo structure, Git hygiene and local development workflow.
 - Use deterministic tooling.
 - Inspect diffs before commit; never commit secrets/PII.
 - Prefer small changes; create atomic, self-contained commits covering related changes.
+- Propose commits as ready-to-run, copy-pasteable `git add` and `git commit` commands with single-line messages.
 
 Verification includes the repository's local CI command.
