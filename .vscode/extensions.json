@@ -1,0 +1,23 @@
+{
+  "recommendations": [
+    "google.google-antigravity",
+    "antigravity.antigravity-token-telemetry",
+    "humao.rest-client",
+    "charliermarsh.ruff",
+    "ms-azuretools.vscode-containers",
+    "ms-azuretools.vscode-docker",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "ms-python.vscode-python-envs",
+    "ms-python.mypy-type-checker",
+    "tamasfe.even-better-toml",
+    "dbaeumer.vscode-eslint",
+    "hashicorp.terraform",
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+    "redhat.vscode-yaml",
+    "42crunch.vscode-openapi",
+    "cweijan.vscode-database-client2"
+  ]
+}
+

@@ -1,5 +1,7 @@
 # Editor / agent tool state (extended in M00)
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
 .env
 .env.*

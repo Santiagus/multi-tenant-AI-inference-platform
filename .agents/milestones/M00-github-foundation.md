@@ -10,14 +10,14 @@ Create a clean, secure public repository with a local validation gate.
 
 - monorepo skeleton;
 - README placeholder;
-- `.gitignore` (extend the existing one), `.editorconfig`;
+- `.gitignore` (extend the existing one, preserving `.vscode/extensions.json` while ignoring editor telemetry and runtime state), `.editorconfig`;
 - local CI command (Makefile or task runner) with format/lint/type/test structure;
 - secret and PII scanning;
 - handoff check in the local CI command: fails if a milestone marked `done` in `.agents/README.md` still has `_Pending._`, a `## Progress` section, or an `## Outcome` over 10 lines; fails if an `in-progress` milestone has no `## Progress`;
 - GitHub Actions CI;
 - dependency update configuration where justified;
 - CODEOWNERS if useful;
-- contribution and security guidance (`CONTRIBUTING.md`, `SECURITY.md`).
+- contribution and security guidance (`CONTRIBUTING.md` including a "Development Environment / Editor Setup" subsection referencing `.vscode/extensions.json`, `SECURITY.md`).
 
 ## Repository direction
 
