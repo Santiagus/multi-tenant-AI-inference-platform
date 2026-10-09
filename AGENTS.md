@@ -68,6 +68,7 @@ Tests verify behavior: unit for domain logic, integration at component boundarie
 
 Commit only when the user or the milestone explicitly authorizes it. Never push unless asked.
 Commits must be atomic, self-contained, and focused on related changes. Prefer a short series of reduced file updates over monolithic commits. Use Conventional Commits format with the milestone as scope and concise single-line messages, e.g. `feat(m03): async job lifecycle`. Follow `.gitmessage`.
+Always propose commits as explicit `git add` and `git commit` commands that the user can copy and paste directly into the terminal.
 
 ## Milestone protocol
 
@@ -85,6 +86,6 @@ Commits must be atomic, self-contained, and focused on related changes. Prefer a
 1. Report: implemented · checks run · evidence produced · known limitations · deferred items.
 2. Delete `## Progress`. Replace `## Outcome` with ≤10 lines: entry points/commands, deviations from the spec, stubs left for later milestones, links to new ADRs. Do not restate ADR content.
 3. Set status to `done` in `.agents/README.md`.
-4. Run the local CI command (it includes the handoff check), then propose the `<type>(mXX): …` commit.
+4. Run the local CI command (it includes the handoff check), then propose the atomic commit series as copy-pasteable `git add` and `git commit` commands with single-line messages.
 
 **Blocked** — record the blocker as an unticked `## Progress` item, then report what is blocked, why, what was attempted and the smallest input needed.
