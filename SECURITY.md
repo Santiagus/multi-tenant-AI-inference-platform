@@ -6,8 +6,9 @@ We take the security and integrity of this platform seriously. If you discover a
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, please send an encrypted or direct email report to:
-- **Security Contact**: `security@example.com` *(or configure via repository GitHub Security Advisories)*
+Instead, please report vulnerabilities privately via:
+- **GitHub Security Advisories (Preferred)**: [Open a Private Advisory](https://github.com/Santiagus/multi-tenant-AI-inference-platform/security/advisories/new)
+- **Direct Email Contact**: `santiagoabad@gmail.com`
 
 Please include:
 1. Description of the vulnerability and its potential impact.
