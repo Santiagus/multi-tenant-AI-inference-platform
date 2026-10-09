@@ -70,6 +70,18 @@ Individual checks can be run on demand:
 - `make test`: Execute automated test suites.
 - `make scan`: Execute secret and sensitive data scanning (Gitleaks + PII scan).
 - `make handoff-check`: Verify milestone handoff protocol integrity.
+- `make validate-mermaid`: Validate syntax and theme directives of Mermaid diagrams in Markdown docs.
+
+---
+
+## Documentation & Architecture Diagrams (Mermaid)
+
+When creating or modifying architectural and workflow diagrams in documentation:
+- **Engine**: Use GitHub-native fenced ```` ```mermaid ```` blocks.
+- **Theme Directive**: Always specify `%%{init: {'theme': 'dark'}}%%` on the very first line of each diagram block to ensure consistent contrast and readability across dark and light GitHub themes.
+- **Supported Types**: Flowcharts (`graph TD` / `flowchart TD`), sequence diagrams (`sequenceDiagram`), state diagrams (`stateDiagram-v2`), and class diagrams (`classDiagram`).
+- **Arrow Syntax**: Flowchart connections must use valid Mermaid arrow syntax (`-->`, `-.->`, `==>`), never single dashes (`->`).
+- **Automated Validation**: Run `make validate-mermaid` (or `make lint`) to verify syntax and formatting before committing.
 
 ---
 
