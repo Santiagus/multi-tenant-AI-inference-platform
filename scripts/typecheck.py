@@ -7,6 +7,7 @@ Delegates to mypy and tsc when installed; otherwise validates AST type annotatio
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,12 +42,23 @@ def check_ast_type_annotations(repo_root: Path) -> list[str]:
     return issues
 
 
+def find_mypy_binary() -> str | None:
+    """Find mypy executable in PATH or ~/.local/bin."""
+    found = shutil.which("mypy")
+    if found:
+        return found
+    user_bin = Path.home() / ".local" / "bin" / "mypy"
+    if user_bin.is_file() and os.access(user_bin, os.X_OK):
+        return str(user_bin)
+    return None
+
+
 def run_mypy(repo_root: Path) -> list[str]:
     """Run mypy if available."""
     issues: list[str] = []
-    mypy = shutil.which("mypy")
+    mypy = find_mypy_binary()
     if mypy:
-        print("Running mypy...")
+        print(f"Running mypy ({mypy})...")
         res = subprocess.run([mypy, "scripts", "tests"], cwd=repo_root)
         if res.returncode != 0:
             issues.append("Mypy type checking reported violations.")

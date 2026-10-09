@@ -145,6 +145,7 @@ make typecheck       # Validate type annotations
 make test            # Run automated test suites
 make scan            # Run Gitleaks and PII pattern scanning
 make handoff-check   # Validate milestone protocol compliance (.agents/README.md)
+make install-hooks   # Configure local Git repository to run pre-commit hook
 ```
 
 ### Pre-Commit Secret Scanning

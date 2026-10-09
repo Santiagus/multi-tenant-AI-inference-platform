@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: all help format-check lint typecheck test scan handoff-check ci
+.PHONY: all help format-check lint typecheck test scan handoff-check ci install-hooks
 
 all: ci
 
@@ -14,6 +14,7 @@ help:
 	@echo "  make test           - Run automated test suite"
 	@echo "  make scan           - Run Gitleaks secret and PII pattern scanning"
 	@echo "  make handoff-check  - Validate milestone handoff protocol integrity"
+	@echo "  make install-hooks  - Configure local Git repository to run pre-commit hook"
 
 format-check:
 	@echo "==> Running format check..."
@@ -44,4 +45,10 @@ ci: format-check lint typecheck test scan handoff-check
 	@echo "=========================================="
 	@echo "  Local CI validation gate PASSED (All OK)"
 	@echo "=========================================="
+
+install-hooks:
+	@echo "==> Configuring Git core.hooksPath to .githooks..."
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/pre-commit
+	@echo "Git pre-commit hook installed successfully."
 
