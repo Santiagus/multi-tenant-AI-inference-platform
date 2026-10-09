@@ -1,0 +1,14 @@
+# Gitleaks configuration for Multi-Tenant AI Inference Platform
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+  '''^\.git/''',
+  '''^\.vscode/''',
+  '''^\.terraform/''',
+]
+
