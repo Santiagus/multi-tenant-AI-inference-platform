@@ -2,8 +2,15 @@
 
 A production-oriented reference platform demonstrating the complete lifecycle of asynchronous, multi-tenant AI inference workloads:
 
-```text
-API → AuthN / AuthZ → Async Queue → Policy Routing → Inference Workers → Artifact Store → Telemetry & Cost Accounting
+```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'darkMode': true }}}%%
+flowchart LR
+    API["API"] --> AUTH["AuthN / AuthZ"]
+    AUTH --> QUEUE["Async Queue"]
+    QUEUE --> ROUTE["Policy Routing"]
+    ROUTE --> WORKERS["Inference Workers"]
+    WORKERS --> ARTIFACTS["Artifact Store"]
+    ARTIFACTS --> TELEMETRY["Telemetry & Cost Accounting"]
 ```
 
 Engineered for architectural coherence, measurable performance, strict tenant boundary enforcement, and reproducible local/cloud deployment.
@@ -12,35 +19,24 @@ Engineered for architectural coherence, measurable performance, strict tenant bo
 
 ## Architecture Overview
 
-```text
-                                 ┌─────────────────────────┐
-                                 │ React Product Dashboard │
-                                 └────────────┬────────────┘
-                                              │
-                                              ▼
-                                 ┌─────────────────────────┐
-                                 │   Fastify Control Plane │
-                                 │  (AuthN/Z, Jobs, Cost)  │
-                                 └────────────┬────────────┘
-                                              │
-                      ┌───────────────────────┴───────────────────────┐
-                      ▼                                               ▼
-         ┌─────────────────────────┐                     ┌─────────────────────────┐
-         │ PostgreSQL (Job State)  │                     │  SQS / Event Queue Bus  │
-         └─────────────────────────┘                     └────────────┬────────────┘
-                                                                      │
-                                                ┌─────────────────────┴─────────────────────┐
-                                                ▼                                           ▼
-                                    ┌───────────────────────┐                   ┌───────────────────────┐
-                                    │ Local Workers (PyTorch)│                   │ External Cloud Router │
-                                    │  (RTX 5070 Ti / CPU)  │                   │ (RunPod, Bedrock, …)  │
-                                    └───────────┬───────────┘                   └───────────┬───────────┘
-                                                │                                           │
-                                                └─────────────────────┬─────────────────────┘
-                                                                      ▼
-                                                        ┌───────────────────────────┐
-                                                        │ S3-Compatible Artifacts   │
-                                                        └───────────────────────────┘
+```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'darkMode': true }}}%%
+flowchart TD
+    DASH["React Product Dashboard"]
+    API["Fastify Control Plane<br/>(AuthN/Z, Jobs, Cost)"]
+    DB[("PostgreSQL<br/>(Job State)")]
+    QUEUE["SQS / Event Queue Bus"]
+    LOCAL["Local Workers (PyTorch)<br/>(RTX 5070 Ti / CPU)"]
+    CLOUD["External Cloud Router<br/>(RunPod, Bedrock, …)"]
+    S3[("S3-Compatible Artifacts")]
+
+    DASH --> API
+    API --> DB
+    API --> QUEUE
+    QUEUE --> LOCAL
+    QUEUE --> CLOUD
+    LOCAL --> S3
+    CLOUD --> S3
 ```
 
 ### Core Tenets

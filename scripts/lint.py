@@ -15,6 +15,12 @@ import shutil
 import subprocess
 import sys
 
+try:
+    from scripts.validate_mermaid import validate_mermaid_in_repo
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.validate_mermaid import validate_mermaid_in_repo
+
 IGNORE_DIRS = {
     ".git",
     ".vscode",
@@ -85,6 +91,11 @@ def main() -> None:
 
     print("Checking JSON file syntax...")
     issues.extend(check_json_files(repo_root))
+
+    print("Checking Mermaid diagrams...")
+    mermaid_blocks, mermaid_issues = validate_mermaid_in_repo(repo_root)
+    print(f"Validated {mermaid_blocks} Mermaid diagram block(s)...")
+    issues.extend(mermaid_issues)
 
     issues.extend(run_external_linters(repo_root))
 
