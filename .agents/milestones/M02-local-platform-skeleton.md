@@ -28,4 +28,11 @@ Real GPU inference, Kubernetes, AWS, RAG, provider routing.
 
 ## Outcome
 
-_Pending._
+- Entry points: `docker compose up -d`, `apps/api` (`pnpm test`), `POST /v1/jobs`, `GET /v1/jobs/:id`, `GET /healthz`, `GET /readyz`.
+- Control plane API: Fastify server in `apps/api` with Zod validation, RFC 7807 problem details, and tenant context propagation.
+- Storage & Queue abstractions: `IStorageClient` (MinIO/S3 + in-memory) and `IQueueClient` (ElasticMQ/SQS + in-memory).
+- State & Persistence: PostgreSQL 16 migration (`001_initial_schema.sql`), connection pool, and tenant-scoped `PostgresJobRepository`.
+- Lifecycle & Idempotency: Monotonic state machine (`QUEUED` -> `PROCESSING` -> `SUCCEEDED`/`FAILED`/`CANCELLED`) and deduplication.
+- Verification: 26 Python unit tests, 28 TypeScript unit/integration tests, live Compose stack verified via `make ci`.
+- Deviations: none.
+- Stubs left: background inference worker daemon consuming queue in M03.
