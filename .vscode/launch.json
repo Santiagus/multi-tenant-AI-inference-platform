@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Fastify API (Local)",
+      "cwd": "${workspaceFolder}/apps/api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "args": ["src/server.ts"],
+      "env": {
+        "NODE_ENV": "development",
+        "PORT": "3000",
+        "LOG_LEVEL": "debug"
+      },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug API Current Test File",
+      "cwd": "${workspaceFolder}/apps/api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx", "--test"],
+      "args": ["${file}"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug API Tests (All)",
+      "cwd": "${workspaceFolder}/apps/api",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx", "--test"],
+      "args": ["tests/unit/*.test.ts", "tests/integration/*.test.ts"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Debug Python Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "-m",
+      "args": ["unittest", "discover", "-s", "tests"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}
+
