@@ -36,6 +36,7 @@ typecheck:
 test:
 	@echo "==> Running tests..."
 	@$(PYTHON) -m unittest discover -s tests
+	@if [ -f package.json ]; then export PATH="$$HOME/.local/bin:$$PATH"; pnpm test; fi
 
 scan:
 	@echo "==> Running secret & PII scan..."

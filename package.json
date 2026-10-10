@@ -1,0 +1,12 @@
+{
+  "name": "multi-tenant-ai-inference-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.10.1",
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "test": "pnpm --recursive run test",
+    "typecheck": "pnpm --recursive run typecheck",
+    "lint": "pnpm --recursive run lint"
+  }
+}
