@@ -65,6 +65,33 @@ def run_mypy(repo_root: Path) -> list[str]:
     return issues
 
 
+def find_pnpm_binary() -> str | None:
+    """Find pnpm executable in PATH or ~/.local/bin."""
+    found = shutil.which("pnpm")
+    if found:
+        return found
+    user_bin = Path.home() / ".local" / "bin" / "pnpm"
+    if user_bin.is_file() and os.access(user_bin, os.X_OK):
+        return str(user_bin)
+    return None
+
+
+def run_tsc(repo_root: Path) -> list[str]:
+    """Run TypeScript compiler check across workspace projects."""
+    issues: list[str] = []
+    pnpm = find_pnpm_binary()
+    if pnpm and (repo_root / "package.json").is_file():
+        print(f"Running TypeScript typecheck ({pnpm} typecheck)...")
+        env = os.environ.copy()
+        user_bin_dir = str(Path.home() / ".local" / "bin")
+        if user_bin_dir not in env.get("PATH", ""):
+            env["PATH"] = f"{user_bin_dir}:{env.get('PATH', '')}"
+        res = subprocess.run([pnpm, "typecheck"], cwd=repo_root, env=env)
+        if res.returncode != 0:
+            issues.append("TypeScript type checking reported violations.")
+    return issues
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     issues: list[str] = []
@@ -73,6 +100,7 @@ def main() -> None:
     issues.extend(check_ast_type_annotations(repo_root))
 
     issues.extend(run_mypy(repo_root))
+    issues.extend(run_tsc(repo_root))
 
     if issues:
         print(f"\nTypecheck FAILED ({len(issues)} issues found):", file=sys.stderr)
