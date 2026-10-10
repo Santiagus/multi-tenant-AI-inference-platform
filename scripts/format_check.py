@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,17 @@ def check_file_formatting(path: Path) -> list[str]:
             if line.rstrip(b"\r") != line.rstrip():
                 # Line has trailing whitespace
                 issues.append(f"{path}:{idx}: Trailing whitespace detected")
+
+    # Check for machine-specific absolute user paths
+    if path.name != "format_check.py":
+        try:
+            text = raw_bytes.decode("utf-8")
+            abs_pattern = re.compile(r"(?:file://)?/(?:home|Users)/[a-zA-Z0-9_-]+")
+            for line_no, text_line in enumerate(text.splitlines(), start=1):
+                if abs_pattern.search(text_line):
+                    issues.append(f"{path}:{line_no}: Machine-specific absolute path detected (use repo-relative paths)")
+        except UnicodeDecodeError:
+            pass
 
     return issues
 
