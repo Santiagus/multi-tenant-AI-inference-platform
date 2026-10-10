@@ -121,8 +121,40 @@ This project is built using disciplined agentic pair-programming governed by:
 ### Prerequisites
 
 - **Make**: Standard build automation tool
+- **Node.js 22+ & pnpm 12+**: Fastify control plane API runtime and workspace package manager
 - **Python 3.11+**: Base runtime for validation scripts and tests
+- **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ)
 - **Gitleaks**: Fast credential detection tool ([Installation guide](https://github.com/gitleaks/gitleaks))
+
+### First Steps & Local Development
+
+1. **Install workspace dependencies**:
+   ```bash
+   pnpm install
+   pnpm build
+   ```
+
+2. **Option A: Start full platform via Docker Compose**:
+   ```bash
+   # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), and Fastify API in Docker
+   docker compose up -d
+
+   # Verify all services are healthy
+   docker compose ps
+   ```
+
+3. **Option B: Local development loop (API on host with hot-reload)**:
+   ```bash
+   # Start only backing infrastructure
+   docker compose up -d postgres minio elasticmq
+
+   # Start Fastify API with hot-reload
+   cd apps/api
+   pnpm dev
+   ```
+
+4. **Execute end-to-end workload cycles**:
+   Open [`request.rest`](request.rest) in VS Code with the REST Client extension (`humao.rest-client`) to execute sequential Use Case Cycles (health checks, job submission, idempotency, lifecycle simulation, and cancellation).
 
 ### Local Validation Gate
 
