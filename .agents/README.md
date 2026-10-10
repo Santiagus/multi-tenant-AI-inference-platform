@@ -26,7 +26,7 @@ Commit (`<type>(mXX): …`, see `.gitmessage`) before starting the next mileston
 | ID | Milestone | Primary outcome | Status |
 |---|---|---|---|
 | M00 | GitHub Foundation | Monorepo layout, local CI and security gate | done |
-| M01 | Architecture | Target architecture, boundaries, ADRs, contracts | todo |
+| M01 | Architecture | Target architecture, boundaries, ADRs, contracts | done |
 | M02 | Local Platform Skeleton | Compose, API, DB, storage, queue abstractions | todo |
 | M03 | Async Inference | Job lifecycle, retries, idempotency, DLQ | todo |
 | M04 | GPU Inference | PyTorch worker, benchmark, GPU telemetry | todo |

@@ -45,4 +45,11 @@ Production services. This milestone produces architecture and contracts only.
 
 ## Outcome
 
-_Pending._
+- Architecture entry point: `docs/architecture/overview.md` (system context, containers, principles).
+- Topology & boundaries: `docs/architecture/deployment-topology.md`, `local-cloud-boundary.md`.
+- Contracts & data: `docs/architecture/data-ownership.md`, `job-lifecycle-contract.md`, `provider-abstraction.md`.
+- Security & telemetry: `docs/architecture/tenancy-security.md`, `observability.md`.
+- ADR suite: `docs/adr/README.md` (ADR-0001 through ADR-0010 covering stack and scaling).
+- Verification: `make ci` (validates all Mermaid diagrams, syntax, types, and protocol handoff).
+- Deviations: none.
+- Stubs left: contract schemas and provider ports ready for M02 implementation.
