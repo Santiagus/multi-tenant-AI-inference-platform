@@ -1,0 +1,223 @@
+### ==============================================================================
+### Multi-Tenant AI Inference Platform - REST API Scratchpad
+### Extension: humao.rest-client (VS Code)
+###
+### INSTRUCTIONS:
+### Each section below is an end-to-end USE CASE CYCLE.
+### You can run each request in a cycle top-to-bottom sequentially.
+### ==============================================================================
+
+@baseUrl = http://localhost:3000
+@tenantId = tenant-default
+@apiKey = dev-secret-key
+
+### ==============================================================================
+### USE CASE 1: Platform Health & Dependency Verification
+### Verify that Fastify API, PostgreSQL, MinIO (S3), and ElasticMQ (SQS) are ready
+### ==============================================================================
+
+# 1.1 Liveness Probe
+GET {{baseUrl}}/healthz
+
+###
+
+# 1.2 Readiness Probe (verifies PostgreSQL, MinIO, and ElasticMQ connectivity)
+GET {{baseUrl}}/readyz
+
+
+### ==============================================================================
+### USE CASE 2: Full Workload Lifecycle (Happy Path)
+### Submit -> Queue -> Processing -> Inference Success -> Fetch Artifacts
+### ==============================================================================
+
+# 2.1 Submit Asynchronous Job
+# @name submitHappyJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "input": {
+    "prompt": "Explain Raft consensus protocol in distributed databases.",
+    "parameters": {
+      "temperature": 0.7,
+      "max_new_tokens": 256
+    }
+  }
+}
+
+### Auto-captured Job ID from 2.1
+@happyJobId = {{submitHappyJob.response.body.job_id}}
+
+###
+
+# 2.2 Inspect Queued Job State
+GET {{baseUrl}}/v1/jobs/{{happyJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 2.3 Worker Leases Job & Begins Execution (Transitions to PROCESSING)
+POST {{baseUrl}}/v1/jobs/{{happyJobId}}/transition
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "status": "PROCESSING",
+  "provider": "local_pytorch"
+}
+
+###
+
+# 2.4 Worker Finishes Inference & Persists Results (Transitions to SUCCEEDED)
+POST {{baseUrl}}/v1/jobs/{{happyJobId}}/transition
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "status": "SUCCEEDED",
+  "provider": "local_pytorch",
+  "output": {
+    "output_text": "Raft is a consensus algorithm designed as an alternative to Multi-Paxos, optimizing for understandability through leader election, log replication, and safety guarantees.",
+    "finish_reason": "stop"
+  },
+  "output_uri": "s3://platform-artifacts/tenants/{{tenantId}}/outputs/{{happyJobId}}/result.json",
+  "duration_ms": 1340,
+  "tokens_in": 14,
+  "tokens_out": 42,
+  "cost_microcents": 210
+}
+
+###
+
+# 2.5 Query Completed Job (Returns output, token usage, and presigned S3 download URL)
+GET {{baseUrl}}/v1/jobs/{{happyJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
+### ==============================================================================
+### USE CASE 3: Idempotency & Safe Deduplication
+### Demonstrates duplicate prevention using the Idempotency-Key header
+### ==============================================================================
+
+# 3.1 Initial Job Submission with Idempotency Key (Returns 202 Accepted)
+# @name submitIdempotentJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+Idempotency-Key: payment-audit-dedup-run-001
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "input": {
+    "prompt": "Analyze transaction batch 1024 for anomaly indicators."
+  }
+}
+
+### Auto-captured Job ID from 3.1
+@idempJobId = {{submitIdempotentJob.response.body.job_id}}
+
+###
+
+# 3.2 Replay identical request with same Idempotency Key (Returns 200 OK with same job_id)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+Idempotency-Key: payment-audit-dedup-run-001
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "input": {
+    "prompt": "Analyze transaction batch 1024 for anomaly indicators."
+  }
+}
+
+###
+
+# 3.3 Confirm single persisted job state
+GET {{baseUrl}}/v1/jobs/{{idempJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
+### ==============================================================================
+### USE CASE 4: Job Cancellation & Terminal State Guard
+### Demonstrates cancellation flow and conflict prevention on terminal states
+### ==============================================================================
+
+# 4.1 Submit New Job To Cancel
+# @name submitJobToCancel
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 1,
+  "input": {
+    "prompt": "Generate a high-resource batch summary."
+  }
+}
+
+### Auto-captured Job ID from 4.1
+@cancelJobId = {{submitJobToCancel.response.body.job_id}}
+
+###
+
+# 4.2 Client Cancels Job (Returns 200 OK, status CANCELLED)
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 4.3 Inspect Cancelled Job
+GET {{baseUrl}}/v1/jobs/{{cancelJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 4.4 Conflict Test: Attempt to cancel an already terminal job (Returns 409 Conflict)
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
+### ==============================================================================
+### USE CASE 5: Validation & Uniform RFC 7807 Error Handling
+### Inspect structured Problem Details error responses
+### ==============================================================================
+
+# 5.1 Invalid Payload (Missing required input/input_uri -> Returns 400 Bad Request)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct"
+}
+
+###
+
+# 5.2 Non-Existent Job ID (Returns 404 Not Found RFC 7807)
+GET {{baseUrl}}/v1/jobs/00000000-0000-0000-0000-000000000000
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}

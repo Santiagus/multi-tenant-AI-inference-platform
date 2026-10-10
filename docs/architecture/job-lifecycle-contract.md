@@ -192,3 +192,18 @@ All non-2xx responses conform to RFC 7807:
 }
 ```
 
+---
+
+## 5. Interactive Testing Cycles (`request.rest`)
+
+To test the API interactively, the repository maintains an executable REST scratchpad in [`request.rest`](../../request.rest) organized into five sequential, self-contained Use Case Cycles:
+
+| Cycle | Purpose | Request Sequence | Expected Lifecycle Mutations |
+|---|---|---|---|
+| **1. Health & Dependency Check** | Validates liveness and subsystem readiness | `GET /healthz` → `GET /readyz` | None (reads DB, S3, SQS health status) |
+| **2. Happy Path Lifecycle** | Simulates full successful async execution | `POST /v1/jobs` → `GET /v1/jobs/:id` → `POST /v1/jobs/:id/transition` (PROCESSING) → `POST /v1/jobs/:id/transition` (SUCCEEDED) → `GET /v1/jobs/:id` | `QUEUED` → `PROCESSING` → `SUCCEEDED` (presigned S3 artifact URLs attached) |
+| **3. Idempotent Deduplication** | Verifies duplicate prevention | `POST /v1/jobs` (Idempotency-Key) → `POST /v1/jobs` (same key) → `GET /v1/jobs/:id` | Initial returns `202 Accepted`; replay returns `200 OK` with identical `job_id` |
+| **4. Job Cancellation** | Verifies client-directed abort and terminal conflict protection | `POST /v1/jobs` → `POST /v1/jobs/:id/cancel` → `GET /v1/jobs/:id` → `POST /v1/jobs/:id/cancel` (conflict attempt) | `QUEUED` → `CANCELLED`; second cancel attempt returns `409 Conflict` |
+| **5. RFC 7807 Error Handling** | Verifies structured Problem Details errors | Invalid `POST /v1/jobs` → Non-existent `GET /v1/jobs/:id` | `400 Bad Request` (validation issues) and `404 Not Found` Problem Details |
+
+

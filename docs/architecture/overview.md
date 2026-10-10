@@ -133,5 +133,6 @@ The architecture documentation is structured into the following focused specific
 | **Tenancy & Security** | [tenancy-security.md](tenancy-security.md) | ABAC authentication, resource isolation, storage policies, and audit trails. |
 | **Observability Model** | [observability.md](observability.md) | Distributed tracing, correlation IDs, metrics taxonomy, and GPU telemetry. |
 | **Local-vs-Cloud Boundary** | [local-cloud-boundary.md](local-cloud-boundary.md) | Environment parity, mock behaviors, and hardware fallback paths. |
+| **Verification & Test Matrix** | [test-matrix.md](../testing/test-matrix.md) | Milestone verification scopes, execution modes (mocked vs measured), and test suites. |
 | **Architecture Decision Records** | [docs/adr/](../adr/README.md) | Durable architectural choices and evaluated alternatives. |
 

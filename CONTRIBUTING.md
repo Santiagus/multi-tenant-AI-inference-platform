@@ -24,9 +24,11 @@ When opening this repository in Visual Studio Code, you will be prompted to inst
 - **Data & Config**: YAML (`redhat.vscode-yaml`), Even Better TOML (`tamasfe.even-better-toml`), REST Client (`humao.rest-client`), and Database Client (`cweijan.vscode-database-client2`).
 
 ### System Prerequisites
-To run the local verification gates, ensure the following are available on your workstation:
+To run the local platform and verification gates, ensure the following are available on your workstation:
 - **Make**: Standard build automation tool (`/usr/bin/make`).
+- **Node.js 22+ & pnpm 12+**: Control plane API runtime and workspace package manager.
 - **Python 3.11+**: Base runtime for scripts and inference tooling.
+- **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ).
 - **Gitleaks**: Fast secret scanner for pre-commit verification ([Installation guide](https://github.com/gitleaks/gitleaks)).
 
 ---
