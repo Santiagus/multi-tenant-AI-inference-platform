@@ -59,7 +59,8 @@ def run_mypy(repo_root: Path) -> list[str]:
     mypy = find_mypy_binary()
     if mypy:
         print(f"Running mypy ({mypy})...")
-        res = subprocess.run([mypy, "scripts", "tests"], cwd=repo_root)
+        targets = ["--explicit-package-bases", "scripts", "tests", "apps/worker", "benchmarks"]
+        res = subprocess.run([mypy, *targets], cwd=repo_root)
         if res.returncode != 0:
             issues.append("Mypy type checking reported violations.")
     return issues
