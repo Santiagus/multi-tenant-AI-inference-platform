@@ -396,7 +396,8 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = Path(tmpdir)
-            exit_code = benchmark_main(
+            # Run 1: TinyLlama
+            exit_code_1 = benchmark_main(
                 [
                     "--model-id",
                     "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -404,24 +405,72 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
                     "8",
                     "--samples",
                     "2",
+                    "--prompt-tiers",
+                    "short,long",
                     "--output-dir",
                     str(out_dir),
                 ]
             )
-            self.assertEqual(exit_code, 0)
+            self.assertEqual(exit_code_1, 0)
+
+            # Run 2: Llama-3-8B
+            exit_code_2 = benchmark_main(
+                [
+                    "--model-id",
+                    "meta-llama/Llama-3-8B-Instruct",
+                    "--max-new-tokens",
+                    "8",
+                    "--samples",
+                    "2",
+                    "--prompt-tiers",
+                    "short,medium,long",
+                    "--output-dir",
+                    str(out_dir),
+                ]
+            )
+            self.assertEqual(exit_code_2, 0)
+
             json_file = out_dir / "m04_inference_benchmark.json"
             md_file = out_dir / "m04_inference_benchmark.md"
+            manifest_file = out_dir / "manifest.json"
+            history_file = out_dir / "history.jsonl"
+            index_file = out_dir / "index.md"
+
             self.assertTrue(json_file.is_file())
             self.assertTrue(md_file.is_file())
+            self.assertTrue(manifest_file.is_file())
+            self.assertTrue(history_file.is_file())
+            self.assertTrue(index_file.is_file())
 
             report = json.loads(json_file.read_text(encoding="utf-8"))
+            self.assertEqual(report["schema_version"], "1.0.0")
+            self.assertIn("run_id", report)
+            self.assertIn("run_date", report)
             self.assertEqual(report["hardware_environment"]["measurement_mode"], "measured")
             self.assertEqual(report["reference_projections_estimated"]["measurement_type"], "estimated")
-            self.assertGreaterEqual(len(report["measured_results"]), 2)
+            self.assertIn("chart_series", report)
+            self.assertIn("concurrency_scaling_by_prompt_tier", report["chart_series"])
+            self.assertIn("prompt_tier_latency_breakdown_c1", report["chart_series"])
+            self.assertEqual(len(report["routing_recommendations_by_prompt_tier"]), 3)
+            self.assertEqual(len(report["reference_provider_comparison_estimated"]), 3)
+
+            # Verify manifest.json tracks both dated runs and points to valid per-run report files
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["total_runs"], 2)
+            self.assertEqual(len(manifest["runs"]), 2)
+            for run_entry in manifest["runs"]:
+                self.assertTrue((out_dir / run_entry["report_json_path"]).is_file())
+                self.assertTrue((out_dir / run_entry["report_md_path"]).is_file())
+
+            history_lines = [
+                line for line in history_file.read_text(encoding="utf-8").splitlines() if line.strip()
+            ]
+            self.assertEqual(len(history_lines), 2)
 
             md_text = render_markdown_report(report)
             self.assertIn("`Measured`", md_text)
             self.assertIn("`Estimated`", md_text)
+            self.assertIn("Prompt-Size-Aware Provider Routing Reference Matrix", md_text)
 
 
 if __name__ == "__main__":
