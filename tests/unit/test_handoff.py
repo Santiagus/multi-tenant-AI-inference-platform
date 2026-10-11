@@ -9,6 +9,7 @@ from scripts.check_milestone_handoff import (
     extract_section,
     parse_milestone_statuses,
     validate_milestone,
+    validate_test_matrix_sync,
 )
 
 
@@ -122,7 +123,27 @@ All good.
         errors = validate_milestone("M00", "done", milestone_file)
         self.assertEqual(errors, [])
 
+    def test_test_matrix_sync_enforced(self) -> None:
+        matrix_file = self.base_path / "test-matrix.md"
+        matrix_file.write_text(
+            """# Test Matrix
+| Milestone | Scope | Infrastructure Mode | Primary Verification Suites | Status |
+|---|---|---|---|---|
+| **M02** | Skeleton | Compose | Fastify | **Passed** |
+| **M03** | Async | Worker | Retries | _Planned_ |
+
+## 2. M02 Verification Matrix (Local Platform Skeleton)
+""",
+            encoding="utf-8",
+        )
+        statuses = {"M02": "done", "M03": "done"}
+        errors = validate_test_matrix_sync(statuses, matrix_file)
+        self.assertEqual(len(errors), 2)
+        self.assertIn("lists status as '_Planned_'", errors[0])
+        self.assertIn("missing a '## ... M03 Verification Matrix' section", errors[1])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

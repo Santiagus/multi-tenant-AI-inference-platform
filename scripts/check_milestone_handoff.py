@@ -100,7 +100,54 @@ def validate_milestone(
     return errors
 
 
-def run_checks(readme_path: Path, milestones_dir: Path) -> int:
+def validate_test_matrix_sync(
+    statuses: dict[str, str],
+    test_matrix_path: Path,
+) -> list[str]:
+    """Ensure completed milestones (M02+) are marked Passed and documented in docs/testing/test-matrix.md."""
+    if not test_matrix_path.is_file():
+        return []
+
+    errors: list[str] = []
+    content = test_matrix_path.read_text(encoding="utf-8")
+
+    for milestone_id, status in statuses.items():
+        if status != "done":
+            continue
+
+        # Match the full 5-column row: | **MXX** | Scope | Infra | Suites | Status |
+        full_row_pattern = re.compile(
+            rf"\|\s*\*\*{re.escape(milestone_id)}\*\*\s*\|[^|]+\|[^|]+\|[^|]+\|\s*([^|]+?)\s*\|",
+            re.IGNORECASE,
+        )
+        match = full_row_pattern.search(content)
+        if match:
+            matrix_status = match.group(1).strip()
+            if "passed" not in matrix_status.lower():
+                errors.append(
+                    f"[{milestone_id}] Status is 'done' in .agents/README.md, but '{test_matrix_path}' lists status as '{matrix_status}' (expected '**Passed**')."
+                )
+
+        # For M02+, also require a dedicated 'MXX Verification Matrix' section
+        m_num = int(milestone_id[1:]) if milestone_id[1:].isdigit() else 0
+        if m_num >= 2 and match:
+            section_pattern = re.compile(
+                rf"^##\s+.*?{re.escape(milestone_id)}\s+Verification\s+Matrix",
+                re.MULTILINE | re.IGNORECASE,
+            )
+            if not section_pattern.search(content):
+                errors.append(
+                    f"[{milestone_id}] Status is 'done' in .agents/README.md, but '{test_matrix_path}' is missing a '## ... {milestone_id} Verification Matrix' section."
+                )
+
+    return errors
+
+
+def run_checks(
+    readme_path: Path,
+    milestones_dir: Path,
+    test_matrix_path: Path = Path("docs/testing/test-matrix.md"),
+) -> int:
     """Run handoff integrity checks across all milestones."""
     try:
         statuses = parse_milestone_statuses(readme_path)
@@ -123,6 +170,8 @@ def run_checks(readme_path: Path, milestones_dir: Path) -> int:
         checked_count += 1
         errors = validate_milestone(milestone_id, status, milestone_file)
         all_errors.extend(errors)
+
+    all_errors.extend(validate_test_matrix_sync(statuses, test_matrix_path))
 
     print(f"Handoff Check: validated {checked_count} milestones against protocol rules.")
 
@@ -150,11 +199,18 @@ def main() -> None:
         default=Path(".agents/milestones"),
         help="Directory containing milestone markdown specs.",
     )
+    parser.add_argument(
+        "--test-matrix",
+        type=Path,
+        default=Path("docs/testing/test-matrix.md"),
+        help="Path to docs/testing/test-matrix.md.",
+    )
     args = parser.parse_args()
 
-    sys.exit(run_checks(args.readme, args.milestones_dir))
+    sys.exit(run_checks(args.readme, args.milestones_dir, args.test_matrix))
 
 
 if __name__ == "__main__":
     main()
+
 
