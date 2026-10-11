@@ -41,8 +41,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python validation tools
-        run: pip install mypy
+      - name: Install Python validation tools and worker dependencies
+        run: pip install mypy numpy psutil
 
       - name: Install Gitleaks
         run: |
