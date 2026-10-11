@@ -9,6 +9,13 @@ export interface QueueMessage {
   createdAt: string;
 }
 
+export interface DlqMessage extends QueueMessage {
+  failureReason: string;
+  errorCode: string;
+  retryCount: number;
+  failedAt: string;
+}
+
 export interface ReceivedMessage {
   messageId: string;
   receiptHandle: string;
@@ -16,11 +23,22 @@ export interface ReceivedMessage {
   approximateReceiveCount: number;
 }
 
+export interface ReceivedDlqMessage {
+  messageId: string;
+  receiptHandle: string;
+  body: DlqMessage;
+  approximateReceiveCount: number;
+}
+
 export interface IQueueClient {
-  sendMessage(message: QueueMessage): Promise<string>;
+  sendMessage(message: QueueMessage, delaySeconds?: number): Promise<string>;
   receiveMessages(maxMessages?: number, waitTimeSeconds?: number): Promise<ReceivedMessage[]>;
   deleteMessage(receiptHandle: string): Promise<void>;
   changeMessageVisibility(receiptHandle: string, visibilityTimeoutSeconds: number): Promise<void>;
+  sendToDlq(message: DlqMessage): Promise<string>;
+  receiveDlqMessages(maxMessages?: number): Promise<ReceivedDlqMessage[]>;
+  deleteDlqMessage(receiptHandle: string): Promise<void>;
   isHealthy(): Promise<boolean>;
 }
+
 
