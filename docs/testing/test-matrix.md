@@ -12,7 +12,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M01** | Architecture & Durable Contracts | Local Host | AST integrity, Mermaid diagram validation, Handoff rules | **Passed** |
 | **M02** | Local Platform Skeleton | Local Compose (PostgreSQL, MinIO, ElasticMQ, API) | Fastify contracts, DB migrations, S3/SQS adapters, lifecycle E2E | **Passed** |
 | **M03** | Asynchronous Inference | Local Worker Daemon | Queue consumers, retry backoff, DLQ quarantine, Russian Doll profiling | **Passed** |
-| **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | _Planned_ |
+| **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | **Passed** |
 | **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | _Planned_ |
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | _Planned_ |
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | _Planned_ |
@@ -69,11 +69,24 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 4. Maintenance Rules for Subsequent Milestones
+## 4. M04 Verification Matrix (GPU Inference & Benchmarks)
 
-When implementing future milestones (M04–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-24** | **Provider-Agnostic Inference Request & Contract Validation** | Unit | Measured / Mocked | `apps/worker/contracts.py` | Parses nested and flat job payloads, validates `model_id`, and classifies structured `InferenceError` (`is_transient`). | `tests/unit/test_inference_worker.py` |
+| **TC-25** | **CPU-Fallback Tensor Forward Pass & Context Guard** | Unit | Measured (Live CPU) | `NumpyCpuModelBackend`, `ModelLoader` | Executes deterministic multi-layer matrix-multiplication autoregressive token generation on CPU and enforces `max_context_length`. | `tests/unit/test_inference_worker.py` |
+| **TC-26** | **PyTorch CUDA / CPU Execution & VRAM Telemetry** | Unit | Mocked CUDA / Measured CPU | `PyTorchModelBackend`, `LocalPyTorchAdapter`, `TelemetryCollector` | Exercises `pytorch_cuda` and `pytorch_cpu` tensor forward passes, model cache warm hits, CUDA stream sync, peak VRAM tracking, and host RSS telemetry. | `tests/unit/test_inference_worker.py` |
+| **TC-27** | **Worker Runtime CLI & Tenant Artifact Serialization** | Unit | Measured (Live CPU) | `WorkerRuntime`, `ArtifactHandler`, `apps/worker/consumer.py` | Executes inference via CLI (`--payload`, `--healthcheck`), writes tenant-isolated `result.json` artifacts, and formats usage/telemetry metadata. | `tests/unit/test_inference_worker.py`<br>`request.rest` (Cycle 7.1–7.3) |
+| **TC-28** | **Control-Plane to Python Worker Bridge** | Unit / Integration | Measured (Live Subprocess) | `PythonWorkerInferenceExecutor` (`job-worker.ts`) | Invokes `python3 -m apps.worker.consumer`, propagates `local_pytorch` token usage and hardware telemetry, and maps transient/permanent errors. | `apps/api/tests/unit/job-worker.test.ts` |
+| **TC-29** | **Reproducible Latency, Throughput & Concurrency Benchmark** | Benchmark / Unit | Measured (Live CPU) + Estimated GPU | `benchmarks/run_inference_benchmark.py` | Runs cold/warm and concurrency sweep ($c \in \{1,2,4,8\}$), records `p50`/`p95`/`p99` latencies, TTFT, and throughput, and strictly separates `Measured` host results from `Estimated` RTX 5070 Ti targets. | `tests/unit/test_inference_worker.py`<br>`benchmarks/results/m04_inference_benchmark.md` |
+
+---
+
+## 5. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M05–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M04 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M05 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).
