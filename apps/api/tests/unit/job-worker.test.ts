@@ -350,4 +350,82 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     const jobs = await jobService.listJobs('tenant-1');
     assert.equal(jobs[0].status, JobStatus.SUCCEEDED);
   });
+
+  test('executes real PythonWorkerInferenceExecutor and handles success, cancellation, and error paths', async () => {
+    const { PythonWorkerInferenceExecutor } = await import('../../src/application/job-worker.js');
+    const pyExec = new PythonWorkerInferenceExecutor();
+
+    const { job } = await jobService.submitJob('tenant-1', {
+      modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+      input: { prompt: 'Run Python worker bridge test', parameters: { max_new_tokens: 6 } },
+    });
+
+    // 1. Pre-flight cancellation check
+    await assert.rejects(
+      async () => {
+        await pyExec.execute(job, { prompt: 'Cancelled' }, async () => true);
+      },
+      (err: unknown) => err instanceof InferenceExecutionError && err.code === 'JOB_CANCELLED'
+    );
+
+    // 2. Real subprocess execution against apps.worker.consumer
+    const res = await pyExec.execute(
+      job,
+      { prompt: 'Run Python worker bridge test', parameters: { max_new_tokens: 6 } },
+      async () => false
+    );
+    assert.equal(res.provider, 'local_pytorch');
+    assert.equal(res.tokensOut, 6);
+    assert.ok(res.outputText.includes('[TinyLlama/TinyLlama-1.1B-Chat-v1.0]'));
+    assert.ok(res.metadata?.telemetry);
+
+    // 3. Structured error returned by Python worker (non-zero exit with JSON stdout)
+    await assert.rejects(
+      async () => {
+        await pyExec.execute(
+          job,
+          { prompt: 'Fail permanently', _simulate_failure: 'permanent' },
+          async () => false
+        );
+      },
+      (err: unknown) =>
+        err instanceof InferenceExecutionError &&
+        err.code === 'INVALID_MODEL_PARAMETERS' &&
+        err.isTransient === false
+    );
+
+    // 4. Fallback defaults on sparse JSON response via custom runner
+    const sparseExec = new PythonWorkerInferenceExecutor('python3', async () => ({
+      stdout: JSON.stringify({ ok: true }),
+      stderr: '',
+    }));
+    const sparseRes = await sparseExec.execute(job, {}, async () => false);
+    assert.equal(sparseRes.provider, 'local_pytorch');
+    assert.equal(sparseRes.tokensIn, 1);
+
+    // 5. Fallback error defaults on sparse error JSON response
+    const sparseErrExec = new PythonWorkerInferenceExecutor('python3', async () => ({
+      stdout: JSON.stringify({ ok: false }),
+      stderr: '',
+    }));
+    await assert.rejects(
+      async () => {
+        await sparseErrExec.execute(job, {}, async () => false);
+      },
+      (err: unknown) =>
+        err instanceof InferenceExecutionError && err.code === 'WORKER_EXECUTION_ERROR'
+    );
+
+    // 6. Unhandled process spawn error (missing binary)
+    const badBinExec = new PythonWorkerInferenceExecutor('/nonexistent-python-binary');
+    await assert.rejects(
+      async () => {
+        await badBinExec.execute(job, {}, async () => false);
+      },
+      (err: unknown) =>
+        err instanceof InferenceExecutionError &&
+        err.code === 'PYTHON_WORKER_PROCESS_ERROR' &&
+        err.isTransient === true
+    );
+  });
 });
