@@ -6,10 +6,17 @@ import {
   ChangeMessageVisibilityCommand,
   GetQueueAttributesCommand,
 } from '@aws-sdk/client-sqs';
-import type { IQueueClient, QueueMessage, ReceivedMessage } from './queue-client.js';
+import type {
+  DlqMessage,
+  IQueueClient,
+  QueueMessage,
+  ReceivedDlqMessage,
+  ReceivedMessage,
+} from './queue-client.js';
 
 export interface SqsQueueConfig {
   queueUrl: string;
+  dlqUrl?: string;
   region: string;
   endpoint?: string;
   accessKeyId?: string;
@@ -19,9 +26,11 @@ export interface SqsQueueConfig {
 export class SqsQueueClient implements IQueueClient {
   private client: SQSClient;
   private queueUrl: string;
+  private dlqUrl: string;
 
   constructor(config: SqsQueueConfig) {
     this.queueUrl = config.queueUrl;
+    this.dlqUrl = config.dlqUrl ?? `${config.queueUrl}-dlq`;
     this.client = new SQSClient({
       region: config.region,
       endpoint: config.endpoint,
@@ -32,11 +41,12 @@ export class SqsQueueClient implements IQueueClient {
     });
   }
 
-  async sendMessage(message: QueueMessage): Promise<string> {
+  async sendMessage(message: QueueMessage, delaySeconds = 0): Promise<string> {
     const response = await this.client.send(
       new SendMessageCommand({
         QueueUrl: this.queueUrl,
         MessageBody: JSON.stringify(message),
+        DelaySeconds: Math.min(Math.max(delaySeconds, 0), 900),
         MessageAttributes: {
           tenantId: {
             DataType: 'String',
@@ -97,6 +107,61 @@ export class SqsQueueClient implements IQueueClient {
     );
   }
 
+  async sendToDlq(message: DlqMessage): Promise<string> {
+    const response = await this.client.send(
+      new SendMessageCommand({
+        QueueUrl: this.dlqUrl,
+        MessageBody: JSON.stringify(message),
+        MessageAttributes: {
+          tenantId: {
+            DataType: 'String',
+            StringValue: message.tenantId,
+          },
+          errorCode: {
+            DataType: 'String',
+            StringValue: message.errorCode,
+          },
+        },
+      })
+    );
+    return response.MessageId ?? '';
+  }
+
+  async receiveDlqMessages(maxMessages = 10): Promise<ReceivedDlqMessage[]> {
+    const response = await this.client.send(
+      new ReceiveMessageCommand({
+        QueueUrl: this.dlqUrl,
+        MaxNumberOfMessages: Math.min(Math.max(maxMessages, 1), 10),
+        WaitTimeSeconds: 0,
+        MessageSystemAttributeNames: ['ApproximateReceiveCount'],
+      })
+    );
+
+    if (!response.Messages || response.Messages.length === 0) {
+      return [];
+    }
+
+    return response.Messages.map((msg) => {
+      const body = JSON.parse(msg.Body ?? '{}') as DlqMessage;
+      const count = Number(msg.Attributes?.ApproximateReceiveCount ?? '1');
+      return {
+        messageId: msg.MessageId ?? '',
+        receiptHandle: msg.ReceiptHandle ?? '',
+        body,
+        approximateReceiveCount: isNaN(count) ? 1 : count,
+      };
+    });
+  }
+
+  async deleteDlqMessage(receiptHandle: string): Promise<void> {
+    await this.client.send(
+      new DeleteMessageCommand({
+        QueueUrl: this.dlqUrl,
+        ReceiptHandle: receiptHandle,
+      })
+    );
+  }
+
   async isHealthy(): Promise<boolean> {
     try {
       await this.client.send(
@@ -111,3 +176,4 @@ export class SqsQueueClient implements IQueueClient {
     }
   }
 }
+

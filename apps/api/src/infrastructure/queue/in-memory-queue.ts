@@ -1,26 +1,53 @@
 import { randomUUID } from 'node:crypto';
-import type { IQueueClient, QueueMessage, ReceivedMessage } from './queue-client.js';
+import type {
+  DlqMessage,
+  IQueueClient,
+  QueueMessage,
+  ReceivedDlqMessage,
+  ReceivedMessage,
+} from './queue-client.js';
 
-interface InFlightItem {
+interface QueuedItem {
   messageId: string;
-  receiptHandle: string;
   body: QueueMessage;
   receiveCount: number;
   visibleAfter: number;
 }
 
+interface InFlightItem extends QueuedItem {
+  receiptHandle: string;
+}
+
+interface DlqItem {
+  messageId: string;
+  receiptHandle: string;
+  body: DlqMessage;
+  receiveCount: number;
+}
+
 export class InMemoryQueueClient implements IQueueClient {
-  private queue: QueueMessage[] = [];
+  private queue: QueuedItem[] = [];
   private inFlight: Map<string, InFlightItem> = new Map();
+  private dlq: DlqItem[] = [];
   private healthy = true;
+  private maxReceiveCount: number;
+
+  constructor(options: { maxReceiveCount?: number } = {}) {
+    this.maxReceiveCount = options.maxReceiveCount ?? 3;
+  }
 
   setHealthy(status: boolean): void {
     this.healthy = status;
   }
 
-  async sendMessage(message: QueueMessage): Promise<string> {
+  async sendMessage(message: QueueMessage, delaySeconds = 0): Promise<string> {
     const id = randomUUID();
-    this.queue.push(message);
+    this.queue.push({
+      messageId: id,
+      body: message,
+      receiveCount: 0,
+      visibleAfter: Date.now() + Math.max(delaySeconds, 0) * 1000,
+    });
     return id;
   }
 
@@ -31,35 +58,57 @@ export class InMemoryQueueClient implements IQueueClient {
     for (const [receiptHandle, item] of this.inFlight.entries()) {
       if (item.visibleAfter <= now) {
         this.inFlight.delete(receiptHandle);
-        this.queue.unshift(item.body);
+        if (item.receiveCount >= this.maxReceiveCount) {
+          this.dlq.push({
+            messageId: item.messageId,
+            receiptHandle: randomUUID(),
+            body: {
+              ...item.body,
+              failureReason: 'Max receive count exceeded (visibility timeout redrive)',
+              errorCode: 'MAX_RECEIVE_COUNT_EXCEEDED',
+              retryCount: item.receiveCount,
+              failedAt: new Date(now).toISOString(),
+            },
+            receiveCount: item.receiveCount,
+          });
+        } else {
+          this.queue.unshift({
+            messageId: item.messageId,
+            body: item.body,
+            receiveCount: item.receiveCount,
+            visibleAfter: now,
+          });
+        }
       }
     }
 
-    const count = Math.min(maxMessages, this.queue.length);
     const results: ReceivedMessage[] = [];
+    const remainingQueue: QueuedItem[] = [];
 
-    for (let i = 0; i < count; i++) {
-      const body = this.queue.shift();
-      if (!body) break;
+    for (const item of this.queue) {
+      if (results.length < maxMessages && item.visibleAfter <= now) {
+        const nextReceiveCount = item.receiveCount + 1;
+        const receiptHandle = randomUUID();
+        this.inFlight.set(receiptHandle, {
+          messageId: item.messageId,
+          receiptHandle,
+          body: item.body,
+          receiveCount: nextReceiveCount,
+          visibleAfter: now + 30000, // 30s default visibility
+        });
 
-      const messageId = randomUUID();
-      const receiptHandle = randomUUID();
-      this.inFlight.set(receiptHandle, {
-        messageId,
-        receiptHandle,
-        body,
-        receiveCount: 1,
-        visibleAfter: now + 30000, // 30s default visibility
-      });
-
-      results.push({
-        messageId,
-        receiptHandle,
-        body,
-        approximateReceiveCount: 1,
-      });
+        results.push({
+          messageId: item.messageId,
+          receiptHandle,
+          body: item.body,
+          approximateReceiveCount: nextReceiveCount,
+        });
+      } else {
+        remainingQueue.push(item);
+      }
     }
 
+    this.queue = remainingQueue;
     return results;
   }
 
@@ -70,8 +119,57 @@ export class InMemoryQueueClient implements IQueueClient {
   async changeMessageVisibility(receiptHandle: string, visibilityTimeoutSeconds: number): Promise<void> {
     const item = this.inFlight.get(receiptHandle);
     if (item) {
-      item.visibleAfter = Date.now() + visibilityTimeoutSeconds * 1000;
+      if (visibilityTimeoutSeconds <= 0) {
+        this.inFlight.delete(receiptHandle);
+        if (item.receiveCount >= this.maxReceiveCount) {
+          this.dlq.push({
+            messageId: item.messageId,
+            receiptHandle: randomUUID(),
+            body: {
+              ...item.body,
+              failureReason: 'Max receive count exceeded',
+              errorCode: 'MAX_RECEIVE_COUNT_EXCEEDED',
+              retryCount: item.receiveCount,
+              failedAt: new Date().toISOString(),
+            },
+            receiveCount: item.receiveCount,
+          });
+        } else {
+          this.queue.push({
+            messageId: item.messageId,
+            body: item.body,
+            receiveCount: item.receiveCount,
+            visibleAfter: Date.now(),
+          });
+        }
+      } else {
+        item.visibleAfter = Date.now() + visibilityTimeoutSeconds * 1000;
+      }
     }
+  }
+
+  async sendToDlq(message: DlqMessage): Promise<string> {
+    const messageId = randomUUID();
+    this.dlq.push({
+      messageId,
+      receiptHandle: randomUUID(),
+      body: message,
+      receiveCount: message.retryCount || 1,
+    });
+    return messageId;
+  }
+
+  async receiveDlqMessages(maxMessages = 10): Promise<ReceivedDlqMessage[]> {
+    return this.dlq.slice(0, maxMessages).map((item) => ({
+      messageId: item.messageId,
+      receiptHandle: item.receiptHandle,
+      body: item.body,
+      approximateReceiveCount: item.receiveCount,
+    }));
+  }
+
+  async deleteDlqMessage(receiptHandle: string): Promise<void> {
+    this.dlq = this.dlq.filter((item) => item.receiptHandle !== receiptHandle);
   }
 
   async isHealthy(): Promise<boolean> {
@@ -82,9 +180,15 @@ export class InMemoryQueueClient implements IQueueClient {
     return this.queue.length;
   }
 
+  getDlqLength(): number {
+    return this.dlq.length;
+  }
+
   clear(): void {
     this.queue = [];
     this.inFlight.clear();
+    this.dlq = [];
   }
 }
+
 

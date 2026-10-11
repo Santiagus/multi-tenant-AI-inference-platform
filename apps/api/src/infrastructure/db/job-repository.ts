@@ -11,6 +11,7 @@ import {
 
 export interface UpdateJobOptions {
   status?: JobStatusType;
+  expectedCurrentStatuses?: JobStatusType[];
   outputPayload?: Record<string, unknown> | null;
   outputUri?: string | null;
   errorCode?: string | null;
@@ -20,6 +21,7 @@ export interface UpdateJobOptions {
   tokensIn?: number | null;
   tokensOut?: number | null;
   costMicrocents?: number | null;
+  retryCount?: number;
   startedAt?: Date | null;
   completedAt?: Date | null;
 }
@@ -36,6 +38,7 @@ interface JobRow {
   id: string;
   tenant_id: string;
   idempotency_key: string | null;
+  request_hash?: string | null;
   model_id: string;
   routing_preference: string;
   priority: number;
@@ -52,6 +55,7 @@ interface JobRow {
   tokens_out: number | null;
   cost_microcents: string | number | null;
   retry_count: number;
+  max_retries?: number;
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
@@ -63,6 +67,7 @@ function mapRowToJob(row: JobRow): Job {
     id: row.id,
     tenantId: row.tenant_id,
     idempotencyKey: row.idempotency_key,
+    requestHash: row.request_hash ?? null,
     modelId: row.model_id,
     routingPreference: (row.routing_preference as RoutingPreferenceType) || RoutingPreference.AUTO,
     priority: row.priority,
@@ -79,6 +84,7 @@ function mapRowToJob(row: JobRow): Job {
     tokensOut: row.tokens_out,
     costMicrocents: row.cost_microcents !== null ? Number(row.cost_microcents) : null,
     retryCount: row.retry_count,
+    maxRetries: row.max_retries ?? 3,
     createdAt: new Date(row.created_at),
     startedAt: row.started_at ? new Date(row.started_at) : null,
     completedAt: row.completed_at ? new Date(row.completed_at) : null,
@@ -94,14 +100,16 @@ export class PostgresJobRepository implements IJobRepository {
     const routingPreference = input.routingPreference ?? RoutingPreference.AUTO;
     const priority = input.priority ?? 5;
     const idempotencyKey = input.idempotencyKey ?? null;
+    const requestHash = input.requestHash ?? null;
     const inputPayload = input.inputPayload ? JSON.stringify(input.inputPayload) : null;
     const inputUri = input.inputUri ?? null;
+    const maxRetries = input.maxRetries ?? 3;
 
     const query = `
       INSERT INTO jobs (
-        id, tenant_id, idempotency_key, model_id, routing_preference,
-        priority, status, input_payload, input_uri
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        id, tenant_id, idempotency_key, request_hash, model_id, routing_preference,
+        priority, status, input_payload, input_uri, max_retries
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *;
     `;
 
@@ -109,12 +117,14 @@ export class PostgresJobRepository implements IJobRepository {
       id,
       input.tenantId,
       idempotencyKey,
+      requestHash,
       input.modelId,
       routingPreference,
       priority,
       JobStatus.QUEUED,
       inputPayload,
       inputUri,
+      maxRetries,
     ]);
 
     return mapRowToJob(res.rows[0]);
@@ -183,6 +193,10 @@ export class PostgresJobRepository implements IJobRepository {
       setClauses.push(`cost_microcents = $${paramIndex++}`);
       values.push(updates.costMicrocents);
     }
+    if (updates.retryCount !== undefined) {
+      setClauses.push(`retry_count = $${paramIndex++}`);
+      values.push(updates.retryCount);
+    }
     if (updates.startedAt !== undefined) {
       setClauses.push(`started_at = $${paramIndex++}`);
       values.push(updates.startedAt);
@@ -192,10 +206,16 @@ export class PostgresJobRepository implements IJobRepository {
       values.push(updates.completedAt);
     }
 
+    let whereClause = 'WHERE tenant_id = $1 AND id = $2';
+    if (updates.expectedCurrentStatuses && updates.expectedCurrentStatuses.length > 0) {
+      whereClause += ` AND status = ANY($${paramIndex++})`;
+      values.push(updates.expectedCurrentStatuses);
+    }
+
     const sql = `
       UPDATE jobs
       SET ${setClauses.join(', ')}
-      WHERE tenant_id = $1 AND id = $2
+      ${whereClause}
       RETURNING *;
     `;
 
@@ -236,6 +256,7 @@ export class InMemoryJobRepository implements IJobRepository {
       id: randomUUID(),
       tenantId: input.tenantId,
       idempotencyKey: input.idempotencyKey ?? null,
+      requestHash: input.requestHash ?? null,
       modelId: input.modelId,
       routingPreference: input.routingPreference ?? RoutingPreference.AUTO,
       priority: input.priority ?? 5,
@@ -252,6 +273,7 @@ export class InMemoryJobRepository implements IJobRepository {
       tokensOut: null,
       costMicrocents: null,
       retryCount: 0,
+      maxRetries: input.maxRetries ?? 3,
       createdAt: now,
       startedAt: null,
       completedAt: null,
@@ -280,6 +302,14 @@ export class InMemoryJobRepository implements IJobRepository {
     const job = this.jobs.get(id);
     if (!job || job.tenantId !== tenantId) return null;
 
+    if (
+      updates.expectedCurrentStatuses &&
+      updates.expectedCurrentStatuses.length > 0 &&
+      !updates.expectedCurrentStatuses.includes(job.status)
+    ) {
+      return null;
+    }
+
     if (updates.status !== undefined) job.status = updates.status;
     if (updates.outputPayload !== undefined) job.outputPayload = updates.outputPayload;
     if (updates.outputUri !== undefined) job.outputUri = updates.outputUri;
@@ -290,6 +320,7 @@ export class InMemoryJobRepository implements IJobRepository {
     if (updates.tokensIn !== undefined) job.tokensIn = updates.tokensIn;
     if (updates.tokensOut !== undefined) job.tokensOut = updates.tokensOut;
     if (updates.costMicrocents !== undefined) job.costMicrocents = updates.costMicrocents;
+    if (updates.retryCount !== undefined) job.retryCount = updates.retryCount;
     if (updates.startedAt !== undefined) job.startedAt = updates.startedAt;
     if (updates.completedAt !== undefined) job.completedAt = updates.completedAt;
     job.updatedAt = new Date();
@@ -315,4 +346,5 @@ export class InMemoryJobRepository implements IJobRepository {
     this.jobs.clear();
   }
 }
+
 
