@@ -23,6 +23,10 @@ export const EnvSchema = z.object({
   SQS_ENDPOINT: z.string().optional(),
   SQS_REGION: z.string().default('us-east-1'),
   SQS_QUEUE_URL: z.string().default('http://localhost:9324/000000000000/inference-jobs'),
+  SQS_DLQ_URL: z.string().default('http://localhost:9324/000000000000/inference-jobs-dlq'),
+
+  // Worker Daemon
+  WORKER_ENABLED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
 
   // Tenancy & Auth Defaults
   DEFAULT_TENANT_ID: z.string().default('tenant-default'),
@@ -38,4 +42,5 @@ export function loadConfig(overrides: Partial<Record<string, unknown>> = {}): En
   };
   return EnvSchema.parse(merged);
 }
+
 

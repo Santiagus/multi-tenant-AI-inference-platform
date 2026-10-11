@@ -54,12 +54,20 @@ async function main() {
   // Initialize Queue (ElasticMQ / SQS)
   const queueClient = new SqsQueueClient({
     queueUrl: config.SQS_QUEUE_URL,
+    dlqUrl: config.SQS_DLQ_URL,
     region: config.SQS_REGION,
     endpoint: config.SQS_ENDPOINT,
   });
 
-  // Initialize Job Repository
+  // Initialize Job Repository & Worker
   const jobRepo = new PostgresJobRepository(db);
+  const { JobWorker } = await import('./application/job-worker.js');
+  const jobWorker = new JobWorker(jobRepo, queueClient, storageClient);
+
+  if (config.WORKER_ENABLED) {
+    jobWorker.start();
+    console.log('Background inference worker daemon started.');
+  }
 
   // Build Fastify App
   const app = buildApp({
@@ -68,6 +76,7 @@ async function main() {
     jobRepo,
     storageClient,
     queueClient,
+    jobWorker,
   });
 
   // Graceful Shutdown
@@ -76,6 +85,7 @@ async function main() {
     process.on(sig, async () => {
       console.log(`Received ${sig}, closing server...`);
       try {
+        await jobWorker.stop();
         await app.close();
         await db.close();
         console.log('Server and database pool cleanly closed.');
@@ -101,3 +111,4 @@ main().catch((err) => {
   console.error('Fatal startup error:', err);
   process.exit(1);
 });
+
