@@ -1,3 +1,7 @@
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import type { IJobRepository } from '../infrastructure/db/job-repository.js';
 import type { IQueueClient, ReceivedMessage } from '../infrastructure/queue/queue-client.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
@@ -7,6 +11,9 @@ import {
   calculateBackoffSeconds,
   isTerminalStatus,
 } from '../domain/job.js';
+
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
 export class InferenceExecutionError extends Error {
   public readonly code: string;
@@ -91,6 +98,87 @@ export class DefaultLocalInferenceExecutor implements IInferenceExecutor {
       tokensOut,
       costMicrocents,
       durationMs,
+    };
+  }
+}
+
+export type CommandRunner = (
+  cmd: string,
+  args: string[]
+) => Promise<{ stdout: string; stderr: string }>;
+
+const defaultCommandRunner: CommandRunner = async (cmd, args) => {
+  try {
+    return await execFileAsync(cmd, args, { cwd: REPO_ROOT, maxBuffer: 10 * 1024 * 1024 });
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    if (typeof e.stdout === 'string' && e.stdout.trim().startsWith('{')) {
+      return { stdout: e.stdout, stderr: e.stderr ?? '' };
+    }
+    throw new InferenceExecutionError(
+      `Python inference worker process failed: ${e.message ?? String(err)}`,
+      'PYTHON_WORKER_PROCESS_ERROR',
+      true
+    );
+  }
+};
+
+/**
+ * Executes inference by invoking the Python/PyTorch worker (`apps.worker.consumer`),
+ * capturing real tensor forward-pass metrics and GPU/CPU hardware telemetry.
+ */
+export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
+  private readonly pythonBin: string;
+  private readonly runner: CommandRunner;
+
+  constructor(pythonBin = 'python3', runner: CommandRunner = defaultCommandRunner) {
+    this.pythonBin = pythonBin;
+    this.runner = runner;
+  }
+
+  async execute(
+    job: Job,
+    resolvedInput: Record<string, unknown>,
+    checkCancelled: () => Promise<boolean>
+  ): Promise<InferenceExecutionResult> {
+    if (await checkCancelled()) {
+      throw new InferenceExecutionError('Job cancelled before inference start', 'JOB_CANCELLED', false);
+    }
+
+    const payload = JSON.stringify({
+      job_id: job.id,
+      tenant_id: job.tenantId,
+      model_id: job.modelId,
+      retry_count: job.retryCount,
+      input: resolvedInput,
+    });
+
+    const { stdout } = await this.runner(this.pythonBin, [
+      '-m',
+      'apps.worker.consumer',
+      '--payload',
+      payload,
+    ]);
+
+    const parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    if (!parsed.ok) {
+      const errObj = (parsed.error ?? {}) as Record<string, unknown>;
+      throw new InferenceExecutionError(
+        String(errObj.message ?? 'Python worker inference failure'),
+        String(errObj.code ?? 'WORKER_EXECUTION_ERROR'),
+        Boolean(errObj.is_transient ?? false)
+      );
+    }
+
+    return {
+      provider: String(parsed.provider ?? 'local_pytorch'),
+      outputText: String(parsed.output_text ?? ''),
+      finishReason: String(parsed.finish_reason ?? 'stop'),
+      tokensIn: Number(parsed.tokens_in ?? 1),
+      tokensOut: Number(parsed.tokens_out ?? 1),
+      costMicrocents: Number(parsed.cost_microcents ?? 5),
+      durationMs: Math.max(Number(parsed.duration_ms ?? 1), 1),
+      metadata: (parsed.metadata as Record<string, unknown> | undefined) ?? {},
     };
   }
 }
