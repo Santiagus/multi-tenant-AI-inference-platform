@@ -83,12 +83,14 @@ Always propose commits as explicit `git add` and `git commit` commands that the 
 
 **During** — tick `## Progress` items as they complete, so an interrupted session can be resumed. Keep it a checklist, not a log.
 
-**Done** — acceptance criteria met, checks green, docs/evidence updated, no later milestone implemented, diff understandable.
+**Done** — acceptance criteria met, checks green, `docs/testing/test-matrix.md` and `request.rest` updated for any new/changed test cases or endpoints, docs/evidence updated, no later milestone implemented, diff understandable.
 
 **Finish**
 1. Report: implemented · checks run · evidence produced · known limitations · deferred items.
 2. Delete `## Progress`. Replace `## Outcome` with ≤10 lines: entry points/commands, deviations from the spec, stubs left for later milestones, links to new ADRs. Do not restate ADR content.
-3. Set status to `done` in `.agents/README.md`.
-4. Run the local CI command (it includes the handoff check), then propose the atomic commit series as copy-pasteable `git add` and `git commit` commands with single-line messages.
+3. Update `docs/testing/test-matrix.md` (set milestone status to `Passed` and append the milestone's verification matrix table) and `request.rest` (for HTTP/API use cases).
+4. Set status to `done` in `.agents/README.md`.
+5. Run the local CI command (it includes the handoff check), then propose the atomic commit series as copy-pasteable `git add` and `git commit` commands with single-line messages.
 
 **Blocked** — record the blocker as an unticked `## Progress` item, then report what is blocked, why, what was attempted and the smallest input needed.
+

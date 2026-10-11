@@ -23,5 +23,6 @@ We build enterprise-grade control-plane and application services that are **modu
 - Explicit domain / application / infrastructure / plugin boundaries with dependency injection at boundaries.
 - Structured logging and deterministic RFC 7807 error handling.
 - Contract and integration tests for API routes and decorator pipelines.
-- REST client scratchpad (`request.rest`) organized in sequential, self-contained Use Case Cycles with captured response variables.
+- Every new or modified API endpoint, lifecycle transition, or error contract must be added to both `request.rest` (organized in sequential, self-contained Use Case Cycles with captured response variables) and `docs/testing/test-matrix.md` before finishing the milestone.
+
 
