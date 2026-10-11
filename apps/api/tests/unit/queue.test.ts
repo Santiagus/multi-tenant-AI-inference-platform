@@ -40,5 +40,40 @@ describe('Queue Abstraction', () => {
     queue.setHealthy(false);
     assert.equal(await queue.isHealthy(), false);
   });
+
+  test('redrives messages exceeding maxReceiveCount to DLQ and supports DLQ deletion', async () => {
+    const queue = new InMemoryQueueClient({ maxReceiveCount: 2 });
+    await queue.sendMessage({
+      jobId: 'job-poison',
+      tenantId: 'tenant-1',
+      modelId: 'llama-3',
+      routingPreference: 'auto',
+      priority: 5,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Receive 1
+    const rec1 = await queue.receiveMessages(1);
+    assert.equal(rec1[0].approximateReceiveCount, 1);
+    await queue.changeMessageVisibility(rec1[0].receiptHandle, 0);
+
+    // Receive 2
+    const rec2 = await queue.receiveMessages(1);
+    assert.equal(rec2[0].approximateReceiveCount, 2);
+    // Exceeds maxReceiveCount (2) on visibility timeout = 0 -> moves to DLQ
+    await queue.changeMessageVisibility(rec2[0].receiptHandle, 0);
+
+    assert.equal(queue.getQueueLength(), 0);
+    assert.equal(queue.getDlqLength(), 1);
+
+    const dlqMsgs = await queue.receiveDlqMessages(10);
+    assert.equal(dlqMsgs.length, 1);
+    assert.equal(dlqMsgs[0].body.jobId, 'job-poison');
+    assert.equal(dlqMsgs[0].body.errorCode, 'MAX_RECEIVE_COUNT_EXCEEDED');
+
+    await queue.deleteDlqMessage(dlqMsgs[0].receiptHandle);
+    assert.equal(queue.getDlqLength(), 0);
+  });
 });
+
 

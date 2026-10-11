@@ -5,7 +5,8 @@ import {
   ConflictError,
   ValidationError,
   UnauthorizedError,
-  AppError,
+  ForbiddenError,
+  ServiceUnavailableError,
 } from '../../src/domain/errors.js';
 
 describe('RFC 7807 Domain Errors', () => {
@@ -33,7 +34,7 @@ describe('RFC 7807 Domain Errors', () => {
     assert.equal(problem.title, 'Conflict');
   });
 
-  test('ValidationError includes nested validation errors', () => {
+  test('ValidationError includes nested validation errors when provided and omits when undefined', () => {
     const details = { model_id: ['Required'] };
     const err = new ValidationError('Invalid request body', details);
     assert.equal(err.status, 400);
@@ -41,12 +42,25 @@ describe('RFC 7807 Domain Errors', () => {
     const problem = err.toProblemDetails('/v1/jobs');
     assert.equal(problem.status, 400);
     assert.deepEqual(problem.errors, details);
+
+    const errWithoutDetails = new ValidationError('Invalid request body');
+    const problem2 = errWithoutDetails.toProblemDetails('/v1/jobs');
+    assert.equal(problem2.errors, undefined);
   });
 
-  test('UnauthorizedError formats 401 status', () => {
-    const err = new UnauthorizedError();
-    assert.equal(err.status, 401);
-    assert.equal(err.code, 'UNAUTHORIZED');
+  test('UnauthorizedError, ForbiddenError, and ServiceUnavailableError format status codes', () => {
+    const unauth = new UnauthorizedError();
+    assert.equal(unauth.status, 401);
+    assert.equal(unauth.code, 'UNAUTHORIZED');
+
+    const forbidden = new ForbiddenError();
+    assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.code, 'FORBIDDEN');
+
+    const unavailable = new ServiceUnavailableError();
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.code, 'SERVICE_UNAVAILABLE');
   });
 });
+
 

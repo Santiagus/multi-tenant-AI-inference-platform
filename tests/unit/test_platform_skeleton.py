@@ -43,6 +43,10 @@ class TestPlatformSkeleton(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS jobs", init_sql)
         self.assertIn("idx_jobs_tenant_id", init_sql)
 
+        m03_sql = (migrations_dir / "002_async_lifecycle.sql").read_text(encoding="utf-8")
+        self.assertIn("request_hash", m03_sql)
+        self.assertIn("max_retries", m03_sql)
+
     def test_apps_api_structure(self) -> None:
         api_root = self.repo_root / "apps" / "api"
         self.assertTrue((api_root / "package.json").is_file())
@@ -50,8 +54,12 @@ class TestPlatformSkeleton(unittest.TestCase):
         self.assertTrue((api_root / "Dockerfile").is_file())
         self.assertTrue((api_root / "src" / "app.ts").is_file())
         self.assertTrue((api_root / "src" / "server.ts").is_file())
+        self.assertTrue((api_root / "src" / "application" / "job-worker.ts").is_file())
+        self.assertTrue((api_root / "src" / "plugins" / "request-context.ts").is_file())
+        self.assertTrue((api_root / "src" / "plugins" / "error-handler.ts").is_file())
 
 
 if __name__ == "__main__":
     unittest.main()
+
 
