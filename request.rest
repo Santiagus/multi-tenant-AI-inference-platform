@@ -153,6 +153,24 @@ GET {{baseUrl}}/v1/jobs/{{idempJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 3.4 Idempotency Payload Conflict (Same Idempotency-Key with modified payload -> Returns 409 Conflict)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+Idempotency-Key: payment-audit-dedup-run-001
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "input": {
+    "prompt": "TAMPERED PAYLOAD: Analyze transaction batch 9999 instead."
+  }
+}
+
 
 ### ==============================================================================
 ### USE CASE 4: Job Cancellation & Terminal State Guard
@@ -210,6 +228,7 @@ POST {{baseUrl}}/v1/jobs
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-validation-err-001
 
 {
   "model_id": "meta-llama/Llama-3-8B-Instruct"
@@ -217,15 +236,16 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 5.2 Non-Existent Job ID (Returns 404 Not Found RFC 7807)
+# 5.2 Non-Existent Job ID (Returns 404 Not Found RFC 7807 with correlation_id)
 GET {{baseUrl}}/v1/jobs/00000000-0000-0000-0000-000000000000
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-not-found-002
 
 
 ### ==============================================================================
 ### USE CASE 6: Asynchronous Worker Execution, Retries & Dead-Letter Queue (DLQ)
-### Demonstrates worker job processing, transient retry recovery, and DLQ routing
+### Demonstrates worker job processing, Russian Doll profiling, transient retry, and DLQ
 ### ==============================================================================
 
 # 6.1 Submit Job with Transient First-Attempt Failure
@@ -234,6 +254,7 @@ POST {{baseUrl}}/v1/jobs
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-worker-transient-001
 
 {
   "model_id": "meta-llama/Llama-3-8B-Instruct",
@@ -256,7 +277,7 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 6.3 Inspect Retrying Job State
+# 6.3 Inspect Retrying Job State (Verify status = RETRYING, retry_count = 1)
 GET {{baseUrl}}/v1/jobs/{{transientJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
@@ -269,6 +290,7 @@ POST {{baseUrl}}/v1/jobs
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-worker-dlq-002
 
 {
   "model_id": "meta-llama/Llama-3-8B-Instruct",
@@ -295,4 +317,5 @@ Authorization: Bearer {{apiKey}}
 GET {{baseUrl}}/v1/jobs/dlq
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
 
