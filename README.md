@@ -128,10 +128,11 @@ This project is built using disciplined agentic pair-programming governed by:
 
 ### First Steps & Local Development
 
-1. **Install workspace dependencies**:
+1. **Install workspace dependencies (Node.js & Python worker)**:
    ```bash
    pnpm install
    pnpm build
+   pip install -e ./apps/worker   # or: uv pip install --system -e ./apps/worker
    ```
 
 2. **Option A: Start full platform via Docker Compose**:
