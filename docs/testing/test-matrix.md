@@ -11,7 +11,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M00** | Foundation & Repository Hygiene | Local Host | Format, Python lint, Mermaid validator, Gitleaks, Handoff | **Passed** |
 | **M01** | Architecture & Durable Contracts | Local Host | AST integrity, Mermaid diagram validation, Handoff rules | **Passed** |
 | **M02** | Local Platform Skeleton | Local Compose (PostgreSQL, MinIO, ElasticMQ, API) | Fastify contracts, DB migrations, S3/SQS adapters, lifecycle E2E | **Passed** |
-| **M03** | Asynchronous Inference | Local Worker Daemon | Queue consumers, retry backoff, DLQ quarantine, lease heartbeat | _Planned_ |
+| **M03** | Asynchronous Inference | Local Worker Daemon | Queue consumers, retry backoff, DLQ quarantine, Russian Doll profiling | **Passed** |
 | **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | _Planned_ |
 | **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | _Planned_ |
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | _Planned_ |
@@ -54,14 +54,30 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 3. Maintenance Rules for Subsequent Milestones
+## 3. M03 Verification Matrix (Asynchronous Inference Lifecycle)
 
-When implementing future milestones (M03–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-16** | **Idempotency Payload Hash Conflict** | Unit / Interactive | Mocked / Local Emulated | `JobService.submitJob` | Reusing an `Idempotency-Key` with a mutated request payload throws `409 Conflict` (`IDEMPOTENCY_CONFLICT`). | `apps/api/tests/unit/job-service.test.ts`<br>`request.rest` (Cycle 3.4) |
+| **TC-17** | **Monotonic State Machine & Bounded Backoff** | Unit | Mocked | `canTransitionStatus`, `calculateBackoffSeconds` | Blocks backward transitions out of terminal states (`409 INVALID_STATE_TRANSITION`) and bounds exponential retry delay $\min(\text{base} \cdot 2^{n-1}, \text{max})$. | `apps/api/tests/unit/job-worker.test.ts`<br>`apps/api/tests/unit/job-service.test.ts` |
+| **TC-18** | **Worker End-to-End Execution & Artifact Storage** | Unit / Integration | Mocked / Simulated | `JobWorker`, `POST /v1/worker/process-next` | Leases queued message, loads offloaded S3 inputs if present, executes inference, writes `result.json` to S3, transitions to `SUCCEEDED`, and deletes queue message. | `apps/api/tests/unit/job-worker.test.ts`<br>`apps/api/tests/integration/job-routes.test.ts` |
+| **TC-19** | **Russian Doll Profiling & Modular Hook Headers** | Unit / Integration | Simulated | `ProfilingInferenceExecutor`, `request-context.ts`, `error-handler.ts` | Attaches `x-correlation-id` and `x-response-time-ms` on HTTP responses, `correlation_id` on RFC 7807 errors, and `profiled_wall_ms` + `tokens_per_sec` in job result metadata. | `apps/api/tests/integration/job-routes.test.ts`<br>`request.rest` (Cycles 5 & 6) |
+| **TC-20** | **Transient Failure Retry & Recovery** | Unit / Interactive | Mocked / Simulated | `JobWorker` | Transient failure increments `retry_count`, transitions job to `RETRYING`, sets visibility timeout backoff, and succeeds on subsequent delivery without DLQ routing. | `apps/api/tests/unit/job-worker.test.ts`<br>`request.rest` (Cycle 6.1–6.3) |
+| **TC-21** | **Max Retries Exhaustion & Permanent Failure to DLQ** | Unit / Integration | Mocked / Simulated | `JobWorker`, `GET /v1/jobs/dlq`, `InMemoryQueueClient` | Exhausted transient retries or permanent errors mark job `FAILED`, quarantine envelope in `inference-jobs-dlq` with failure metadata, and expose via `GET /v1/jobs/dlq`. | `apps/api/tests/unit/job-worker.test.ts`<br>`apps/api/tests/unit/queue.test.ts`<br>`apps/api/tests/integration/job-routes.test.ts`<br>`request.rest` (Cycle 6.4–6.6) |
+| **TC-22** | **Pre-Flight & Mid-Flight Cancellation Semantics** | Unit | Mocked | `JobWorker` | Skips queued jobs cancelled prior to pickup (`skipped_terminal`) and aborts mid-execution if cancelled concurrently (`cancelled`), preserving `CANCELLED` state. | `apps/api/tests/unit/job-worker.test.ts` |
+| **TC-23** | **Background Polling Daemon Lifecycle** | Unit | Mocked | `JobWorker.start` / `stop` | Starts background polling loop idempotently, processes queued jobs asynchronously, and drains cleanly on shutdown (`SIGINT`/`SIGTERM`). | `apps/api/tests/unit/job-worker.test.ts` |
+
+---
+
+## 4. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M04–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M03 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M04 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).
    - `Measured (Live)`: Backed by real hardware execution (e.g. RTX 5070 Ti CUDA tokens/sec or AWS cloud API calls).
 4. **CI Requirement**: All automated test cases added to the matrix must execute and pass in `make test` and `make ci`.
+
 
