@@ -63,9 +63,11 @@ Target architecture: `docs/architecture/` once M01 is done.
 
 ## Validation and commits
 
-Before declaring work done or proposing a commit: format → lint → typecheck → relevant tests → secret/PII scan → inspect the diff for junk and credentials. Use the repository's local CI command once it exists.
+Before declaring work done or proposing a commit: format → lint → typecheck → code complexity check → relevant tests with coverage → secret/PII scan → inspect the diff for junk and credentials. Use the repository's local CI command once it exists.
 
 Tests verify behavior: unit for domain logic, integration at component boundaries, contract tests for providers, security tests for tenant isolation, load/failure/benchmark tests for capacity and performance claims.
+Coverage reports must be generated and updated as tests are built out, enforcing 100% test coverage for domain and business logic with zero uncovered branches/lines.
+Static analysis enforces strict code complexity limits (e.g. cyclomatic and cognitive complexity) alongside linting and type gates.
 
 Commit only when the user or the milestone explicitly authorizes it. Never push unless asked.
 Commits must be atomic, self-contained, and focused on related changes. Prefer a short series of reduced file updates over monolithic commits. Use Conventional Commits format with the milestone as scope and concise single-line messages, e.g. `feat(m03): async job lifecycle`. Follow `.gitmessage`.
