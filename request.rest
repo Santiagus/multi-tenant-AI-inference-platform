@@ -319,3 +319,48 @@ x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
 
+### ==============================================================================
+### USE CASE 7: GPU / CPU-Fallback PyTorch Inference & Hardware Telemetry (M04)
+### Submit model workload with generation parameters -> Execute -> Inspect telemetry
+### ==============================================================================
+
+# 7.1 Submit Inference Job with Generation Parameters (TinyLlama-1.1B)
+# @name submitGpuInferenceJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-m04-inference-001
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "routing_preference": "local",
+  "priority": 8,
+  "input": {
+    "prompt": "Explain tensor parallelism and KV cache memory budgets in multi-tenant GPU clusters.",
+    "parameters": {
+      "max_new_tokens": 32,
+      "temperature": 0.7
+    }
+  }
+}
+
+### Auto-captured Job ID from 7.1
+@gpuJobId = {{submitGpuInferenceJob.response.body.job_id}}
+
+###
+
+# 7.2 Trigger Worker Execution (Runs inference and records profiling & telemetry metadata)
+POST {{baseUrl}}/v1/worker/process-next
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 7.3 Inspect Completed Job Output, Token Throughput & Hardware Telemetry
+GET {{baseUrl}}/v1/jobs/{{gpuJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
+
