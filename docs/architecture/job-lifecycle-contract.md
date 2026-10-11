@@ -205,5 +205,7 @@ To test the API interactively, the repository maintains an executable REST scrat
 | **3. Idempotent Deduplication** | Verifies duplicate prevention | `POST /v1/jobs` (Idempotency-Key) → `POST /v1/jobs` (same key) → `GET /v1/jobs/:id` | Initial returns `202 Accepted`; replay returns `200 OK` with identical `job_id` |
 | **4. Job Cancellation** | Verifies client-directed abort and terminal conflict protection | `POST /v1/jobs` → `POST /v1/jobs/:id/cancel` → `GET /v1/jobs/:id` → `POST /v1/jobs/:id/cancel` (conflict attempt) | `QUEUED` → `CANCELLED`; second cancel attempt returns `409 Conflict` |
 | **5. RFC 7807 Error Handling** | Verifies structured Problem Details errors | Invalid `POST /v1/jobs` → Non-existent `GET /v1/jobs/:id` | `400 Bad Request` (validation issues) and `404 Not Found` Problem Details |
+| **6. Worker, Retries & DLQ** | Verifies worker execution, transient backoff retries, and DLQ quarantine | `POST /v1/jobs` → `POST /v1/worker/process-next` → `GET /v1/jobs/:id` → `GET /v1/jobs/dlq` | `QUEUED` → `PROCESSING` → `RETRYING` / `FAILED` (quarantined in DLQ) |
+
 
 

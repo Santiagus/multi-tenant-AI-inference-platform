@@ -235,5 +235,83 @@ describe('Job Routes & Lifecycle Integration', () => {
 
     await app.close();
   });
+
+  test('POST /v1/worker/process-next executes job end-to-end and GET /v1/jobs/dlq inspects poison pills', async () => {
+    const { app } = createTestApp();
+
+    // 1. Submit valid job and process via worker endpoint
+    const submitGood = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {
+        'x-tenant-id': 'tenant-acme',
+        'x-correlation-id': 'corr-test-123',
+      },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        input: { prompt: 'Run via worker endpoint' },
+      },
+    });
+    assert.equal(submitGood.headers['x-correlation-id'], 'corr-test-123');
+    assert.ok(submitGood.headers['x-response-time-ms']);
+    const goodJobId = JSON.parse(submitGood.body).job_id;
+
+    const procGood = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(procGood.statusCode, 200);
+    const procBody = JSON.parse(procGood.body);
+    assert.equal(procBody.processed, 1);
+    assert.equal(procBody.outcomes[0].action, 'succeeded');
+
+    const getGood = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${goodJobId}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    const goodData = JSON.parse(getGood.body);
+    assert.equal(goodData.status, 'SUCCEEDED');
+    assert.ok(goodData.artifacts && goodData.artifacts.length === 1);
+    assert.ok(goodData.result.metadata.profiled_wall_ms >= 0);
+    assert.ok(goodData.result.metadata.tokens_per_sec > 0);
+
+    // 2. Submit permanent failure job -> routes to DLQ
+    const submitBad = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        input: {
+          prompt: 'Trigger permanent failure',
+          _simulate_failure: 'permanent',
+        },
+      },
+    });
+    const badJobId = JSON.parse(submitBad.body).job_id;
+
+    const procBad = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(JSON.parse(procBad.body).outcomes[0].action, 'failed_dlq');
+
+    const dlqRes = await app.inject({
+      method: 'GET',
+      url: '/v1/jobs/dlq',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(dlqRes.statusCode, 200);
+    const dlqBody = JSON.parse(dlqRes.body);
+    assert.equal(dlqBody.messages.length, 1);
+    assert.equal(dlqBody.messages[0].job_id, badJobId);
+    assert.equal(dlqBody.messages[0].error_code, 'INVALID_MODEL_PARAMETERS');
+
+    await app.close();
+  });
 });
+
 

@@ -107,6 +107,48 @@ describe('JobService Application Service', () => {
     );
   });
 
+  test('throws ConflictError for idempotency key reused with different payload', async () => {
+    const key = 'req-dedup-mismatch';
+    await service.submitJob(
+      'tenant-1',
+      {
+        modelId: 'meta-llama/Llama-3-8B-Instruct',
+        input: { prompt: 'Original prompt' },
+      },
+      key
+    );
+
+    await assert.rejects(
+      async () => {
+        await service.submitJob(
+          'tenant-1',
+          {
+            modelId: 'meta-llama/Llama-3-8B-Instruct',
+            input: { prompt: 'Modified prompt' },
+          },
+          key
+        );
+      },
+      (err: unknown) => err instanceof ConflictError && err.code === 'IDEMPOTENCY_CONFLICT'
+    );
+  });
+
+  test('throws ConflictError on invalid backward state transition from terminal state', async () => {
+    const submitted = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Finish me' },
+    });
+
+    await service.transitionJob('tenant-1', submitted.job.id, JobStatus.SUCCEEDED);
+
+    await assert.rejects(
+      async () => {
+        await service.transitionJob('tenant-1', submitted.job.id, JobStatus.PROCESSING);
+      },
+      (err: unknown) => err instanceof ConflictError && err.code === 'INVALID_STATE_TRANSITION'
+    );
+  });
+
   test('throws NotFoundError for non-existent job or wrong tenant', async () => {
     await assert.rejects(
       async () => {
@@ -116,4 +158,5 @@ describe('JobService Application Service', () => {
     );
   });
 });
+
 

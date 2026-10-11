@@ -221,3 +221,78 @@ Authorization: Bearer {{apiKey}}
 GET {{baseUrl}}/v1/jobs/00000000-0000-0000-0000-000000000000
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
+
+### ==============================================================================
+### USE CASE 6: Asynchronous Worker Execution, Retries & Dead-Letter Queue (DLQ)
+### Demonstrates worker job processing, transient retry recovery, and DLQ routing
+### ==============================================================================
+
+# 6.1 Submit Job with Transient First-Attempt Failure
+# @name submitTransientJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "max_retries": 3,
+  "input": {
+    "prompt": "Test bounded retry backoff on transient worker failure.",
+    "_simulate_failure": "transient_once"
+  }
+}
+
+### Auto-captured Job ID from 6.1
+@transientJobId = {{submitTransientJob.response.body.job_id}}
+
+###
+
+# 6.2 Trigger Worker Tick (Attempt 1 fails transiently -> status becomes RETRYING, retry_count = 1)
+POST {{baseUrl}}/v1/worker/process-next
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 6.3 Inspect Retrying Job State
+GET {{baseUrl}}/v1/jobs/{{transientJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 6.4 Submit Job with Permanent Failure (Poison Pill -> Routed to DLQ)
+# @name submitPoisonJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "max_retries": 2,
+  "input": {
+    "prompt": "Trigger permanent model error and quarantine in DLQ.",
+    "_simulate_failure": "permanent"
+  }
+}
+
+### Auto-captured Job ID from 6.4
+@poisonJobId = {{submitPoisonJob.response.body.job_id}}
+
+###
+
+# 6.5 Trigger Worker Tick to Process Poison Pill (Transitions to FAILED and sends to DLQ)
+POST {{baseUrl}}/v1/worker/process-next
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 6.6 Inspect Dead-Letter Queue (DLQ) Messages for Tenant
+GET {{baseUrl}}/v1/jobs/dlq
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
