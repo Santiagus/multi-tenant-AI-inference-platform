@@ -72,6 +72,8 @@ services:
       SQS_ENDPOINT: http://elasticmq:9324
       SQS_REGION: us-east-1
       SQS_QUEUE_URL: http://elasticmq:9324/000000000000/inference-jobs
+      SQS_DLQ_URL: http://elasticmq:9324/000000000000/inference-jobs-dlq
+      WORKER_ENABLED: "false"
       DEFAULT_TENANT_ID: tenant-default
     depends_on:
       postgres:

@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { JobService } from '../application/job-service.js';
+import type { JobWorker } from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
-import { JobStatus, type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
+import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ValidationError } from '../domain/errors.js';
 
 const SubmitJobSchema = z.object({
@@ -11,6 +12,7 @@ const SubmitJobSchema = z.object({
     .enum(['auto', 'local', 'cloud', 'cost_optimized', 'low_latency'])
     .default('auto'),
   priority: z.number().int().min(1).max(10).default(5),
+  max_retries: z.number().int().min(0).max(10).optional(),
   input: z
     .object({
       prompt: z.string().optional(),
@@ -25,7 +27,7 @@ const SubmitJobSchema = z.object({
 });
 
 const TransitionJobSchema = z.object({
-  status: z.enum(['QUEUED', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'CANCELLED']),
+  status: z.enum(['QUEUED', 'PROCESSING', 'RETRYING', 'SUCCEEDED', 'FAILED', 'CANCELLED']),
   provider: z.string().optional(),
   output: z.record(z.unknown()).optional(),
   output_uri: z.string().optional(),
@@ -35,15 +37,17 @@ const TransitionJobSchema = z.object({
   tokens_in: z.number().int().nonnegative().optional(),
   tokens_out: z.number().int().nonnegative().optional(),
   cost_microcents: z.number().int().nonnegative().optional(),
+  retry_count: z.number().int().nonnegative().optional(),
 });
 
 export interface JobRoutesOptions {
   jobService: JobService;
+  jobWorker: JobWorker;
   storageClient: IStorageClient;
 }
 
 export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, options) => {
-  const { jobService, storageClient } = options;
+  const { jobService, jobWorker, storageClient } = options;
 
   // POST /v1/jobs - Submit an asynchronous inference job
   fastify.post('/v1/jobs', async (req, reply) => {
@@ -65,6 +69,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         modelId: body.model_id,
         routingPreference: body.routing_preference as RoutingPreferenceType,
         priority: body.priority,
+        maxRetries: body.max_retries,
         input: body.input,
         inputUri: body.input_uri,
       },
@@ -81,6 +86,34 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       model_id: result.job.modelId,
       created_at: result.job.createdAt.toISOString(),
       poll_url: pollUrl,
+    });
+  });
+
+  // GET /v1/jobs/dlq - List Dead-Letter Queue messages for tenant
+  fastify.get('/v1/jobs/dlq', async (req, reply) => {
+    const tenantId = (req as any).tenantId || 'tenant-default';
+    const messages = await jobService.listDlqMessages(tenantId, 10);
+
+    return reply.status(200).send({
+      messages: messages.map((m) => ({
+        message_id: m.messageId,
+        job_id: m.body.jobId,
+        tenant_id: m.body.tenantId,
+        model_id: m.body.modelId,
+        error_code: m.body.errorCode,
+        failure_reason: m.body.failureReason,
+        retry_count: m.body.retryCount,
+        failed_at: m.body.failedAt,
+      })),
+    });
+  });
+
+  // POST /v1/worker/process-next - Deterministically process next queued job(s)
+  fastify.post('/v1/worker/process-next', async (_req, reply) => {
+    const outcomes = await jobWorker.processNextBatch(1);
+    return reply.status(200).send({
+      processed: outcomes.length,
+      outcomes,
     });
   });
 
@@ -112,6 +145,8 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       routing_preference: job.routingPreference,
       priority: job.priority,
       provider: job.provider,
+      retry_count: job.retryCount,
+      max_retries: job.maxRetries,
       created_at: job.createdAt.toISOString(),
       started_at: job.startedAt?.toISOString() ?? null,
       completed_at: job.completedAt?.toISOString() ?? null,
@@ -182,16 +217,19 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       tokensIn: body.tokens_in,
       tokensOut: body.tokens_out,
       costMicrocents: body.cost_microcents,
+      retryCount: body.retry_count,
     });
 
     return reply.status(200).send({
       job_id: updated.id,
       status: updated.status,
       provider: updated.provider,
+      retry_count: updated.retryCount,
       started_at: updated.startedAt?.toISOString() ?? null,
       completed_at: updated.completedAt?.toISOString() ?? null,
       duration_ms: updated.durationMs,
     });
   });
 };
+
 

@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import type { IJobRepository, UpdateJobOptions } from '../infrastructure/db/job-repository.js';
-import type { IQueueClient } from '../infrastructure/queue/queue-client.js';
+import type { IQueueClient, ReceivedDlqMessage } from '../infrastructure/queue/queue-client.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import {
   type Job,
@@ -7,6 +8,8 @@ import {
   type RoutingPreferenceType,
   JobStatus,
   RoutingPreference,
+  canTransitionStatus,
+  isTerminalStatus,
 } from '../domain/job.js';
 import { ConflictError, NotFoundError } from '../domain/errors.js';
 
@@ -16,11 +19,23 @@ export interface SubmitJobRequest {
   inputUri?: string;
   routingPreference?: RoutingPreferenceType;
   priority?: number;
+  maxRetries?: number;
 }
 
 export interface SubmitJobResult {
   job: Job;
   isReplay: boolean;
+}
+
+function computeRequestHash(request: SubmitJobRequest): string {
+  const canonical = JSON.stringify({
+    modelId: request.modelId,
+    routingPreference: request.routingPreference ?? RoutingPreference.AUTO,
+    priority: request.priority ?? 5,
+    input: request.input ?? null,
+    inputUri: request.inputUri ?? null,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 export class JobService {
@@ -35,10 +50,18 @@ export class JobService {
     request: SubmitJobRequest,
     idempotencyKey?: string | null
   ): Promise<SubmitJobResult> {
+    const requestHash = computeRequestHash(request);
+
     // 1. Idempotency Check
     if (idempotencyKey) {
       const existing = await this.jobRepo.findByIdempotencyKey(tenantId, idempotencyKey);
       if (existing) {
+        if (existing.requestHash && existing.requestHash !== requestHash) {
+          throw new ConflictError(
+            `Idempotency key '${idempotencyKey}' was already used with a different request payload.`,
+            'IDEMPOTENCY_CONFLICT'
+          );
+        }
         return {
           job: existing,
           isReplay: true,
@@ -66,8 +89,10 @@ export class JobService {
       routingPreference: request.routingPreference ?? RoutingPreference.AUTO,
       priority: request.priority ?? 5,
       idempotencyKey: idempotencyKey ?? null,
+      requestHash,
       inputPayload,
       inputUri,
+      maxRetries: request.maxRetries ?? 3,
     });
 
     // 4. Publish message envelope to Queue
@@ -99,11 +124,7 @@ export class JobService {
   async cancelJob(tenantId: string, jobId: string): Promise<Job> {
     const job = await this.getJob(tenantId, jobId);
 
-    if (
-      job.status === JobStatus.SUCCEEDED ||
-      job.status === JobStatus.FAILED ||
-      job.status === JobStatus.CANCELLED
-    ) {
+    if (isTerminalStatus(job.status)) {
       throw new ConflictError(
         `Cannot cancel job '${jobId}' because it is already in terminal state '${job.status}'.`
       );
@@ -114,11 +135,7 @@ export class JobService {
       completedAt: new Date(),
     });
 
-    if (!updated) {
-      throw new NotFoundError(`Job '${jobId}' could not be updated.`);
-    }
-
-    return updated;
+    return updated ?? job;
   }
 
   async transitionJob(
@@ -135,9 +152,17 @@ export class JobService {
       tokensIn?: number;
       tokensOut?: number;
       costMicrocents?: number;
+      retryCount?: number;
     } = {}
   ): Promise<Job> {
     const job = await this.getJob(tenantId, jobId);
+
+    if (!canTransitionStatus(job.status, targetStatus)) {
+      throw new ConflictError(
+        `Invalid state transition for job '${jobId}' from '${job.status}' to '${targetStatus}'.`,
+        'INVALID_STATE_TRANSITION'
+      );
+    }
 
     const updates: UpdateJobOptions = {
       status: targetStatus,
@@ -150,27 +175,19 @@ export class JobService {
       tokensIn: details.tokensIn,
       tokensOut: details.tokensOut,
       costMicrocents: details.costMicrocents,
+      retryCount: details.retryCount,
     };
 
     if (targetStatus === JobStatus.PROCESSING && !job.startedAt) {
       updates.startedAt = new Date();
     }
 
-    if (
-      (targetStatus === JobStatus.SUCCEEDED ||
-        targetStatus === JobStatus.FAILED ||
-        targetStatus === JobStatus.CANCELLED) &&
-      !job.completedAt
-    ) {
+    if (isTerminalStatus(targetStatus) && !job.completedAt) {
       updates.completedAt = new Date();
     }
 
     const updated = await this.jobRepo.update(tenantId, jobId, updates);
-    if (!updated) {
-      throw new NotFoundError(`Job '${jobId}' could not be transitioned.`);
-    }
-
-    return updated;
+    return updated ?? job;
   }
 
   async listJobs(
@@ -179,5 +196,12 @@ export class JobService {
   ): Promise<Job[]> {
     return this.jobRepo.list(tenantId, options);
   }
+
+  async listDlqMessages(tenantId: string, maxMessages = 10): Promise<ReceivedDlqMessage[]> {
+    const messages = await this.queueClient.receiveDlqMessages(maxMessages);
+    return messages.filter((msg) => msg.body.tenantId === tenantId);
+  }
 }
+
+
 
