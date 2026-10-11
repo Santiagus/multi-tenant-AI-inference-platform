@@ -1,0 +1,150 @@
+{
+  "benchmark_id": "m04-inference-benchmark",
+  "generated_at": "2026-10-11T21:33:27.677910+00:00",
+  "hardware_environment": {
+    "device_type": "cpu",
+    "device_name": "Intel(R) Pentium(R) Gold G7400",
+    "backend": "numpy_cpu_fallback",
+    "cpu_count_logical": 4,
+    "platform": "Linux 6.18.40.1-microsoft-standard-WSL2 (x86_64)",
+    "cuda_available": false,
+    "vram_total_mb": 0.0,
+    "measurement_mode": "measured"
+  },
+  "software_and_model": {
+    "python_version": "3.11.2",
+    "numpy_version": "1.24.2",
+    "pytorch_version": "not_installed (numpy_cpu_fallback active)",
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "model_spec": {
+      "hidden_dim": 128,
+      "num_layers": 4,
+      "vocab_size": 256,
+      "max_context_length": 8192,
+      "active_tensor_footprint_mb_measured": 0.5,
+      "full_fp16_weights_vram_gb_estimated": 16.5
+    }
+  },
+  "workload": {
+    "prompt": "Explain the Raft consensus protocol leader election and log replication in multi-tenant distributed AI inference clusters.",
+    "prompt_length_chars": 122,
+    "max_new_tokens": 32,
+    "temperature": 0.7,
+    "concurrency_levels": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "samples_per_level": 8
+  },
+  "metric_definitions": {
+    "latency_p50_ms": "Measured 50th percentile end-to-end request execution latency in milliseconds.",
+    "latency_p95_ms": "Measured 95th percentile end-to-end request execution latency in milliseconds.",
+    "latency_p99_ms": "Measured 99th percentile end-to-end request execution latency in milliseconds.",
+    "ttft_mean_ms": "Measured mean Time-To-First-Token (first autoregressive step) in milliseconds.",
+    "aggregate_throughput_tokens_per_sec": "Measured total completion tokens generated divided by total wall-clock batch duration.",
+    "reference_gpu_projections": "Estimated reference projections for NVIDIA RTX 5070 Ti (16 GB GDDR7) when running on CPU-only development hosts."
+  },
+  "measured_results": [
+    {
+      "scenario_name": "cold_c1",
+      "warm_state": "cold",
+      "concurrency": 1,
+      "sample_count": 4,
+      "total_wall_duration_ms": 74.465,
+      "latency_mean_ms": 18.579,
+      "latency_p50_ms": 9.253,
+      "latency_p95_ms": 43.134,
+      "latency_p99_ms": 47.633,
+      "ttft_mean_ms": 1.699,
+      "aggregate_throughput_tokens_per_sec": 1718.93,
+      "mean_single_stream_tokens_per_sec": 5104.15,
+      "vram_allocated_mb": 0.0,
+      "vram_peak_mb": 0.0,
+      "ram_rss_mb": 39.07,
+      "measurement_type": "measured"
+    },
+    {
+      "scenario_name": "warm_c1",
+      "warm_state": "warm",
+      "concurrency": 1,
+      "sample_count": 8,
+      "total_wall_duration_ms": 33.713,
+      "latency_mean_ms": 4.2,
+      "latency_p50_ms": 3.944,
+      "latency_p95_ms": 6.133,
+      "latency_p99_ms": 6.347,
+      "ttft_mean_ms": 0.197,
+      "aggregate_throughput_tokens_per_sec": 7593.6,
+      "mean_single_stream_tokens_per_sec": 9707.16,
+      "vram_allocated_mb": 0.0,
+      "vram_peak_mb": 0.0,
+      "ram_rss_mb": 39.07,
+      "measurement_type": "measured"
+    },
+    {
+      "scenario_name": "warm_c2",
+      "warm_state": "warm",
+      "concurrency": 2,
+      "sample_count": 8,
+      "total_wall_duration_ms": 54.429,
+      "latency_mean_ms": 13.003,
+      "latency_p50_ms": 13.023,
+      "latency_p95_ms": 16.222,
+      "latency_p99_ms": 16.316,
+      "ttft_mean_ms": 0.533,
+      "aggregate_throughput_tokens_per_sec": 4703.36,
+      "mean_single_stream_tokens_per_sec": 4850.8,
+      "vram_allocated_mb": 0.0,
+      "vram_peak_mb": 0.0,
+      "ram_rss_mb": 39.42,
+      "measurement_type": "measured"
+    },
+    {
+      "scenario_name": "warm_c4",
+      "warm_state": "warm",
+      "concurrency": 4,
+      "sample_count": 8,
+      "total_wall_duration_ms": 63.125,
+      "latency_mean_ms": 28.513,
+      "latency_p50_ms": 28.8,
+      "latency_p95_ms": 43.4,
+      "latency_p99_ms": 46.522,
+      "ttft_mean_ms": 0.513,
+      "aggregate_throughput_tokens_per_sec": 4055.46,
+      "mean_single_stream_tokens_per_sec": 1977.73,
+      "vram_allocated_mb": 0.0,
+      "vram_peak_mb": 0.0,
+      "ram_rss_mb": 39.63,
+      "measurement_type": "measured"
+    },
+    {
+      "scenario_name": "warm_c8",
+      "warm_state": "warm",
+      "concurrency": 8,
+      "sample_count": 8,
+      "total_wall_duration_ms": 68.825,
+      "latency_mean_ms": 43.208,
+      "latency_p50_ms": 43.557,
+      "latency_p95_ms": 53.733,
+      "latency_p99_ms": 54.564,
+      "ttft_mean_ms": 2.21,
+      "aggregate_throughput_tokens_per_sec": 3719.56,
+      "mean_single_stream_tokens_per_sec": 1794.67,
+      "vram_allocated_mb": 0.0,
+      "vram_peak_mb": 0.0,
+      "ram_rss_mb": 39.95,
+      "measurement_type": "measured"
+    }
+  ],
+  "reference_projections_estimated": {
+    "target_hardware": "NVIDIA GeForce RTX 5070 Ti (16 GB GDDR7)",
+    "measurement_type": "estimated",
+    "note": "Estimated reference targets for full 4-bit quantized Llama-3-8B-Instruct on RTX 5070 Ti CUDA hardware; strictly separated from live measured host results above.",
+    "vram_footprint_gb_estimated": 6.4,
+    "single_stream_tokens_per_sec_estimated": 95.0,
+    "batch_c8_aggregate_tokens_per_sec_estimated": 340.0,
+    "ttft_p50_ms_estimated": 18.5
+  }
+}
