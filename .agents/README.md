@@ -31,7 +31,7 @@ Commit (`<type>(mXX): …`, see `.gitmessage`) before starting the next mileston
 | M03 | Async Inference | Job lifecycle, retries, idempotency, DLQ | done |
 | M04 | GPU Inference | PyTorch worker, benchmark, GPU telemetry | done |
 | M05 | Observability | OTel traces, metrics, dashboards, correlation | done |
-| M06 | Kubernetes | Helm, KEDA, Kueue, GPU scheduling, policies | todo |
+| M06 | Kubernetes | Helm, KEDA, Kueue, GPU scheduling, policies | done |
 | M07 | AWS Platform | Terraform, S3/SQS/EKS, ephemeral cloud deployment | todo |
 | M08 | Provider Routing | Local/RunPod/Bedrock/SageMaker adapters and routing | todo |
 | M09 | Security | Multi-tenancy, ABAC, isolation, supply chain | todo |

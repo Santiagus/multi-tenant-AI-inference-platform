@@ -14,7 +14,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M03** | Asynchronous Inference | Local Worker Daemon | Queue consumers, retry backoff, DLQ quarantine, Russian Doll profiling | **Passed** |
 | **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | **Passed** |
 | **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | **Passed** |
-| **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | _Planned_ |
+| **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | **Passed** |
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | _Planned_ |
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | _Planned_ |
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | _Planned_ |
@@ -94,16 +94,25 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 6. Maintenance Rules for Subsequent Milestones
+## 6. M06 Verification Matrix (Kubernetes Scheduling, Autoscaling & Policies)
 
-When implementing future milestones (M06–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-35** | **Helm Chart Packaging: Local CPU vs GPU Node Profiles** | Unit | Local File Validator | `deploy/helm/inference-platform/`, `scripts/validate_kubernetes.py` | Renders 22 resources for `values-local.yaml` (CPU fallback, NodePort, no DCGM exporter) and 24 resources for `values-gpu.yaml` (`nvidia.com/gpu` limits, `runtimeClassName: nvidia`, GPU nodeSelector/tolerations, and `dcgm-exporter` DaemonSet + Service). | `tests/unit/test_kubernetes.py`<br>`scripts/validate_kubernetes.py` |
+| **TC-36** | **KEDA Queue-Depth Worker Scaling (`0 -> N -> 0`)** | Unit / Integration | Simulated | `evaluateKedaScaling`, `GET /v1/k8s/autoscaling/status`, `templates/keda-scaledobject.yaml` | Scales worker replicas proportionally to `queue_depth + in_flight_jobs`, caps at `maxReplicaCount`, holds replicas during cooldown window, and scales to zero when idle. | `apps/api/tests/unit/kubernetes-scheduler.test.ts`<br>`apps/api/tests/integration/kubernetes-routes.test.ts`<br>`request.rest` (Cycle 9.1) |
+| **TC-37** | **Kueue Batch GPU Quota Admission & Priority Preemption** | Unit / Integration | Simulated | `KueueAdmissionController`, `POST /v1/k8s/kueue/workloads`, `templates/kueue-admission.yaml` | Admits GPU batch workloads within `ClusterQueue` nominal/borrowed quota, suspends excess workloads (`suspend: true`), and admits highest-priority (`inference-realtime-high` > `inference-batch-standard`) pending workload first upon quota release. | `apps/api/tests/unit/kubernetes-scheduler.test.ts`<br>`apps/api/tests/integration/kubernetes-routes.test.ts`<br>`request.rest` (Cycle 9.2–9.5) |
+| **TC-38** | **Kyverno Security, Resource Bounds & Tenancy Policy Enforcement** | Unit / Integration | Simulated / Local File Validator | `evaluateKyvernoPolicies`, `validate_manifest_against_kyverno`, `templates/kyverno-policies.yaml` | Enforces `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `drop: ["ALL"]`, explicit CPU/memory requests & limits, `kueue.x-k8s.io/queue-name` + `suspend: true` on batch GPU jobs, and `platform.ai/tenant` labels. | `tests/unit/test_kubernetes.py`<br>`apps/api/tests/unit/kubernetes-scheduler.test.ts`<br>`request.rest` (Cycle 9.6) |
+| **TC-39** | **Prometheus, Grafana K8s Dashboard & Conditional GPU DCGM Exporter Integration** | Unit / Integration | Simulated / Local File Validator | `templates/observability.yaml`, `templates/dcgm-exporter.yaml`, `kubernetes-scheduling.json`, `GET /metrics` | Configures Prometheus scrape targets and `ServiceMonitor`, provisions Grafana dashboard `kubernetes-scheduling.json`, conditionally deploys `dcgm-exporter` DaemonSet on GPU nodes, and exposes `keda_scaler_*`, `kueue_*`, and `kyverno_*` metrics on `/metrics`. | `tests/unit/test_kubernetes.py`<br>`apps/api/tests/integration/kubernetes-routes.test.ts` |
+
+---
+
+## 7. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M07–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M06 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M07 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).
    - `Measured (Live)`: Backed by real hardware execution (e.g. RTX 5070 Ti CUDA tokens/sec or AWS cloud API calls).
 4. **CI Requirement**: All automated test cases added to the matrix must execute and pass in `make test` and `make ci`.
-
-
-
