@@ -226,12 +226,20 @@ class NumpyCpuModelBackend:
 
 
 class PyTorchModelBackend:
-    """PyTorch neural network backend supporting CUDA GPU and CPU execution."""
+    """PyTorch neural network backend supporting CUDA GPU, CPU, and TorchScript JIT execution."""
 
-    def __init__(self, spec: ModelSpec, torch_module: Any, device: str) -> None:
+    def __init__(
+        self,
+        spec: ModelSpec,
+        torch_module: Any,
+        device: str,
+        use_torchscript: bool = False,
+    ) -> None:
         self._spec = spec
         self._torch = torch_module
         self._device = device
+        self._use_torchscript = use_torchscript
+        self._traced_forward: Any | None = None
 
         seed = int.from_bytes(hashlib.sha256(spec.model_id.encode("utf-8")).digest()[:4], "little")
         self._torch.manual_seed(seed)
@@ -248,6 +256,12 @@ class PyTorchModelBackend:
             self._torch.randn((spec.hidden_dim, spec.vocab_size), device=device) / scale
         )
 
+        if self._use_torchscript:
+            jit_mod = getattr(self._torch, "jit", None)
+            if jit_mod is not None and hasattr(jit_mod, "trace"):
+                sample_idx = self._torch.tensor([1, 2], dtype=self._torch.long, device=device)
+                self._traced_forward = jit_mod.trace(self._forward_tensor, (sample_idx,))
+
         elem_size = 4
         total_elems = (
             spec.vocab_size * spec.hidden_dim
@@ -256,9 +270,23 @@ class PyTorchModelBackend:
         )
         self._footprint_mb = round((total_elems * elem_size) / (1024 * 1024), 4)
 
+    def _forward_tensor(self, idx_tensor: Any) -> Any:
+        seq_embeds = self._embeddings[idx_tensor]
+        hidden = seq_embeds.mean(dim=0, keepdim=True)
+        for weight in self._layers:
+            projected = self._torch.matmul(hidden, weight)
+            hidden = self._torch.tanh(projected) + hidden
+        return self._torch.matmul(hidden, self._lm_head)[0]
+
+    @property
+    def is_torchscript(self) -> bool:
+        return self._use_torchscript
+
     @property
     def backend_name(self) -> str:
-        return "pytorch_cuda" if self._device.startswith("cuda") else "pytorch_cpu"
+        prefix = "pytorch_torchscript" if self._use_torchscript else "pytorch"
+        suffix = "cuda" if self._device.startswith("cuda") else "cpu"
+        return f"{prefix}_{suffix}"
 
     @property
     def footprint_mb(self) -> float:
@@ -284,16 +312,12 @@ class PyTorchModelBackend:
         context_ids = list(input_ids)
         ttft_ms = 0.0
         temp = max(float(temperature), 1e-3)
+        forward_fn = self._traced_forward if self._traced_forward is not None else self._forward_tensor
 
         with self._torch.no_grad():
             for step in range(target_tokens):
                 idx_tensor = self._torch.tensor(context_ids[-64:], dtype=self._torch.long, device=self._device)
-                seq_embeds = self._embeddings[idx_tensor]
-                hidden = seq_embeds.mean(dim=0, keepdim=True)
-                for weight in self._layers:
-                    projected = self._torch.matmul(hidden, weight)
-                    hidden = self._torch.tanh(projected) + hidden
-                logits = self._torch.matmul(hidden, self._lm_head)[0] / temp
+                logits = forward_fn(idx_tensor) / temp
                 next_token = int(self._torch.argmax(logits).item())
                 generated.append(next_token)
                 context_ids.append(next_token)
@@ -326,7 +350,7 @@ class LoadedModel:
 
 
 class ModelLoader:
-    """Caches and manages loaded inference models across GPU and CPU backends."""
+    """Caches and manages loaded inference models across GPU, CPU, and TorchScript backends."""
 
     def __init__(
         self,
@@ -370,14 +394,15 @@ class ModelLoader:
             return "cuda"
         return "cpu"
 
-    def load(self, model_id: str) -> tuple[LoadedModel, bool]:
+    def load(self, model_id: str, use_torchscript: bool = False) -> tuple[LoadedModel, bool]:
         """Load or retrieve a cached model.
 
         Returns:
             (LoadedModel, is_warm_cache_hit)
         """
-        if model_id in self._cache:
-            return self._cache[model_id], True
+        cache_key = f"{model_id}::torchscript={use_torchscript}" if use_torchscript else model_id
+        if cache_key in self._cache:
+            return self._cache[cache_key], True
 
         start_ns = time.perf_counter_ns()
         spec = self.resolve_spec(model_id)
@@ -385,13 +410,18 @@ class ModelLoader:
 
         backend: ModelBackend
         if self._torch is not None:
-            backend = PyTorchModelBackend(spec=spec, torch_module=self._torch, device=device)
+            backend = PyTorchModelBackend(
+                spec=spec,
+                torch_module=self._torch,
+                device=device,
+                use_torchscript=use_torchscript,
+            )
         else:
             backend = NumpyCpuModelBackend(spec=spec)
 
         load_ms = round(max((time.perf_counter_ns() - start_ns) / 1_000_000, 0.05), 3)
         loaded = LoadedModel(spec=spec, backend=backend, load_duration_ms=load_ms)
-        self._cache[model_id] = loaded
+        self._cache[cache_key] = loaded
         return loaded, False
 
     def clear_cache(self) -> None:
