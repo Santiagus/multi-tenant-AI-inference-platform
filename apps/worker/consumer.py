@@ -40,6 +40,8 @@ class WorkerRuntime:
                 "ok": True,
                 "job_id": request.job_id,
                 "tenant_id": request.tenant_id,
+                "correlation_id": request.correlation_id,
+                "traceparent": request.traceparent,
                 "model_id": request.model_id,
                 "provider": result.provider_name,
                 "output_text": result.output_text,
@@ -51,6 +53,8 @@ class WorkerRuntime:
                 "output_uri": artifact_uri,
                 "metadata": {
                     **result.metadata,
+                    "correlation_id": request.correlation_id,
+                    "traceparent": request.traceparent,
                     "ttft_ms": result.usage.time_to_first_token_ms,
                     "tokens_per_sec": result.usage.tokens_per_sec,
                     "telemetry": result.telemetry.to_dict(),

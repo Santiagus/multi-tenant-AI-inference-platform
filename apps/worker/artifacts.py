@@ -33,6 +33,8 @@ class ArtifactHandler:
         return {
             "job_id": request.job_id,
             "tenant_id": request.tenant_id,
+            "correlation_id": request.correlation_id,
+            "traceparent": request.traceparent,
             "model_id": request.model_id,
             "provider": result.provider_name,
             "output_text": result.output_text,
