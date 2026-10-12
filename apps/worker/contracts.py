@@ -63,6 +63,8 @@ class InferenceRequest:
     stream: bool = False
     timeout_seconds: float = 300.0
     retry_count: int = 0
+    correlation_id: str | None = None
+    traceparent: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> InferenceRequest:
@@ -71,6 +73,12 @@ class InferenceRequest:
         model_id = str(payload.get("model_id") or payload.get("modelId") or "")
         if not model_id.strip():
             raise InferenceError("model_id is required for inference execution", "INVALID_MODEL_ID", False)
+
+        raw_corr = payload.get("correlation_id") or payload.get("correlationId")
+        correlation_id = str(raw_corr).strip() if raw_corr else None
+
+        raw_trace = payload.get("traceparent")
+        traceparent = str(raw_trace).strip() if raw_trace else None
 
         input_obj = payload.get("input")
         if isinstance(input_obj, dict):
@@ -94,6 +102,8 @@ class InferenceRequest:
             stream=bool(payload.get("stream", False)),
             timeout_seconds=float(payload.get("timeout_seconds", 300.0)),
             retry_count=int(payload.get("retry_count") or payload.get("retryCount") or 0),
+            correlation_id=correlation_id,
+            traceparent=traceparent,
         )
 
 
