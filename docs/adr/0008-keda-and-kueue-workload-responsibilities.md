@@ -64,5 +64,14 @@ flowchart TD
   - Clean separation of concerns: KEDA bridges external cloud queues to Kubernetes pod counts; Kueue governs physical GPU allocation and fairness inside Kubernetes.
   - Workers scale to zero cleanly during lulls while large burst batches queue predictably without crashing nodes.
 - **Negative / Trade-offs**:
-  - Two Kubernetes operators to maintain and monitor in cloud clusters (introduced when reaching Kubernetes milestone M06).
+  - Two Kubernetes operators to maintain and monitor in cloud clusters (implemented and verified in Milestone M06).
+
+## Implementation & Verification (M06)
+
+- **Helm Templates**:
+  - KEDA `TriggerAuthentication` & `ScaledObject`: [`deploy/helm/inference-platform/templates/keda-scaledobject.yaml`](../../deploy/helm/inference-platform/templates/keda-scaledobject.yaml) (dual SQS `ApproximateNumberOfMessagesVisible` + Prometheus `queue_messages_visible` triggers, `minReplicaCount: 0`).
+  - Kueue `WorkloadPriorityClass`, `ResourceFlavor`, `ClusterQueue`, `LocalQueue`, and suspended batch GPU `Job`: [`deploy/helm/inference-platform/templates/kueue-admission.yaml`](../../deploy/helm/inference-platform/templates/kueue-admission.yaml).
+- **Control-Plane Evaluator & Telemetry**:
+  - [`apps/api/src/domain/kubernetes-scheduler.ts`](../../apps/api/src/domain/kubernetes-scheduler.ts) and [`apps/api/src/routes/kubernetes.ts`](../../apps/api/src/routes/kubernetes.ts) expose `GET /v1/k8s/autoscaling/status`, `POST /v1/k8s/kueue/workloads`, and `POST /v1/k8s/kueue/workloads/:id/release`, tracked in Grafana via [`kubernetes-scheduling.json`](../../deploy/observability/grafana/provisioning/dashboards/json/kubernetes-scheduling.json).
+
 
