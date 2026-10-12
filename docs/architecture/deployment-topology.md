@@ -156,14 +156,28 @@ flowchart TD
 
 ## 3. Kubernetes Autoscaling Architecture
 
-The platform separates real-time API scaling from heavy batch/inference scaling:
+The platform separates real-time API scaling from heavy batch/inference scaling (see [ADR-0008](../adr/0008-keda-and-kueue-workload-responsibilities.md)):
 
 1. **Control Plane Scaling**:
-   - `api` pods scale via standard Kubernetes Horizontal Pod Autoscaler (HPA) based on CPU and HTTP request rates.
+   - `api` pods scale via standard Kubernetes Horizontal Pod Autoscaler ([`templates/api-hpa.yaml`](../../deploy/helm/inference-platform/templates/api-hpa.yaml)) based on CPU (`70%`) and memory (`80%`) utilization.
 2. **Worker Queue-Depth Autoscaling (KEDA)**:
-   - Inference workers scale from 0 to N replicas using KEDA (Kubernetes Event-driven Autoscaling) measuring SQS queue depth (`ApproximateNumberOfMessagesVisible`).
-   - Enables rapid scale-out during batch bursts and scale-to-zero when queues are idle to prevent idle GPU compute costs.
+   - Inference workers scale from `0` to `maxReplicaCount` using KEDA ([`templates/keda-scaledobject.yaml`](../../deploy/helm/inference-platform/templates/keda-scaledobject.yaml)) measuring SQS queue depth (`ApproximateNumberOfMessagesVisible`) and Prometheus `queue_messages_visible`.
+   - Enables rapid scale-out during batch bursts and scale-to-zero after `cooldownPeriod` when queues are idle to eliminate idle GPU compute spend.
 3. **Batch Admission & Fair Sharing (Kueue)**:
-   - Multi-tenant GPU quota sharing and queuing are managed by Kueue.
-   - Prevents GPU out-of-memory (OOM) faults by queuing workload admissions rather than allowing uncontrolled concurrent pod launches.
+   - Multi-tenant GPU quota sharing and priority queueing (`inference-realtime-high` > `inference-batch-standard` > `inference-batch-backfill`) are governed by Kueue ([`templates/kueue-admission.yaml`](../../deploy/helm/inference-platform/templates/kueue-admission.yaml)).
+   - Prevents GPU out-of-memory (OOM) faults by creating batch `Job` workloads with `suspend: true` until `ClusterQueue` nominal or cohort-borrowed GPU quota is granted.
+
+---
+
+## 4. Helm Packaging, Profiles & Policy Governance (M06)
+
+All Kubernetes resources are packaged in [`deploy/helm/inference-platform/`](../../deploy/helm/inference-platform/Chart.yaml) and validated via `make validate-k8s` ([`scripts/validate_kubernetes.py`](../../scripts/validate_kubernetes.py)):
+
+| Artifact / Profile | Path | Purpose |
+|---|---|---|
+| **Local Kind Cluster** | [`deploy/kubernetes/kind-cluster.yaml`](../../deploy/kubernetes/kind-cluster.yaml) | 3-node local cluster topology (control-plane, CPU general worker node, and tainted GPU worker node). |
+| **Default Values** | [`deploy/helm/inference-platform/values.yaml`](../../deploy/helm/inference-platform/values.yaml) | Baseline chart values for namespaces (`inference-platform`, `inference-workers`, `observability`), API, worker, KEDA, Kueue, and Kyverno. |
+| **Local CPU Profile** | [`deploy/helm/inference-platform/values-local.yaml`](../../deploy/helm/inference-platform/values-local.yaml) | CPU-fallback worker profile (`nvidiaGpu: 0`, `NodePort: 30080`, `dcgmExporter.enabled: false`). |
+| **GPU Node Profile** | [`deploy/helm/inference-platform/values-gpu.yaml`](../../deploy/helm/inference-platform/values-gpu.yaml) | GPU worker profile (`runtimeClassName: nvidia`, `nvidia.com/gpu: 1`, GPU nodeSelector/tolerations, and `dcgm-exporter` `DaemonSet` enabled). |
+| **Kyverno Policies** | [`deploy/helm/inference-platform/templates/kyverno-policies.yaml`](../../deploy/helm/inference-platform/templates/kyverno-policies.yaml) | Enforces `require-non-root-and-drop-capabilities`, `require-workload-resource-bounds`, and `require-tenant-isolation-labels` (see [ADR-0011](../adr/0011-kyverno-admission-policy-enforcement.md)). |
 

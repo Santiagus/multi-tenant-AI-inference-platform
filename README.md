@@ -89,21 +89,21 @@ This repository is organized as an incremental monorepo:
 
 Implementation proceeds in disciplined, incremental milestones. Each milestone is validated against explicit acceptance criteria and automated checks before merging:
 
-| Milestone | Title | Focus |
-|---|---|---|
-| **M00** | GitHub Foundation | Monorepo layout, pre-commit validation, secret scanning, and CI gate |
-| **M01** | Architecture & ADRs | Formal contracts, tenancy model, and durable technical decisions |
-| **M02** | Local Platform Skeleton | Containerized local runtime (Fastify, PostgreSQL, S3 mock, Queue) |
-| **M03** | Async Inference Lifecycle | Idempotent job handling, exponential backoff, DLQ, and cancellation |
-| **M04** | GPU Inference & Benchmarks | PyTorch worker, GPU telemetry, and reproducible performance harness |
-| **M05** | Observability | OpenTelemetry distributed tracing and Grafana operational dashboards |
-| **M06** | Kubernetes Scheduling | Helm packaging, KEDA queue autoscaling, and batch admission |
-| **M07** | AWS Cloud Platform | Terraform infrastructure, least-privilege IAM, and cost guardrails |
-| **M08** | Provider Policy Routing | Dynamic routing between local compute, RunPod, Bedrock, and SageMaker |
-| **M09** | Multi-Tenant Security | ABAC, tenant isolation test suites, and supply chain controls |
-| **M10** | GitOps & Continuous Delivery | Argo CD synchronization, environment promotion, and OIDC pipelines |
-| **M11** | Product Dashboard | Workload path visualization, tenant margins, and routing inspectability |
-| **M12** | Production Readiness | Comprehensive failure injection, load verification, and final evidence |
+| Milestone | Title | Focus | Status |
+|---|---|---|---|
+| **M00** | GitHub Foundation | Monorepo layout, pre-commit validation, secret scanning, and CI gate | **Done** |
+| **M01** | Architecture & ADRs | Formal contracts, tenancy model, and durable technical decisions | **Done** |
+| **M02** | Local Platform Skeleton | Containerized local runtime (Fastify, PostgreSQL, S3 mock, Queue) | **Done** |
+| **M03** | Async Inference Lifecycle | Idempotent job handling, exponential backoff, DLQ, and cancellation | **Done** |
+| **M04** | GPU Inference & Benchmarks | PyTorch worker, GPU telemetry, and reproducible performance harness | **Done** |
+| **M05** | Observability | OpenTelemetry distributed tracing and Grafana operational dashboards | **Done** |
+| **M06** | Kubernetes Scheduling | Helm packaging, KEDA queue autoscaling, Kueue admission, and Kyverno policies | **Done** |
+| **M07** | AWS Cloud Platform | Terraform infrastructure, least-privilege IAM, and cost guardrails | _Planned_ |
+| **M08** | Provider Policy Routing | Dynamic routing between local compute, RunPod, Bedrock, and SageMaker | _Planned_ |
+| **M09** | Multi-Tenant Security | ABAC, tenant isolation test suites, and supply chain controls | _Planned_ |
+| **M10** | GitOps & Continuous Delivery | Argo CD synchronization, environment promotion, and OIDC pipelines | _Planned_ |
+| **M11** | Product Dashboard | Workload path visualization, tenant margins, and routing inspectability | _Planned_ |
+| **M12** | Production Readiness | Comprehensive failure injection, load verification, and final evidence | _Planned_ |
 
 ---
 
@@ -112,7 +112,7 @@ Implementation proceeds in disciplined, incremental milestones. Each milestone i
 This project is built using disciplined agentic pair-programming governed by:
 - **[AGENTS.md](AGENTS.md)**: Session-scoped execution constraints, non-fabrication rules, and boundary safety.
 - **[Milestone Protocol](.agents/README.md)**: Strict context boundaries preventing cross-milestone scope creep and ensuring traceable, incremental development.
-- **Durable Decisions (ADRs)**: Technical choices are justified with constraints and alternatives before implementation.
+- **Durable Decisions (ADRs)**: Technical choices are justified with constraints and alternatives before implementation (see [`docs/adr/`](docs/adr/README.md)).
 
 ---
 
@@ -122,8 +122,8 @@ This project is built using disciplined agentic pair-programming governed by:
 
 - **Make**: Standard build automation tool
 - **Node.js 22+ & pnpm 12+**: Fastify control plane API runtime and workspace package manager
-- **Python 3.11+**: Base runtime for validation scripts and tests
-- **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ)
+- **Python 3.11+**: Base runtime for inference worker, validation scripts, and tests (`numpy`, `psutil`, `pyyaml`)
+- **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ, OTel Collector, Prometheus, Grafana)
 - **Gitleaks**: Fast credential detection tool ([Installation guide](https://github.com/gitleaks/gitleaks))
 
 ### First Steps & Local Development
@@ -135,10 +135,10 @@ This project is built using disciplined agentic pair-programming governed by:
    pip install -e ./apps/worker   # or: uv pip install --system -e ./apps/worker
    ```
 
-2. **Option A: Start full platform via Docker Compose**:
+2. **Option A: Start full platform & observability stack via Docker Compose**:
    ```bash
-   # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), and Fastify API in Docker
-   docker compose up -d
+   # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), Fastify API, OTel Collector, Prometheus (:9090), and Grafana (:3001)
+   docker compose up -d --build
 
    # Verify all services are healthy
    docker compose ps
@@ -154,8 +154,21 @@ This project is built using disciplined agentic pair-programming governed by:
    pnpm dev
    ```
 
-4. **Execute end-to-end workload cycles**:
-   Open [`request.rest`](request.rest) in VS Code with the REST Client extension (`humao.rest-client`) to execute sequential Use Case Cycles (health checks, job submission, idempotency, lifecycle simulation, and cancellation).
+4. **Execute end-to-end workload cycles & populate Grafana dashboards**:
+   - **Interactive REST Client**: Open [`request.rest`](request.rest) in VS Code with the REST Client extension (`humao.rest-client`) to execute Use Cases 1–9 (health probes, job lifecycle, idempotency, cancellation, retries/DLQ, PyTorch inference, W3C distributed tracing, and Kubernetes KEDA/Kueue/Kyverno scheduling).
+   - **Automated Workload Simulator**:
+     ```bash
+     make simulate-observability
+     ```
+     Then open the provisioned Grafana dashboards (anonymous admin login enabled):
+     - **Inference Operations (M05)**: `http://localhost:3001/d/platform-inference-operations`
+     - **Kubernetes Scheduling & Autoscaling (M06)**: `http://localhost:3001/d/platform-kubernetes-scheduling`
+
+5. **Kubernetes Helm Packaging & Validation (M06)**:
+   - Render and validate the Helm chart ([`deploy/helm/inference-platform/`](deploy/helm/inference-platform/Chart.yaml)) across local CPU ([`values-local.yaml`](deploy/helm/inference-platform/values-local.yaml)) and GPU ([`values-gpu.yaml`](deploy/helm/inference-platform/values-gpu.yaml)) profiles, KEDA scaler, Kueue batch admission, and Kyverno policies:
+     ```bash
+     make validate-k8s
+     ```
 
 ### Local Validation Gate
 
@@ -168,13 +181,15 @@ make ci
 
 Individual validation targets:
 ```bash
-make format-check    # Check line endings, trailing whitespace, and EOF newlines
-make lint            # Check Python and JSON syntax compilation
-make typecheck       # Validate type annotations
-make test            # Run automated test suites
-make scan            # Run Gitleaks and PII pattern scanning
-make handoff-check   # Validate milestone protocol compliance (.agents/README.md)
-make install-hooks   # Configure local Git repository to run pre-commit hook
+make format-check           # Check line endings, trailing whitespace, and EOF newlines
+make lint                   # Check Python, JSON, and Mermaid diagram syntax
+make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
+make test                   # Run Python and TypeScript unit & integration test suites
+make validate-k8s           # Render Helm chart profiles and validate KEDA, Kueue, and Kyverno policies
+make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
+make scan                   # Run Gitleaks and PII pattern scanning
+make handoff-check          # Validate milestone protocol compliance (.agents/README.md)
+make install-hooks          # Configure local Git repository to run pre-commit hook
 ```
 
 ### Pre-Commit Secret Scanning
