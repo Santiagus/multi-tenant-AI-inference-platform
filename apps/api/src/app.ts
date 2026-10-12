@@ -7,6 +7,7 @@ import type { IStorageClient } from './infrastructure/storage/storage-client.js'
 import type { IQueueClient } from './infrastructure/queue/queue-client.js';
 import { DistributedTracer } from './infrastructure/telemetry/tracer.js';
 import { MetricsRegistry } from './infrastructure/telemetry/metrics.js';
+import { KueueAdmissionController } from './domain/kubernetes-scheduler.js';
 import { JobService } from './application/job-service.js';
 import { JobWorker, type IInferenceExecutor } from './application/job-worker.js';
 import { registerRequestContextHooks } from './plugins/request-context.js';
@@ -14,6 +15,7 @@ import { registerErrorHandler } from './plugins/error-handler.js';
 import { healthRoutes } from './routes/health.js';
 import { jobRoutes } from './routes/jobs.js';
 import { observabilityRoutes } from './routes/observability.js';
+import { kubernetesRoutes } from './routes/kubernetes.js';
 
 export interface AppDependencies {
   config: EnvConfig;
@@ -25,6 +27,7 @@ export interface AppDependencies {
   jobWorker?: JobWorker;
   tracer?: DistributedTracer;
   metrics?: MetricsRegistry;
+  kueueController?: KueueAdmissionController;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -37,6 +40,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
 
   const tracer = deps.tracer ?? new DistributedTracer();
   const metrics = deps.metrics ?? new MetricsRegistry();
+  const kueueController = deps.kueueController ?? new KueueAdmissionController();
 
   const jobService = new JobService(
     deps.jobRepo,
@@ -70,6 +74,12 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     tracer,
     metrics,
     jobService,
+  });
+
+  app.register(kubernetesRoutes, {
+    queueClient: deps.queueClient,
+    metrics,
+    kueueController,
   });
 
   app.register(jobRoutes, {
