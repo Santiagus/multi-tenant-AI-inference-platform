@@ -4,6 +4,8 @@ export interface QueueMessage {
   modelId: string;
   routingPreference: string;
   priority: number;
+  correlationId?: string | null;
+  traceparent?: string | null;
   inputUri?: string | null;
   inputPayload?: Record<string, unknown> | null;
   createdAt: string;
@@ -38,6 +40,7 @@ export interface IQueueClient {
   sendToDlq(message: DlqMessage): Promise<string>;
   receiveDlqMessages(maxMessages?: number): Promise<ReceivedDlqMessage[]>;
   deleteDlqMessage(receiptHandle: string): Promise<void>;
+  getQueueDepth?(): Promise<number>;
   isHealthy(): Promise<boolean>;
 }
 

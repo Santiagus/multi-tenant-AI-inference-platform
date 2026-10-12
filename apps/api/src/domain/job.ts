@@ -105,6 +105,8 @@ export interface Job {
   tenantId: string;
   idempotencyKey: string | null;
   requestHash?: string | null;
+  correlationId?: string | null;
+  traceparent?: string | null;
   modelId: string;
   routingPreference: RoutingPreferenceType;
   priority: number;
@@ -135,6 +137,8 @@ export interface NewJobInput {
   priority?: number;
   idempotencyKey?: string | null;
   requestHash?: string | null;
+  correlationId?: string | null;
+  traceparent?: string | null;
   inputPayload?: Record<string, unknown> | null;
   inputUri?: string | null;
   maxRetries?: number;

@@ -180,6 +180,10 @@ export class InMemoryQueueClient implements IQueueClient {
     return this.queue.length;
   }
 
+  async getQueueDepth(): Promise<number> {
+    return this.queue.length;
+  }
+
   getDlqLength(): number {
     return this.dlq.length;
   }
