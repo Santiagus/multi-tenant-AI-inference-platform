@@ -5,12 +5,15 @@ import type { EnvConfig } from './config/env.js';
 import type { IJobRepository } from './infrastructure/db/job-repository.js';
 import type { IStorageClient } from './infrastructure/storage/storage-client.js';
 import type { IQueueClient } from './infrastructure/queue/queue-client.js';
+import { DistributedTracer } from './infrastructure/telemetry/tracer.js';
+import { MetricsRegistry } from './infrastructure/telemetry/metrics.js';
 import { JobService } from './application/job-service.js';
 import { JobWorker, type IInferenceExecutor } from './application/job-worker.js';
 import { registerRequestContextHooks } from './plugins/request-context.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { healthRoutes } from './routes/health.js';
 import { jobRoutes } from './routes/jobs.js';
+import { observabilityRoutes } from './routes/observability.js';
 
 export interface AppDependencies {
   config: EnvConfig;
@@ -20,6 +23,8 @@ export interface AppDependencies {
   queueClient: IQueueClient;
   inferenceExecutor?: IInferenceExecutor;
   jobWorker?: JobWorker;
+  tracer?: DistributedTracer;
+  metrics?: MetricsRegistry;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -30,25 +35,41 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.register(cors);
   app.register(sensible);
 
-  const jobService = new JobService(deps.jobRepo, deps.queueClient, deps.storageClient);
+  const tracer = deps.tracer ?? new DistributedTracer();
+  const metrics = deps.metrics ?? new MetricsRegistry();
+
+  const jobService = new JobService(
+    deps.jobRepo,
+    deps.queueClient,
+    deps.storageClient,
+    tracer,
+    metrics
+  );
   const jobWorker =
     deps.jobWorker ??
     new JobWorker(
       deps.jobRepo,
       deps.queueClient,
       deps.storageClient,
-      deps.inferenceExecutor
+      deps.inferenceExecutor,
+      { tracer, metrics }
     );
 
   // Modularized Lifecycle Hooks & Centralized Error Boundary
-  registerRequestContextHooks(app, deps.config);
-  registerErrorHandler(app, deps.config);
+  registerRequestContextHooks(app, deps.config, tracer, metrics);
+  registerErrorHandler(app, deps.config, metrics);
 
   // Register Routes
   app.register(healthRoutes, {
     db: deps.db,
     storage: deps.storageClient,
     queue: deps.queueClient,
+  });
+
+  app.register(observabilityRoutes, {
+    tracer,
+    metrics,
+    jobService,
   });
 
   app.register(jobRoutes, {
@@ -59,6 +80,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
 
   return app;
 }
+
 
 
 

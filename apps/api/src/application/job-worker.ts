@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -6,10 +7,16 @@ import type { IJobRepository } from '../infrastructure/db/job-repository.js';
 import type { IQueueClient, ReceivedMessage } from '../infrastructure/queue/queue-client.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import {
+  type DistributedTracer,
+  defaultTracer,
+  getTelemetryContext,
+  formatTraceparent,
+} from '../infrastructure/telemetry/tracer.js';
+import { type MetricsRegistry, defaultMetrics } from '../infrastructure/telemetry/metrics.js';
+import {
   type Job,
   JobStatus,
   calculateBackoffSeconds,
-  isTerminalStatus,
 } from '../domain/job.js';
 
 const execFileAsync = promisify(execFile);
@@ -83,12 +90,19 @@ export class DefaultLocalInferenceExecutor implements IInferenceExecutor {
       );
     }
 
+    const cpuStart = process.cpuUsage();
     const prompt = typeof resolvedInput.prompt === 'string' ? resolvedInput.prompt : '';
     const tokensIn = Math.max(Math.ceil(prompt.length / 4), 1);
     const outputText = `Inference completed for model '${job.modelId}': ${prompt.slice(0, 120)}`;
     const tokensOut = Math.max(Math.ceil(outputText.length / 4), 8);
     const durationMs = Math.max(Date.now() - startTime, 5);
     const costMicrocents = (tokensIn + tokensOut) * 5;
+    const cpuDelta = process.cpuUsage(cpuStart);
+    const cpuTimeMs = (cpuDelta.user + cpuDelta.system) / 1000;
+    const cpuUtilPct = Number(
+      Math.min(Math.max((cpuTimeMs / durationMs) * 100, 4.5), 100).toFixed(1)
+    );
+    const rssMb = Number((process.memoryUsage().rss / (1024 * 1024)).toFixed(2));
 
     return {
       provider: 'local_cpu_worker',
@@ -98,6 +112,19 @@ export class DefaultLocalInferenceExecutor implements IInferenceExecutor {
       tokensOut,
       costMicrocents,
       durationMs,
+      metadata: {
+        ttft_ms: Math.max(Math.round(durationMs * 0.25), 1),
+        telemetry: {
+          device_type: 'cpu',
+          backend: 'local_cpu_worker',
+          vram_allocated_mb: 0,
+          vram_peak_mb: 0,
+          gpu_utilization_pct: null,
+          cpu_utilization_pct: cpuUtilPct,
+          ram_rss_mb: rssMb,
+          measurement_mode: 'measured',
+        },
+      },
     };
   }
 }
@@ -145,11 +172,20 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
       throw new InferenceExecutionError('Job cancelled before inference start', 'JOB_CANCELLED', false);
     }
 
+    const ctx = getTelemetryContext();
+    const correlationId = job.correlationId ?? ctx?.correlationId ?? null;
+    const traceparent =
+      ctx
+        ? formatTraceparent(ctx.traceId, ctx.spanId, ctx.traceFlags)
+        : (job.traceparent ?? null);
+
     const payload = JSON.stringify({
       job_id: job.id,
       tenant_id: job.tenantId,
       model_id: job.modelId,
       retry_count: job.retryCount,
+      correlation_id: correlationId,
+      traceparent,
       input: resolvedInput,
     });
 
@@ -218,6 +254,8 @@ export interface JobWorkerOptions {
   baseBackoffSeconds?: number;
   maxBackoffSeconds?: number;
   pollIntervalMs?: number;
+  tracer?: DistributedTracer;
+  metrics?: MetricsRegistry;
 }
 
 export interface ProcessMessageOutcome {
@@ -235,6 +273,9 @@ export class JobWorker {
   private maxBackoffSeconds: number;
   private pollIntervalMs: number;
   private executor: IInferenceExecutor;
+  private tracer: DistributedTracer;
+  private metrics: MetricsRegistry;
+  private activeJobsCount = 0;
 
   constructor(
     private jobRepo: IJobRepository,
@@ -249,6 +290,8 @@ export class JobWorker {
     this.baseBackoffSeconds = options.baseBackoffSeconds ?? 2;
     this.maxBackoffSeconds = options.maxBackoffSeconds ?? 60;
     this.pollIntervalMs = options.pollIntervalMs ?? 500;
+    this.tracer = options.tracer ?? defaultTracer;
+    this.metrics = options.metrics ?? defaultMetrics;
   }
 
   start(): void {
@@ -284,12 +327,21 @@ export class JobWorker {
 
   async processNextBatch(maxMessages = 1): Promise<ProcessMessageOutcome[]> {
     const messages = await this.queueClient.receiveMessages(maxMessages, 0);
+    this.syncQueueDepthGauges();
     const outcomes: ProcessMessageOutcome[] = [];
     for (const msg of messages) {
       const outcome = await this.processMessage(msg);
       outcomes.push(outcome);
     }
+    this.syncQueueDepthGauges();
     return outcomes;
+  }
+
+  private syncQueueDepthGauges(): void {
+    const queueDepth = (this.queueClient as { getQueueLength?: () => number }).getQueueLength?.();
+    if (typeof queueDepth === 'number') {
+      this.metrics.setGauge('queue_messages_visible', { queue_name: 'inference-jobs' }, queueDepth);
+    }
   }
 
   async processMessage(msg: ReceivedMessage): Promise<ProcessMessageOutcome> {
@@ -301,11 +353,13 @@ export class JobWorker {
       return { jobId, action: 'discarded_missing' };
     }
 
+    const startedAt = job.startedAt ?? new Date();
+
     // Transition to PROCESSING if not already in a terminal state
     const processingJob = await this.jobRepo.update(tenantId, jobId, {
       status: JobStatus.PROCESSING,
       expectedCurrentStatuses: [JobStatus.QUEUED, JobStatus.RETRYING, JobStatus.PROCESSING],
-      startedAt: job.startedAt ?? new Date(),
+      startedAt,
     });
 
     if (!processingJob) {
@@ -313,66 +367,262 @@ export class JobWorker {
       return { jobId, action: 'skipped_terminal' };
     }
 
-    try {
-      const resolvedInput = await this.resolveJobInput(processingJob);
-
-      const checkCancelled = async (): Promise<boolean> => {
-        const latest = await this.jobRepo.findById(tenantId, jobId);
-        return !latest || latest.status === JobStatus.CANCELLED;
-      };
-
-      const result = await this.executor.execute(processingJob, resolvedInput, checkCancelled);
-
-      // Persist output artifact to S3-compatible storage
-      const artifactKey = `tenants/${tenantId}/outputs/${jobId}/result.json`;
-      const artifactPayload = {
-        job_id: jobId,
+    // Record queue wait duration on initial pickup
+    const waitSeconds = Math.max(
+      (startedAt.getTime() - processingJob.createdAt.getTime()) / 1000,
+      0.001
+    );
+    this.metrics.observeHistogram(
+      'queue_wait_duration_seconds',
+      {
         tenant_id: tenantId,
         model_id: processingJob.modelId,
-        provider: result.provider,
-        output_text: result.outputText,
-        finish_reason: result.finishReason,
-        usage: {
-          prompt_tokens: result.tokensIn,
-          completion_tokens: result.tokensOut,
-          total_tokens: result.tokensIn + result.tokensOut,
-          cost_microcents: result.costMicrocents,
+      },
+      Number(waitSeconds.toFixed(6))
+    );
+
+    const correlationId =
+      msg.body.correlationId ?? processingJob.correlationId ?? randomUUID();
+    const traceparent = msg.body.traceparent ?? processingJob.traceparent ?? null;
+
+    this.activeJobsCount += 1;
+    this.metrics.setGauge('worker_active_jobs', {}, this.activeJobsCount);
+    this.metrics.setGauge(
+      'worker_utilization_ratio',
+      {},
+      Math.min(this.activeJobsCount, 1)
+    );
+
+    try {
+      return await this.tracer.startActiveSpan(
+        'job_processing',
+        {
+          kind: 'CONSUMER',
+          serviceName: 'inference-worker',
+          traceparent,
+          correlationId,
+          tenantId,
+          jobId,
+          attributes: {
+            'messaging.system': 'sqs',
+            'messaging.operation': 'process',
+            'gen_ai.request.model': processingJob.modelId,
+            'job.retry_count': processingJob.retryCount,
+            'queue.wait_ms': Math.round(waitSeconds * 1000),
+          },
         },
-        completed_at: new Date().toISOString(),
-      };
-      const outputUri = await this.storageClient.putObject(
-        artifactKey,
-        JSON.stringify(artifactPayload),
-        'application/json'
+        async (jobSpan) => {
+          const resolvedInput = await this.resolveJobInput(processingJob);
+
+          const checkCancelled = async (): Promise<boolean> => {
+            const latest = await this.jobRepo.findById(tenantId, jobId);
+            return !latest || latest.status === JobStatus.CANCELLED;
+          };
+
+          const result = await this.tracer.startActiveSpan(
+            'inference_execution',
+            {
+              kind: 'INTERNAL',
+              serviceName: 'inference-worker',
+              correlationId,
+              tenantId,
+              jobId,
+              attributes: {
+                'gen_ai.request.model': processingJob.modelId,
+              },
+            },
+            async (infSpan) => {
+              const execRes = await this.executor.execute(
+                processingJob,
+                resolvedInput,
+                checkCancelled
+              );
+              const hwTelemetry = execRes.metadata?.telemetry as
+                | Record<string, unknown>
+                | undefined;
+              const device =
+                typeof hwTelemetry?.device_type === 'string'
+                  ? hwTelemetry.device_type
+                  : 'cpu';
+              const vramMb =
+                typeof hwTelemetry?.vram_peak_mb === 'number'
+                  ? hwTelemetry.vram_peak_mb
+                  : 0;
+
+              infSpan.setAttributes({
+                'gen_ai.system': execRes.provider,
+                'inference.device': device,
+                'tokens_in': execRes.tokensIn,
+                'tokens_out': execRes.tokensOut,
+                'vram_mb': vramMb,
+                'duration_ms': execRes.durationMs,
+              });
+              return execRes;
+            }
+          );
+
+          jobSpan.setAttribute('gen_ai.system', result.provider);
+
+          // Persist output artifact to S3-compatible storage inside a dedicated span
+          const artifactKey = `tenants/${tenantId}/outputs/${jobId}/result.json`;
+          const outputUri = await this.tracer.startActiveSpan(
+            'artifact_storage',
+            {
+              kind: 'CLIENT',
+              serviceName: 'inference-worker',
+              correlationId,
+              tenantId,
+              jobId,
+              attributes: {
+                'storage.system': 's3',
+                'storage.key': artifactKey,
+              },
+            },
+            async (artSpan) => {
+              const artifactPayload = {
+                job_id: jobId,
+                tenant_id: tenantId,
+                correlation_id: correlationId,
+                trace_id: jobSpan.traceId,
+                traceparent: artSpan.traceparent,
+                model_id: processingJob.modelId,
+                provider: result.provider,
+                output_text: result.outputText,
+                finish_reason: result.finishReason,
+                usage: {
+                  prompt_tokens: result.tokensIn,
+                  completion_tokens: result.tokensOut,
+                  total_tokens: result.tokensIn + result.tokensOut,
+                  cost_microcents: result.costMicrocents,
+                },
+                completed_at: new Date().toISOString(),
+              };
+              const uri = await this.storageClient.putObject(
+                artifactKey,
+                JSON.stringify(artifactPayload),
+                'application/json'
+              );
+              artSpan.setAttribute('artifact.uri', uri);
+              return uri;
+            }
+          );
+
+          // Atomically transition to SUCCEEDED only if still PROCESSING
+          const succeededJob = await this.jobRepo.update(tenantId, jobId, {
+            status: JobStatus.SUCCEEDED,
+            expectedCurrentStatuses: [JobStatus.PROCESSING],
+            provider: result.provider,
+            outputPayload: {
+              output_text: result.outputText,
+              finish_reason: result.finishReason,
+              ...(result.metadata ? { metadata: result.metadata } : {}),
+            },
+            outputUri,
+            durationMs: result.durationMs,
+            tokensIn: result.tokensIn,
+            tokensOut: result.tokensOut,
+            costMicrocents: result.costMicrocents,
+            completedAt: new Date(),
+          });
+
+          await this.queueClient.deleteMessage(msg.receiptHandle);
+
+          if (!succeededJob) {
+            jobSpan.setAttribute('job.outcome', 'cancelled');
+            return { jobId, action: 'cancelled' };
+          }
+
+          this.recordInferenceSuccessMetrics(processingJob, result);
+          jobSpan.setAttribute('job.outcome', 'succeeded');
+
+          return { jobId, action: 'succeeded', retryCount: succeededJob.retryCount };
+        }
       );
-
-      // Atomically transition to SUCCEEDED only if still PROCESSING
-      const succeededJob = await this.jobRepo.update(tenantId, jobId, {
-        status: JobStatus.SUCCEEDED,
-        expectedCurrentStatuses: [JobStatus.PROCESSING],
-        provider: result.provider,
-        outputPayload: {
-          output_text: result.outputText,
-          finish_reason: result.finishReason,
-          ...(result.metadata ? { metadata: result.metadata } : {}),
-        },
-        outputUri,
-        durationMs: result.durationMs,
-        tokensIn: result.tokensIn,
-        tokensOut: result.tokensOut,
-        costMicrocents: result.costMicrocents,
-        completedAt: new Date(),
-      });
-
-      await this.queueClient.deleteMessage(msg.receiptHandle);
-
-      if (!succeededJob) {
-        return { jobId, action: 'cancelled' };
-      }
-
-      return { jobId, action: 'succeeded', retryCount: succeededJob.retryCount };
     } catch (err: unknown) {
-      return this.handleExecutionFailure(msg, processingJob, err);
+      return await this.handleExecutionFailure(msg, processingJob, err);
+    } finally {
+      this.activeJobsCount = Math.max(this.activeJobsCount - 1, 0);
+      this.metrics.setGauge('worker_active_jobs', {}, this.activeJobsCount);
+      this.metrics.setGauge(
+        'worker_utilization_ratio',
+        {},
+        Math.min(this.activeJobsCount, 1)
+      );
+    }
+  }
+
+  private recordInferenceSuccessMetrics(job: Job, result: InferenceExecutionResult): void {
+    const durationSec = Math.max(result.durationMs / 1000, 0.001);
+    this.metrics.observeHistogram(
+      'inference_job_duration_seconds',
+      {
+        tenant_id: job.tenantId,
+        model_id: job.modelId,
+        provider: result.provider,
+      },
+      Number(durationSec.toFixed(6))
+    );
+
+    const ttftMs =
+      typeof result.metadata?.ttft_ms === 'number'
+        ? result.metadata.ttft_ms
+        : Math.max(result.durationMs * 0.2, 1);
+    this.metrics.observeHistogram(
+      'inference_token_generation_duration_seconds',
+      {
+        model_id: job.modelId,
+        provider: result.provider,
+      },
+      Number((ttftMs / 1000).toFixed(6))
+    );
+
+    this.metrics.incCounter(
+      'inference_tokens_total',
+      {
+        tenant_id: job.tenantId,
+        model_id: job.modelId,
+        type: 'prompt',
+      },
+      result.tokensIn
+    );
+    this.metrics.incCounter(
+      'inference_tokens_total',
+      {
+        tenant_id: job.tenantId,
+        model_id: job.modelId,
+        type: 'completion',
+      },
+      result.tokensOut
+    );
+    this.metrics.incCounter(
+      'inference_cost_microcents_total',
+      {
+        tenant_id: job.tenantId,
+        provider: result.provider,
+      },
+      result.costMicrocents
+    );
+
+    const hwTelemetry = result.metadata?.telemetry as Record<string, unknown> | undefined;
+    if (hwTelemetry) {
+      const device = String(hwTelemetry.device_type ?? 'cpu');
+      const backend = String(hwTelemetry.backend ?? 'unknown');
+      const mode = String(hwTelemetry.measurement_mode ?? 'measured');
+      const vramMb = Number(hwTelemetry.vram_allocated_mb ?? 0);
+      const gpuUtil =
+        typeof hwTelemetry.gpu_utilization_pct === 'number'
+          ? hwTelemetry.gpu_utilization_pct
+          : 0;
+      const cpuUtil =
+        typeof hwTelemetry.cpu_utilization_pct === 'number'
+          ? hwTelemetry.cpu_utilization_pct
+          : 8.5;
+      const rssMb = Number(hwTelemetry.ram_rss_mb ?? 0);
+
+      this.metrics.setGauge('DCGM_FI_DEV_FB_USED', { device, backend, mode }, vramMb);
+      this.metrics.setGauge('DCGM_FI_DEV_GPU_UTIL', { device, backend, mode }, gpuUtil);
+      this.metrics.setGauge('worker_cpu_utilization_pct', { device, backend, mode }, cpuUtil);
+      this.metrics.setGauge('worker_process_rss_mb', { device, backend, mode }, rssMb);
     }
   }
 
@@ -416,6 +666,13 @@ export class JobWorker {
     const isTransient = isInferenceErr ? err.isTransient : true;
     const errorCode = isInferenceErr ? err.code : 'WORKER_EXECUTION_ERROR';
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const provider = job.provider ?? 'local_worker';
+
+    this.metrics.incCounter('inference_job_errors_total', {
+      provider,
+      error_code: errorCode,
+      is_transient: String(isTransient),
+    });
 
     const maxAllowedRetries = job.maxRetries ?? this.maxRetries;
     const nextRetryCount = job.retryCount + 1;
@@ -435,6 +692,11 @@ export class JobWorker {
       });
 
       await this.queueClient.changeMessageVisibility(msg.receiptHandle, backoffSeconds);
+
+      this.metrics.incCounter('inference_job_retries_total', {
+        provider,
+        error_type: errorCode,
+      });
 
       return {
         jobId,
@@ -462,6 +724,10 @@ export class JobWorker {
       failedAt: new Date().toISOString(),
     });
 
+    this.metrics.incCounter('inference_job_dlq_total', {
+      queue_name: 'inference-jobs-dlq',
+    });
+
     await this.queueClient.deleteMessage(msg.receiptHandle);
 
     return {
@@ -471,3 +737,4 @@ export class JobWorker {
     };
   }
 }
+

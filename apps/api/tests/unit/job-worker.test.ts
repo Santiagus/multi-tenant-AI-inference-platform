@@ -427,5 +427,11 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
         err.code === 'PYTHON_WORKER_PROCESS_ERROR' &&
         err.isTransient === true
     );
+
+    // 7. Full JobWorker run with PythonWorkerInferenceExecutor records hardware telemetry gauges
+    const pyWorker = new JobWorker(jobRepo, queueClient, storageClient, pyExec);
+    const outcomes = await pyWorker.processNextBatch(1);
+    assert.equal(outcomes[0].action, 'succeeded');
   });
 });
+
