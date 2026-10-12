@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: 'Multi-Tenant AI Inference Dashboards'
+    orgId: 1
+    folder: 'Inference Platform'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false
+
