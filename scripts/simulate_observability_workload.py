@@ -328,12 +328,83 @@ def run_simulation(base_url: str, rounds: int, pause_sec: float) -> int:
             f"job {last_traced_job_id} trace stages={stages} (span_count={trace_info.get('span_count')})."
         )
 
+        # Use Case 9: Kubernetes KEDA Scaling, Kueue GPU Admission & Kyverno Policy Enforcement (M06)
+        http_request(
+            base_url,
+            "GET",
+            f"/v1/k8s/autoscaling/status?queue_depth={12 + r * 4}&in_flight_jobs=2&current_replicas={r}",
+            headers={"x-tenant-id": "tenant-default"},
+        )
+        w1_id = f"sim-kueue-gpu-r{r}-std-1"
+        w2_id = f"sim-kueue-gpu-r{r}-std-2"
+        w3_id = f"sim-kueue-gpu-r{r}-high-3"
+        for wid, prio in [
+            (w1_id, "inference-batch-standard"),
+            (w2_id, "inference-batch-standard"),
+            (w3_id, "inference-realtime-high"),
+        ]:
+            http_request(
+                base_url,
+                "POST",
+                "/v1/k8s/kueue/workloads",
+                headers={"x-tenant-id": "tenant-default"},
+                payload={
+                    "workload_id": wid,
+                    "priority_class": prio,
+                    "gpu_count": 1,
+                    "cpu_millicores": 2000,
+                    "memory_mb": 8192,
+                },
+            )
+
+        # Trigger a Kyverno policy rejection (privileged/root container)
+        status_kyverno, _, _ = http_request(
+            base_url,
+            "POST",
+            "/v1/k8s/kueue/workloads",
+            headers={"x-tenant-id": "tenant-default"},
+            payload={
+                "workload_id": f"sim-kueue-bad-priv-r{r}",
+                "gpu_count": 1,
+                "security_context": {
+                    "run_as_non_root": False,
+                    "allow_privilege_escalation": True,
+                    "dropped_capabilities": [],
+                },
+            },
+        )
+
+        # Pause briefly while GPU quota is saturated and 1 workload is pending
+        time.sleep(max(pause_sec, 0.5))
+
+        # Release running GPU workloads so queued high-priority workload is admitted and drained
+        for wid in (w1_id, w2_id, w3_id):
+            http_request(
+                base_url,
+                "POST",
+                f"/v1/k8s/kueue/workloads/{wid}/release",
+                headers={"x-tenant-id": "tenant-default"},
+            )
+
+        # Return KEDA scaler to scale-to-zero state after burst
+        _, k8s_after, _ = http_request(
+            base_url,
+            "GET",
+            "/v1/k8s/autoscaling/status?queue_depth=0&in_flight_jobs=0&current_replicas=0",
+            headers={"x-tenant-id": "tenant-default"},
+        )
+        print(
+            f"  [Use Case 9] KEDA scale wave, Kueue priority admission, and Kyverno rejection ({status_kyverno}) "
+            f"completed (used_gpu={k8s_after.get('kueue', {}).get('usedGpuQuota', 0)})."
+        )
+
         if r < rounds and pause_sec > 0:
             time.sleep(pause_sec)
 
     print("\n==> Simulation complete!")
-    print("  - Grafana Dashboard: http://localhost:3001/d/platform-inference-operations")
-    print(f"  - Prometheus Metrics: {base_url}/metrics")
+    print("  - Grafana Operations Dashboard (M05): http://localhost:3001/d/platform-inference-operations")
+    print("  - Grafana Kubernetes Dashboard (M06): http://localhost:3001/d/platform-kubernetes-scheduling")
+    print(f"  - Prometheus Metrics:                 {base_url}/metrics")
     return 0
 
 
