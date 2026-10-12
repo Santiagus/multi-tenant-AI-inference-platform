@@ -39,6 +39,8 @@ interface JobRow {
   tenant_id: string;
   idempotency_key: string | null;
   request_hash?: string | null;
+  correlation_id?: string | null;
+  traceparent?: string | null;
   model_id: string;
   routing_preference: string;
   priority: number;
@@ -68,6 +70,8 @@ function mapRowToJob(row: JobRow): Job {
     tenantId: row.tenant_id,
     idempotencyKey: row.idempotency_key,
     requestHash: row.request_hash ?? null,
+    correlationId: row.correlation_id ?? null,
+    traceparent: row.traceparent ?? null,
     modelId: row.model_id,
     routingPreference: (row.routing_preference as RoutingPreferenceType) || RoutingPreference.AUTO,
     priority: row.priority,
@@ -101,15 +105,17 @@ export class PostgresJobRepository implements IJobRepository {
     const priority = input.priority ?? 5;
     const idempotencyKey = input.idempotencyKey ?? null;
     const requestHash = input.requestHash ?? null;
+    const correlationId = input.correlationId ?? null;
+    const traceparent = input.traceparent ?? null;
     const inputPayload = input.inputPayload ? JSON.stringify(input.inputPayload) : null;
     const inputUri = input.inputUri ?? null;
     const maxRetries = input.maxRetries ?? 3;
 
     const query = `
       INSERT INTO jobs (
-        id, tenant_id, idempotency_key, request_hash, model_id, routing_preference,
-        priority, status, input_payload, input_uri, max_retries
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        id, tenant_id, idempotency_key, request_hash, correlation_id, traceparent,
+        model_id, routing_preference, priority, status, input_payload, input_uri, max_retries
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *;
     `;
 
@@ -118,6 +124,8 @@ export class PostgresJobRepository implements IJobRepository {
       input.tenantId,
       idempotencyKey,
       requestHash,
+      correlationId,
+      traceparent,
       input.modelId,
       routingPreference,
       priority,
@@ -257,6 +265,8 @@ export class InMemoryJobRepository implements IJobRepository {
       tenantId: input.tenantId,
       idempotencyKey: input.idempotencyKey ?? null,
       requestHash: input.requestHash ?? null,
+      correlationId: input.correlationId ?? null,
+      traceparent: input.traceparent ?? null,
       modelId: input.modelId,
       routingPreference: input.routingPreference ?? RoutingPreference.AUTO,
       priority: input.priority ?? 5,

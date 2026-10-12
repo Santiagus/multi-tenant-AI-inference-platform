@@ -56,6 +56,22 @@ export class SqsQueueClient implements IQueueClient {
             DataType: 'String',
             StringValue: message.modelId,
           },
+          ...(message.correlationId
+            ? {
+                correlationId: {
+                  DataType: 'String',
+                  StringValue: message.correlationId,
+                },
+              }
+            : {}),
+          ...(message.traceparent
+            ? {
+                traceparent: {
+                  DataType: 'String',
+                  StringValue: message.traceparent,
+                },
+              }
+            : {}),
         },
       })
     );
@@ -160,6 +176,21 @@ export class SqsQueueClient implements IQueueClient {
         ReceiptHandle: receiptHandle,
       })
     );
+  }
+
+  async getQueueDepth(): Promise<number> {
+    try {
+      const res = await this.client.send(
+        new GetQueueAttributesCommand({
+          QueueUrl: this.queueUrl,
+          AttributeNames: ['ApproximateNumberOfMessages'],
+        })
+      );
+      const val = Number(res.Attributes?.ApproximateNumberOfMessages ?? '0');
+      return isNaN(val) ? 0 : val;
+    } catch {
+      return 0;
+    }
   }
 
   async isHealthy(): Promise<boolean> {
