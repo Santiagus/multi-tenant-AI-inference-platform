@@ -114,22 +114,25 @@ describe('AWS Cloud Platform, Least-Privilege IAM & Ephemeral Lifecycle Routes (
     assert.equal(destroyBody.surviving_resources, 0);
     assert.equal(destroyBody.post_destroy_hourly_cost_usd, 0.0);
 
-    // 6. Execute Two-Path workflows via POST /v1/cloud/aws/workflows/execute (Path A & Path B)
+    // 6. Execute Two-Path workflows via POST /v1/cloud/aws/workflows/execute (text_to_image, text_to_video, video_to_video)
     const pathARes = await app.inject({
       method: 'POST',
       url: '/v1/cloud/aws/workflows/execute',
       headers: { 'x-tenant-id': 'tenant-aws' },
       payload: {
         path: 'path_a_sqs_keda',
+        modality: 'text_to_image',
         job_id: 'job-path-a-rest',
-        prompt: 'Fast SQS + KEDA single-hop inference',
+        prompt: 'Fast SQS + KEDA single-hop keyframe inference',
         use_torchscript: true,
       },
     });
     assert.equal(pathARes.statusCode, 200);
     const pathABody = JSON.parse(pathARes.body);
     assert.equal(pathABody.path, 'path_a_sqs_keda');
+    assert.equal(pathABody.modality, 'text_to_image');
     assert.equal(pathABody.backend, 'pytorch_torchscript_cpu');
+    assert.ok(pathABody.artifacts.cloudfrontMediaUrl.endsWith('/output.png'));
     assert.equal(pathABody.kueueKyvernoAdmission.enforced, false);
 
     const pathBRes = await app.inject({
@@ -138,9 +141,14 @@ describe('AWS Cloud Platform, Least-Privilege IAM & Ephemeral Lifecycle Routes (
       headers: { 'x-tenant-id': 'tenant-aws' },
       payload: {
         path: 'path_b_flyte_dag',
+        modality: 'video_to_video',
         job_id: 'job-path-b-rest',
-        prompt: 'Multi-stage Flyte + Kueue + Kyverno media DAG',
+        prompt: 'Multi-stage Flyte + Kueue + Kyverno video modification DAG',
         asset_uri: 's3://inference-ephemeral-artifacts/tenants/tenant-aws/inputs/clip.mp4',
+        fps: 24,
+        duration_seconds: 4,
+        edit_operation: 'style_transfer',
+        edit_strength: 0.8,
         use_torchscript: true,
         max_new_tokens: 32,
       },
@@ -148,8 +156,11 @@ describe('AWS Cloud Platform, Least-Privilege IAM & Ephemeral Lifecycle Routes (
     assert.equal(pathBRes.statusCode, 200);
     const pathBBody = JSON.parse(pathBRes.body);
     assert.equal(pathBBody.path, 'path_b_flyte_dag');
+    assert.equal(pathBBody.modality, 'video_to_video');
     assert.equal(pathBBody.kueueKyvernoAdmission.enforced, true);
-    assert.ok(pathBBody.artifacts.cloudfrontDeliveryUrl.includes('.cloudfront.net/'));
+    assert.ok(pathBBody.artifacts.cloudfrontMediaUrl.endsWith('/output.mp4'));
+    assert.equal(pathBBody.usageAndBilling.framesGenerated, 96);
+    assert.ok(pathBBody.usageAndBilling.estimatedCostUsd > 0);
 
     const badWorkflowRes = await app.inject({
       method: 'POST',
@@ -163,7 +174,7 @@ describe('AWS Cloud Platform, Least-Privilege IAM & Ephemeral Lifecycle Routes (
     });
     assert.equal(badWorkflowRes.statusCode, 400);
 
-    // 7. Scrape /metrics and verify M07 AWS platform metrics
+    // 7. Scrape /metrics and verify M07 AWS platform and multimodal token/cost metrics
     const metricsRes = await app.inject({
       method: 'GET',
       url: '/metrics',
@@ -173,8 +184,11 @@ describe('AWS Cloud Platform, Least-Privilege IAM & Ephemeral Lifecycle Routes (
     assert.ok(metricsRes.body.includes('aws_estimated_hourly_cost_usd'));
     assert.ok(metricsRes.body.includes('aws_ephemeral_deployments_total'));
     assert.ok(metricsRes.body.includes('aws_iam_policy_evaluations_total'));
+    assert.ok(metricsRes.body.includes('inference_tokens_total'));
+    assert.ok(metricsRes.body.includes('inference_estimated_cost_usd_total'));
 
     await app.close();
   });
 });
+
 

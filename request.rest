@@ -568,7 +568,7 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 10.6 Two-Path Architecture — PATH A: Low-Latency Single-Hop Inference (ECS Fargate -> SQS -> KEDA GPU Worker -> TorchScript -> S3/CloudFront -> Kinesis/Lambda)
+# 10.6 Two-Path Architecture — PATH A (`text_to_image`): Interactive Keyframe Generation (ECS Fargate -> SQS -> KEDA GPU Worker -> TorchScript -> S3/CloudFront .png -> Kinesis/Lambda Billing)
 POST {{baseUrl}}/v1/cloud/aws/workflows/execute
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
@@ -576,17 +576,20 @@ Authorization: Bearer {{apiKey}}
 
 {
   "path": "path_a_sqs_keda",
-  "job_id": "job-path-a-realtime-01",
+  "modality": "text_to_image",
+  "job_id": "job-path-a-keyframe-01",
   "tenant_id": "{{tenantId}}",
   "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-  "prompt": "Generate interactive real-time scene caption via low-latency SQS + KEDA queue path.",
+  "prompt": "Cinematic wide shot of a neon-lit rain-soaked cybernetic alley at dusk, 35mm anamorphic keyframe.",
+  "asset_uri": "tests/fixtures/media/sample_keyframe.png",
+  "resolution": "1280x720",
   "use_torchscript": true,
   "max_new_tokens": 24
 }
 
 ###
 
-# 10.7 Two-Path Architecture — PATH B: Multi-Stage Media/Batch DAG (ECS Fargate -> Flyte [Stage 1 CPU S3 Cache -> Stage 2 Kueue/Kyverno TorchScript GPU -> Stage 3 CPU S3/CloudFront Package] -> Kinesis/Lambda)
+# 10.7 Two-Path Architecture — PATH B (`text_to_video`): Multi-Stage Generative Video DAG (ECS Fargate -> Flyte [Stage 1 CPU S3 Cache -> Stage 2 Kueue/Kyverno TorchScript GPU -> Stage 3 CPU S3/CloudFront .mp4] -> Kinesis/Lambda Billing)
 POST {{baseUrl}}/v1/cloud/aws/workflows/execute
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
@@ -594,13 +597,43 @@ Authorization: Bearer {{apiKey}}
 
 {
   "path": "path_b_flyte_dag",
-  "job_id": "job-path-b-flyte-dag-01",
+  "modality": "text_to_video",
+  "job_id": "job-path-b-t2v-01",
   "tenant_id": "{{tenantId}}",
   "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-  "prompt": "Run multi-stage video conditioning and TorchScript generation pipeline via Flyte + Kueue + Kyverno.",
-  "asset_uri": "s3://inference-ephemeral-artifacts/tenants/tenant-enterprise-01/inputs/raw-clip-4k.mp4",
+  "prompt": "Slow tracking camera through a bioluminescent forest with floating embers, 24fps temporal coherence.",
+  "resolution": "1280x720",
+  "fps": 24,
+  "duration_seconds": 4,
   "use_torchscript": true,
   "max_new_tokens": 32
 }
+
+###
+
+# 10.8 Two-Path Architecture — PATH B (`video_to_video`): Multi-Stage Video Modification / Style Transfer & Motion Edit (Demux & Condition Local Fixture sample_clip.mp4 on CPU with S3 Cache -> Kueue/Kyverno TorchScript GPU -> CloudFront .mp4 + Billing)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_b_flyte_dag",
+  "modality": "video_to_video",
+  "job_id": "job-path-b-v2v-mod-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Transform street footage into stylized stop-motion claymation while preserving subject optical flow.",
+  "asset_uri": "tests/fixtures/media/sample_clip.mp4",
+  "resolution": "1280x720",
+  "fps": 24,
+  "duration_seconds": 4,
+  "edit_operation": "style_transfer",
+  "edit_strength": 0.8,
+  "use_torchscript": true,
+  "max_new_tokens": 32
+}
+
+
 
 

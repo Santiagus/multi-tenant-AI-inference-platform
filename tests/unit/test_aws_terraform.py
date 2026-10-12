@@ -271,20 +271,36 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertFalse(is_warm)
         self.assertEqual(loaded.backend.backend_name, "pytorch_torchscript_cpu")
 
-        # Execute full 3-stage Flyte workflow (Stage 1 CPU -> Stage 2 GPU TorchScript -> Stage 3 S3/CloudFront/Kinesis)
+        # Execute full 3-stage Flyte workflow for text_to_video and video_to_video modification using local MP4 fixture
         out1 = multi_stage_inference_workflow(
             tenant_id="tenant-runway",
             job_id="job-flyte-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Generate multi-stage keyframes and optical flow metadata.",
             max_new_tokens=8,
+            modality="video_to_video",
+            source_asset_uri="tests/fixtures/media/sample_clip.mp4",
+            fps=24,
+            duration_seconds=4,
+            edit_operation="style_transfer",
+            edit_strength=0.8,
             loader=loader,
         )
         self.assertEqual(out1["orchestration_path"], "Path B (Flyte + Kueue + Kyverno)")
+        self.assertEqual(out1["modality"], "video_to_video")
+        self.assertEqual(out1["edit_operation"], "style_transfer")
+        self.assertTrue(out1["asset_inspection"]["exists_on_disk"])
+        self.assertEqual(out1["asset_inspection"]["container_format"], "mp4")
+        self.assertTrue(out1["asset_inspection"]["valid_header"])
+        self.assertGreater(out1["asset_inspection"]["byte_size"], 100)
         self.assertEqual(out1["backend_name"], "pytorch_torchscript_cpu")
         self.assertFalse(out1["flyte_stage1_cache_hit"])
         self.assertIn("cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/result.json", out1["cloudfront_artifact_url"])
+        self.assertIn("cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/output.mp4", out1["cloudfront_media_url"])
+        self.assertEqual(out1["usage"]["frames_generated"], 96)
+        self.assertGreater(out1["usage"]["total_tokens"], 96 * 16)
         self.assertEqual(out1["kinesis_metering_event"]["event_type"], "WORKFLOW_STAGE_COMPLETED")
+        self.assertEqual(out1["kinesis_metering_event"]["modality"], "video_to_video")
 
         # Second invocation with identical Stage 1 inputs hits Flyte task memoization cache
         out2 = multi_stage_inference_workflow(
@@ -293,9 +309,31 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Generate multi-stage keyframes and optical flow metadata.",
             max_new_tokens=8,
+            modality="video_to_video",
+            source_asset_uri="tests/fixtures/media/sample_clip.mp4",
+            fps=24,
+            duration_seconds=4,
+            edit_operation="style_transfer",
+            edit_strength=0.8,
             loader=loader,
         )
         self.assertTrue(out2["flyte_stage1_cache_hit"])
+
+        # Also verify PNG keyframe fixture inspection
+        out_png = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-png-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Keyframe conditioning pass.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/sample_keyframe.png",
+            loader=loader,
+        )
+        self.assertEqual(out_png["asset_inspection"]["container_format"], "png")
+        self.assertEqual(out_png["asset_inspection"]["width"], 64)
+        self.assertEqual(out_png["asset_inspection"]["height"], 64)
+        self.assertTrue(out_png["asset_inspection"]["valid_header"])
 
         # Verify Flyte task specs and rendered K8s GPU Job compliance with Kyverno & Kueue
         specs = get_flyte_pipeline_task_specs()

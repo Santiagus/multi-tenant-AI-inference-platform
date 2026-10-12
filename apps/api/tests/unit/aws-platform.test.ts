@@ -166,35 +166,70 @@ describe('AWS Platform Domain: Least-Privilege IAM, Cost Guardrails & Ephemeral 
       (err: unknown) => err instanceof ValidationError && err.code === 'AWS_GUARDRAIL_VIOLATION'
     );
 
-    // 5. Execute Two-Path Architecture workflows: Path A (SQS+KEDA) and Path B (Flyte+Kueue+Kyverno DAG)
+    // 5. Execute Two-Path Architecture workflows across text_to_image, text_to_video, and video_to_video
     const pathA = controller.executeTwoPathWorkflow({
       path: 'path_a_sqs_keda',
       jobId: 'job-path-a-01',
       tenantId: 'tenant-01',
       modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-      prompt: 'Low latency single-hop inference',
+      prompt: 'Low latency single-hop keyframe inference',
     });
     assert.equal(pathA.path, 'path_a_sqs_keda');
+    assert.equal(pathA.modality, 'text_to_image');
     assert.equal(pathA.backend, 'pytorch_torchscript_cpu');
     assert.equal(pathA.stages.length, 3);
+    assert.ok(pathA.artifacts.cloudfrontMediaUrl.endsWith('/output.png'));
+    assert.equal(pathA.usageAndBilling.framesGenerated, 1);
+    assert.ok(pathA.usageAndBilling.totalTokens > 0);
+    assert.ok(pathA.usageAndBilling.estimatedCostUsd > 0);
     assert.equal(pathA.artifacts.flytePreprocessingCacheKey, null);
     assert.equal(pathA.kueueKyvernoAdmission.enforced, false);
 
-    const pathB = controller.executeTwoPathWorkflow({
+    const pathBT2V = controller.executeTwoPathWorkflow({
       path: 'path_b_flyte_dag',
-      jobId: 'job-path-b-01',
+      jobId: 'job-path-b-t2v-01',
       tenantId: 'tenant-01',
       modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-      prompt: 'Multi-stage Flyte media pipeline',
+      prompt: 'Multi-stage Flyte text-to-video pipeline',
       useTorchscript: false,
       maxNewTokens: 32,
     });
-    assert.equal(pathB.path, 'path_b_flyte_dag');
-    assert.equal(pathB.backend, 'pytorch_cpu');
-    assert.equal(pathB.stages.length, 3);
-    assert.ok(pathB.artifacts.flytePreprocessingCacheKey?.includes('flyte-cache'));
-    assert.equal(pathB.kueueKyvernoAdmission.enforced, true);
-    assert.equal(pathB.kueueKyvernoAdmission.localQueueName, 'tenant-default-gpu-queue');
+    assert.equal(pathBT2V.path, 'path_b_flyte_dag');
+    assert.equal(pathBT2V.modality, 'text_to_video');
+    assert.equal(pathBT2V.backend, 'pytorch_cpu');
+    assert.ok(pathBT2V.artifacts.cloudfrontMediaUrl.endsWith('/output.mp4'));
+    assert.equal(pathBT2V.usageAndBilling.framesGenerated, 96);
+    assert.ok(pathBT2V.artifacts.flytePreprocessingCacheKey?.includes('flyte-cache'));
+    assert.equal(pathBT2V.kueueKyvernoAdmission.enforced, true);
+
+    const pathBV2V = controller.executeTwoPathWorkflow({
+      path: 'path_b_flyte_dag',
+      modality: 'video_to_video',
+      jobId: 'job-path-b-v2v-01',
+      tenantId: 'tenant-01',
+      modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+      prompt: 'Video modification style transfer',
+      assetUri: 's3://inference-ephemeral-artifacts/tenants/tenant-01/inputs/source.mp4',
+      fps: 24,
+      durationSeconds: 4,
+      editOperation: 'style_transfer',
+      editStrength: 0.8,
+    });
+    assert.equal(pathBV2V.modality, 'video_to_video');
+    assert.equal(pathBV2V.stages[0]?.details.editOperation, 'style_transfer');
+    assert.equal(pathBV2V.stages[0]?.details.editStrength, 0.8);
+
+    const pathBV2VDefaults = controller.executeTwoPathWorkflow({
+      path: 'path_b_flyte_dag',
+      modality: 'video_to_video',
+      jobId: 'job-path-b-v2v-defaults',
+      tenantId: 'tenant-01',
+      modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+      prompt: 'Default video modification parameters',
+    });
+    assert.equal(pathBV2VDefaults.stages[0]?.details.editOperation, 'style_transfer');
+    assert.equal(pathBV2VDefaults.stages[0]?.details.editStrength, 0.75);
   });
 });
+
 
