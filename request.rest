@@ -505,3 +505,102 @@ Authorization: Bearer {{apiKey}}
     "dropped_capabilities": []
   }
 }
+
+
+### ==============================================================================
+### USE CASE 10: AWS Ephemeral Cloud Platform, Two-Path Architecture & Guardrails (M07)
+### Inspect Terraform modules, deploy ephemeral S3/CloudFront/SQS/Fargate/Kinesis stack,
+### execute BOTH Path A (SQS+KEDA) and Path B (Flyte+Kueue+Kyverno+TorchScript), and destroy
+### ==============================================================================
+
+# 10.1 Inspect AWS Terraform Module Catalog (7 Modules), Active Ephemeral Runs & Default Budget Guardrails
+GET {{baseUrl}}/v1/cloud/aws/status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.2 Deploy Ephemeral AWS Stack (S3 + CloudFront OAC + SQS + ECS Fargate + Kinesis/Lambda + OIDC/IRSA IAM + Budget, enable_eks=false -> $0.00/hr fixed cost)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/deploy
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "ephemeral_run_id": "ephemeral-rest-demo-01",
+  "environment": "ephemeral",
+  "aws_region": "eu-central-1",
+  "enable_eks": false,
+  "enable_gpu_node_group": false,
+  "gpu_min_nodes": 0,
+  "monthly_budget_limit_usd": 25.0,
+  "ephemeral_ttl_hours": 4
+}
+
+###
+
+# 10.3 Inspect Active Ephemeral Deployment Status
+GET {{baseUrl}}/v1/cloud/aws/status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.4 Guardrail Rejection Test: Wildcard IAM Actions & Static Access Keys Rejected (400 AWS_GUARDRAIL_VIOLATION)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/deploy
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "ephemeral_run_id": "ephemeral-rest-rejected-iam",
+  "use_long_lived_access_keys": true,
+  "iam_actions": ["s3:*", "sqs:*"],
+  "iam_resources": ["*"]
+}
+
+###
+
+# 10.5 Destroy Ephemeral AWS Stack (Verifies surviving_resources = 0 and post_destroy_hourly_cost_usd = 0)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/ephemeral-rest-demo-01/destroy
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.6 Two-Path Architecture — PATH A: Low-Latency Single-Hop Inference (ECS Fargate -> SQS -> KEDA GPU Worker -> TorchScript -> S3/CloudFront -> Kinesis/Lambda)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "job_id": "job-path-a-realtime-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Generate interactive real-time scene caption via low-latency SQS + KEDA queue path.",
+  "use_torchscript": true,
+  "max_new_tokens": 24
+}
+
+###
+
+# 10.7 Two-Path Architecture — PATH B: Multi-Stage Media/Batch DAG (ECS Fargate -> Flyte [Stage 1 CPU S3 Cache -> Stage 2 Kueue/Kyverno TorchScript GPU -> Stage 3 CPU S3/CloudFront Package] -> Kinesis/Lambda)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_b_flyte_dag",
+  "job_id": "job-path-b-flyte-dag-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Run multi-stage video conditioning and TorchScript generation pipeline via Flyte + Kueue + Kyverno.",
+  "asset_uri": "s3://inference-ephemeral-artifacts/tenants/tenant-enterprise-01/inputs/raw-clip-4k.mp4",
+  "use_torchscript": true,
+  "max_new_tokens": 32
+}
+
+
