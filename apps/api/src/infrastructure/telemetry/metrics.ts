@@ -144,6 +144,36 @@ export class MetricsRegistry {
       'worker_process_rss_mb',
       'Worker process resident set size (RSS) memory in MiB'
     );
+
+    // Kubernetes scheduling, KEDA autoscaling, Kueue admission & Kyverno policy metrics (M06)
+    this.defineGauge(
+      'keda_scaler_desired_replicas',
+      'Desired worker pod replica count calculated by KEDA queue-depth scaler'
+    );
+    this.defineGauge(
+      'keda_scaler_active_replicas',
+      'Current active worker pod replica count reported to KEDA scaler'
+    );
+    this.defineGauge(
+      'kueue_cluster_queue_gpu_quota_used',
+      'Current NVIDIA GPU count allocated to admitted Kueue batch workloads'
+    );
+    this.defineGauge(
+      'kueue_cluster_queue_gpu_quota_nominal',
+      'Nominal NVIDIA GPU quota configured on the Kueue ClusterQueue'
+    );
+    this.defineGauge(
+      'kueue_pending_workloads',
+      'Number of batch GPU workloads suspended and waiting for quota in Kueue ClusterQueue'
+    );
+    this.defineCounter(
+      'kueue_admitted_workloads_total',
+      'Total number of GPU/batch workloads admitted by Kueue ClusterQueue'
+    );
+    this.defineCounter(
+      'kyverno_policy_evaluations_total',
+      'Total number of Kubernetes admission evaluations checked against Kyverno policies'
+    );
   }
 
   defineCounter(name: string, help: string): void {
