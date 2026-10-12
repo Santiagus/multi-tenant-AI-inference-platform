@@ -363,4 +363,62 @@ x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
 
+### ==============================================================================
+### USE CASE 8: End-to-End Distributed Tracing, Correlation & Prometheus Metrics (M05)
+### Follow a single job across API -> authorization -> queue -> worker -> inference -> artifact
+### ==============================================================================
+
+# 8.1 Submit Job with Explicit W3C traceparent and x-correlation-id
+# @name submitTracedJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+x-correlation-id: corr-m05-trace-demo-001
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "routing_preference": "local",
+  "priority": 7,
+  "input": {
+    "prompt": "Follow this workload across API, authorization, queue, worker, inference, and S3 artifact.",
+    "parameters": {
+      "max_new_tokens": 24,
+      "temperature": 0.7
+    }
+  }
+}
+
+### Auto-captured Job ID from 8.1
+@tracedJobId = {{submitTracedJob.response.body.job_id}}
+
+###
+
+# 8.2 Trigger Worker Execution (Emits job_processing, inference_execution, and artifact_storage spans)
+POST {{baseUrl}}/v1/worker/process-next
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 8.3 Inspect Full End-to-End Distributed Trace for Job (API -> AuthZ -> Queue -> Worker -> Inference -> Artifact)
+GET {{baseUrl}}/v1/jobs/{{tracedJobId}}/trace
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 8.4 Query Distributed Spans by Correlation ID
+GET {{baseUrl}}/v1/traces/by-correlation/corr-m05-trace-demo-001
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 8.5 Scrape Prometheus Metrics (Request Rate, Queue Depth, Queue Wait, Latency P50/P95/P99, Tokens, Retries, DLQ, GPU Telemetry)
+GET {{baseUrl}}/metrics
+
+
+
 
