@@ -420,5 +420,88 @@ Authorization: Bearer {{apiKey}}
 GET {{baseUrl}}/metrics
 
 
+### ==============================================================================
+### USE CASE 9: Kubernetes KEDA Queue Autoscaling, Kueue Batch Admission & Kyverno (M06)
+### Inspect KEDA queue-depth replica scaling, submit GPU batch jobs to Kueue, and test Kyverno policy
+### ==============================================================================
 
+# 9.1 Inspect KEDA ScaledObject & Kueue ClusterQueue Status (Live Queue Depth & Simulated Burst)
+GET {{baseUrl}}/v1/k8s/autoscaling/status?queue_depth=18&in_flight_jobs=2&current_replicas=1
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
 
+###
+
+# 9.2 Submit Batch GPU Workload #1 to Kueue ClusterQueue (Admitted Immediately, 1/2 Nominal GPU Used)
+POST {{baseUrl}}/v1/k8s/kueue/workloads
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload_id": "batch-gpu-job-rest-01",
+  "local_queue_name": "tenant-default-gpu-queue",
+  "priority_class": "inference-batch-standard",
+  "gpu_count": 1,
+  "cpu_millicores": 2000,
+  "memory_mb": 8192
+}
+
+###
+
+# 9.3 Submit Batch GPU Workload #2 to Kueue ClusterQueue (Admitted Immediately, 2/2 Nominal GPU Used)
+POST {{baseUrl}}/v1/k8s/kueue/workloads
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload_id": "batch-gpu-job-rest-02",
+  "local_queue_name": "tenant-default-gpu-queue",
+  "priority_class": "inference-batch-standard",
+  "gpu_count": 1,
+  "cpu_millicores": 2000,
+  "memory_mb": 8192
+}
+
+###
+
+# 9.4 Submit High-Priority GPU Workload #3 While Nominal Quota is Full (Suspended & Queued at Head of ClusterQueue)
+POST {{baseUrl}}/v1/k8s/kueue/workloads
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload_id": "batch-gpu-job-rest-03-high",
+  "local_queue_name": "tenant-default-gpu-queue",
+  "priority_class": "inference-realtime-high",
+  "gpu_count": 1,
+  "cpu_millicores": 2000,
+  "memory_mb": 8192
+}
+
+###
+
+# 9.5 Release GPU Workload #1 -> Automatically Admits Queued High-Priority Workload #3
+POST {{baseUrl}}/v1/k8s/kueue/workloads/batch-gpu-job-rest-01/release
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 9.6 Kyverno Admission Policy Rejection Test (Privileged / Root Container Rejected with 400 KYVERNO_POLICY_VIOLATION)
+POST {{baseUrl}}/v1/k8s/kueue/workloads
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload_id": "batch-gpu-job-privileged-rejected",
+  "gpu_count": 1,
+  "security_context": {
+    "run_as_non_root": false,
+    "allow_privilege_escalation": true,
+    "dropped_capabilities": []
+  }
+}
