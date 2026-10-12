@@ -19,5 +19,6 @@ This directory documents the foundational architectural decisions for the **Mult
 | [ADR-0009](0009-argo-cd-gitops-reconciliation.md) | Use Argo CD for Declarative Kubernetes GitOps Reconciliation | Accepted | 2026-10-09 |
 | [ADR-0010](0010-provider-adapter-architecture.md) | Encapsulate Cloud and Local Execution Behind Provider Adapters | Accepted | 2026-10-09 |
 | [ADR-0011](0011-kyverno-admission-policy-enforcement.md) | Enforce Multi-Tenant Pod Security, Resource Bounds, and Kueue Admission via Kyverno ClusterPolicies | Accepted | 2026-10-12 |
+| [ADR-0012](0012-ephemeral-aws-terraform-and-cost-guardrails.md) | Ephemeral-First AWS Terraform Architecture, OIDC/IRSA Least-Privilege IAM, and Cost Guardrails | Accepted | 2026-10-12 |
 
 

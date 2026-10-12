@@ -66,12 +66,16 @@ flowchart TD
 - **Negative / Trade-offs**:
   - Two Kubernetes operators to maintain and monitor in cloud clusters (implemented and verified in Milestone M06).
 
-## Implementation & Verification (M06)
+## Implementation & Verification (M06–M07)
 
+- **Two-Path Orchestration (SQS + KEDA vs. Flyte + Kueue + Kyverno)**:
+  - **Path A (Low-Latency Single-Hop Inference)**: `SQS` + `KEDA` (`keda-scaledobject.yaml`) scales warm Python worker pods (`0 -> N -> 0`) for sub-second queue pickup.
+  - **Path B (Multi-Stage Media & Batch DAGs)**: [`apps/worker/flyte_workflow.py`](../../apps/worker/flyte_workflow.py) defines typed `@task` and `@workflow` stages (`CPU preprocess` $\rightarrow$ `GPU PyTorch/TorchScript inference` $\rightarrow$ `CPU S3/CloudFront/Kinesis packaging`), where only Stage 2 requests `nvidia.com/gpu: 1` and is admitted via **Kueue** (`kueue.x-k8s.io/queue-name`) and validated by **Kyverno** (`ClusterPolicy`).
 - **Helm Templates**:
   - KEDA `TriggerAuthentication` & `ScaledObject`: [`deploy/helm/inference-platform/templates/keda-scaledobject.yaml`](../../deploy/helm/inference-platform/templates/keda-scaledobject.yaml) (dual SQS `ApproximateNumberOfMessagesVisible` + Prometheus `queue_messages_visible` triggers, `minReplicaCount: 0`).
   - Kueue `WorkloadPriorityClass`, `ResourceFlavor`, `ClusterQueue`, `LocalQueue`, and suspended batch GPU `Job`: [`deploy/helm/inference-platform/templates/kueue-admission.yaml`](../../deploy/helm/inference-platform/templates/kueue-admission.yaml).
 - **Control-Plane Evaluator & Telemetry**:
   - [`apps/api/src/domain/kubernetes-scheduler.ts`](../../apps/api/src/domain/kubernetes-scheduler.ts) and [`apps/api/src/routes/kubernetes.ts`](../../apps/api/src/routes/kubernetes.ts) expose `GET /v1/k8s/autoscaling/status`, `POST /v1/k8s/kueue/workloads`, and `POST /v1/k8s/kueue/workloads/:id/release`, tracked in Grafana via [`kubernetes-scheduling.json`](../../deploy/observability/grafana/provisioning/dashboards/json/kubernetes-scheduling.json).
+
 
 
