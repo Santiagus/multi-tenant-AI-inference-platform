@@ -60,6 +60,9 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     }
 
     const tenantId = (req as any).tenantId || 'tenant-default';
+    const correlationId = (req as any).correlationId as string | undefined;
+    const traceparent = (req as any).traceparent as string | undefined;
+    const traceId = (req as any).traceId as string | undefined;
     const idempotencyKey = (req.headers['idempotency-key'] as string) || null;
     const body = parseResult.data;
 
@@ -72,9 +75,13 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         maxRetries: body.max_retries,
         input: body.input,
         inputUri: body.input_uri,
+        correlationId,
+        traceparent,
       },
       idempotencyKey
     );
+
+    (req as any).jobId = result.job.id;
 
     const statusCode = result.isReplay ? 200 : 202;
     const pollUrl = `/v1/jobs/${result.job.id}`;
@@ -84,8 +91,11 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       job_id: result.job.id,
       status: result.job.status,
       model_id: result.job.modelId,
+      correlation_id: result.job.correlationId ?? correlationId ?? null,
+      trace_id: traceId ?? null,
       created_at: result.job.createdAt.toISOString(),
       poll_url: pollUrl,
+      trace_url: `/v1/jobs/${result.job.id}/trace`,
     });
   });
 
@@ -99,6 +109,8 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         message_id: m.messageId,
         job_id: m.body.jobId,
         tenant_id: m.body.tenantId,
+        correlation_id: m.body.correlationId ?? null,
+        traceparent: m.body.traceparent ?? null,
         model_id: m.body.modelId,
         error_code: m.body.errorCode,
         failure_reason: m.body.failureReason,
@@ -121,6 +133,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.get<{ Params: { id: string } }>('/v1/jobs/:id', async (req, reply) => {
     const tenantId = (req as any).tenantId || 'tenant-default';
     const job = await jobService.getJob(tenantId, req.params.id);
+    (req as any).jobId = job.id;
 
     // Format artifacts if an outputUri exists
     const artifacts = [];
@@ -138,10 +151,15 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       });
     }
 
+    const traceId = job.traceparent?.split('-')[1] ?? null;
+
     const response: Record<string, unknown> = {
       job_id: job.id,
       status: job.status,
       model_id: job.modelId,
+      correlation_id: job.correlationId ?? null,
+      trace_id: traceId,
+      traceparent: job.traceparent ?? null,
       routing_preference: job.routingPreference,
       priority: job.priority,
       provider: job.provider,
