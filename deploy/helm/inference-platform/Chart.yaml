@@ -1,0 +1,17 @@
+apiVersion: v2
+name: inference-platform
+description: Multi-Tenant AI Inference Platform Helm chart (Control Plane API, Async Workers, KEDA Queue Autoscaling, Kueue Batch GPU Admission, Kyverno Policies, Prometheus/Grafana & DCGM Exporter)
+type: application
+version: 0.6.0
+appVersion: "0.6.0"
+keywords:
+  - ai-inference
+  - multi-tenant
+  - keda
+  - kueue
+  - kyverno
+  - dcgm
+  - observability
+maintainers:
+  - name: Platform Architecture Team
+

@@ -1,0 +1,52 @@
+# GPU Node Profile (NVIDIA RTX 5070 Ti / Cloud GPU Nodes + DCGM Exporter)
+global:
+  environment: gpu-cluster
+  tenantDefault: tenant-default
+
+worker:
+  replicaCount: 1
+  executionMode: pytorch-cuda
+  runtimeClassName: nvidia
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+    workload-role: gpu-inference
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Equal"
+      value: "present"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "4Gi"
+    limits:
+      cpu: "4000m"
+      memory: "12Gi"
+      nvidiaGpu: 1
+
+keda:
+  enabled: true
+  minReplicaCount: 0
+  maxReplicaCount: 4
+  targetQueueDepthPerReplica: 2
+  activationQueueDepthThreshold: 1
+
+kueue:
+  enabled: true
+  quotas:
+    nominalCpu: "16"
+    borrowingLimitCpu: "8"
+    nominalMemory: "64Gi"
+    borrowingLimitMemory: "32Gi"
+    nominalGpu: 2
+    borrowingLimitGpu: 2
+
+gpu:
+  enabled: true
+  dcgmExporter:
+    enabled: true
+    port: 9400
+    runtimeClassName: nvidia
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+

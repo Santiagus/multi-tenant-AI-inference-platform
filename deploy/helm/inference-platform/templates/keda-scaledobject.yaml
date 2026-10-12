@@ -1,0 +1,69 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Values.worker.name }}-queue-auth
+  namespace: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.worker.name }}
+    app.kubernetes.io/component: keda-autoscaler
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  podIdentity:
+    provider: aws
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Values.worker.name }}-queue-scaler
+  namespace: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.worker.name }}
+    app.kubernetes.io/component: keda-autoscaler
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tenant: {{ .Values.global.tenantDefault }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.worker.name }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {{ .Values.keda.cooldownPeriod }}
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: {{ .Values.worker.name }}-queue-auth
+      metadata:
+        queueURL: {{ .Values.api.env.sqsQueueUrl | quote }}
+        queueLength: {{ .Values.keda.targetQueueDepthPerReplica | quote }}
+        activationQueueLength: {{ .Values.keda.activationQueueDepthThreshold | quote }}
+        awsRegion: {{ .Values.keda.awsRegion | quote }}
+        awsEndpoint: {{ .Values.api.env.sqsEndpoint | quote }}
+        scaleOnInFlight: "true"
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheusAddress | quote }}
+        metricName: queue_messages_visible
+        query: sum(queue_messages_visible{queue_name="{{ .Values.keda.queueName }}"})
+        threshold: {{ .Values.keda.targetQueueDepthPerReplica | quote }}
+        activationThreshold: {{ .Values.keda.activationQueueDepthThreshold | quote }}
+{{- end }}
+

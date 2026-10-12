@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.api.name }}
+  namespace: {{ .Values.global.namespaces.controlPlane }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.api.name }}
+    app.kubernetes.io/component: control-plane-api
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ .Values.api.name }}
+    app.kubernetes.io/component: control-plane-api
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- if eq .Values.api.service.type "NodePort" }}
+      nodePort: {{ .Values.api.service.nodePort }}
+{{- end }}
+

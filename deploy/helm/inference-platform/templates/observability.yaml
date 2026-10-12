@@ -1,0 +1,69 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.observability.prometheus.serviceName }}-config
+  namespace: {{ .Values.global.namespaces.observability }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.observability.prometheus.serviceName }}
+    app.kubernetes.io/component: prometheus
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.observability.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.observability.prometheus.scrapeInterval }}
+    scrape_configs:
+      - job_name: 'control-plane-api'
+        metrics_path: '/metrics'
+        static_configs:
+          - targets: ['{{ .Values.api.name }}.{{ .Values.global.namespaces.controlPlane }}.svc.cluster.local:{{ .Values.api.service.port }}']
+            labels:
+              service: 'control-plane-api'
+              namespace: '{{ .Values.global.namespaces.controlPlane }}'
+      - job_name: 'otel-collector'
+        static_configs:
+          - targets: ['{{ .Values.observability.otelCollector.serviceName }}.{{ .Values.global.namespaces.observability }}.svc.cluster.local:{{ .Values.observability.otelCollector.metricsPort }}']
+            labels:
+              service: 'otel-collector'
+      - job_name: 'keda-operator-metrics'
+        static_configs:
+          - targets: ['keda-operator-metrics-apiserver.keda.svc.cluster.local:8080']
+            labels:
+              service: 'keda-autoscaler'
+      - job_name: 'kueue-admission-metrics'
+        static_configs:
+          - targets: ['kueue-controller-manager-metrics-service.kueue-system.svc.cluster.local:8080']
+            labels:
+              service: 'kueue-admission'
+{{- if .Values.gpu.dcgmExporter.enabled }}
+      - job_name: 'nvidia-dcgm-exporter'
+        static_configs:
+          - targets: ['dcgm-exporter.{{ .Values.global.namespaces.observability }}.svc.cluster.local:{{ .Values.gpu.dcgmExporter.port }}']
+            labels:
+              service: 'dcgm-exporter'
+              hardware: 'nvidia-gpu'
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.api.name }}-servicemonitor
+  namespace: {{ .Values.global.namespaces.observability }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.api.name }}
+    app.kubernetes.io/component: prometheus-servicemonitor
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.global.namespaces.controlPlane }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.api.name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.observability.prometheus.scrapeInterval }}
+{{- end }}
+

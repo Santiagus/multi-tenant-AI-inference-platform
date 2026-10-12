@@ -1,0 +1,147 @@
+global:
+  environment: local
+  tenantDefault: tenant-default
+  namespaces:
+    controlPlane: inference-platform
+    workers: inference-workers
+    observability: observability
+
+api:
+  name: inference-api
+  replicaCount: 2
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/api
+    tag: "0.6.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+    nodePort: 30080
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  env:
+    nodeEnv: production
+    logLevel: info
+    databaseUrlSecretName: platform-runtime-config
+    s3Endpoint: http://platform-minio.inference-platform.svc.cluster.local:9000
+    s3Region: us-east-1
+    s3Bucket: platform-artifacts
+    sqsEndpoint: http://platform-elasticmq.inference-platform.svc.cluster.local:9324
+    sqsRegion: us-east-1
+    sqsQueueUrl: http://platform-elasticmq.inference-platform.svc.cluster.local:9324/000000000000/inference-jobs
+    sqsDlqUrl: http://platform-elasticmq.inference-platform.svc.cluster.local:9324/000000000000/inference-jobs-dlq
+
+worker:
+  name: inference-worker
+  replicaCount: 1
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/worker
+    tag: "0.6.0"
+    pullPolicy: IfNotPresent
+  executionMode: cpu-fallback
+  runtimeClassName: ""
+  nodeSelector:
+    workload-role: api-and-cpu-worker
+  tolerations: []
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+      nvidiaGpu: 0
+
+keda:
+  enabled: true
+  pollingInterval: 5
+  cooldownPeriod: 30
+  minReplicaCount: 0
+  maxReplicaCount: 8
+  targetQueueDepthPerReplica: 5
+  activationQueueDepthThreshold: 1
+  queueName: inference-jobs
+  awsRegion: us-east-1
+  prometheusAddress: http://platform-prometheus.observability.svc.cluster.local:9090
+
+kueue:
+  enabled: true
+  cohortName: tenant-shared-gpu-cohort
+  clusterQueueName: gpu-inference-cluster-queue
+  localQueueName: tenant-default-gpu-queue
+  flavors:
+    gpu:
+      name: nvidia-rtx-5070-ti-flavor
+      nodeLabelKey: nvidia.com/gpu.present
+      nodeLabelValue: "true"
+      taintKey: nvidia.com/gpu
+    cpu:
+      name: cpu-fallback-flavor
+      nodeLabelKey: platform.ai/node-pool
+      nodeLabelValue: cpu-general
+  quotas:
+    nominalCpu: "16"
+    borrowingLimitCpu: "8"
+    nominalMemory: "64Gi"
+    borrowingLimitMemory: "32Gi"
+    nominalGpu: 2
+    borrowingLimitGpu: 2
+  batchJobTemplate:
+    enabled: true
+    name: batch-gpu-inference-template
+    priorityClassName: inference-batch-standard
+    parallelism: 1
+    completions: 1
+    backoffLimit: 2
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "4Gi"
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
+        nvidiaGpu: 1
+
+kyverno:
+  enabled: true
+  validationFailureAction: Enforce
+
+observability:
+  enabled: true
+  prometheus:
+    serviceName: platform-prometheus
+    port: 9090
+    scrapeInterval: 5s
+  grafana:
+    serviceName: platform-grafana
+    port: 3000
+  otelCollector:
+    serviceName: platform-otel-collector
+    grpcPort: 4317
+    httpPort: 4318
+    metricsPort: 8889
+
+gpu:
+  enabled: false
+  dcgmExporter:
+    enabled: false
+    image:
+      repository: nvcr.io/nvidia/k8s/dcgm-exporter
+      tag: "3.3.5-3.4.0-ubuntu22.04"
+      pullPolicy: IfNotPresent
+    port: 9400
+    runtimeClassName: nvidia
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+

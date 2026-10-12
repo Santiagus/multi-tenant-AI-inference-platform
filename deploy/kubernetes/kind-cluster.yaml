@@ -1,0 +1,40 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: inference-platform-local
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 3000
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 9090
+        protocol: TCP
+      - containerPort: 30031
+        hostPort: 3001
+        protocol: TCP
+  - role: worker
+    labels:
+      platform.ai/node-pool: cpu-general
+      workload-role: api-and-cpu-worker
+  - role: worker
+    labels:
+      platform.ai/node-pool: gpu-inference
+      workload-role: gpu-inference
+      nvidia.com/gpu.present: "true"
+      nvidia.com/gpu.product: "NVIDIA-GeForce-RTX-5070-Ti"
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: "nvidia.com/gpu"
+              value: "present"
+              effect: "NoSchedule"
+
