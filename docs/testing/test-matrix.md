@@ -13,7 +13,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M02** | Local Platform Skeleton | Local Compose (PostgreSQL, MinIO, ElasticMQ, API) | Fastify contracts, DB migrations, S3/SQS adapters, lifecycle E2E | **Passed** |
 | **M03** | Asynchronous Inference | Local Worker Daemon | Queue consumers, retry backoff, DLQ quarantine, Russian Doll profiling | **Passed** |
 | **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | **Passed** |
-| **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | _Planned_ |
+| **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | **Passed** |
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | _Planned_ |
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | _Planned_ |
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | _Planned_ |
@@ -82,15 +82,28 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 5. Maintenance Rules for Subsequent Milestones
+## 5. M05 Verification Matrix (Observability, Tracing & Dashboards)
 
-When implementing future milestones (M05–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-30** | **W3C TraceContext & AsyncLocalStorage Propagation** | Unit | Simulated | `tracer.ts`, `request-context.ts` | Parses and validates `traceparent`, propagates `traceId`, `spanId`, and `correlationId` across nested async boundaries, and enforces tenant isolation on span queries. | `apps/api/tests/unit/observability.test.ts` |
+| **TC-31** | **End-to-End Job Trace Across All 6 Lifecycle Stages** | Integration | Simulated | `GET /v1/jobs/:id/trace`, `GET /v1/traces/by-correlation/:correlationId` | Follows a single job across `authorization` → `queue_enqueue` → `http_request` → `job_processing` → `inference_execution` → `artifact_storage` with shared `trace_id` and `correlation_id`. | `apps/api/tests/integration/observability-routes.test.ts`<br>`request.rest` (Cycle 8.1–8.4) |
+| **TC-32** | **Python Worker & S3 Artifact Trace Context Propagation** | Unit / Integration | Measured (Live Subprocess) | `WorkerRuntime`, `ArtifactHandler`, `PythonWorkerInferenceExecutor` | Propagates `correlation_id` and `traceparent` into Python worker subprocess payload, response metadata, and serialized `result.json` S3 artifact. | `tests/unit/test_observability.py`<br>`apps/api/tests/unit/job-worker.test.ts` |
+| **TC-33** | **Prometheus Metrics Exposition & P50/P95/P99 Quantiles** | Unit / Integration | Simulated | `metrics.ts`, `GET /metrics` | Exposes request rate, queue depth, queue wait, inference latency histograms + P50/P95/P99 quantiles, token/cost counters, error/retry/DLQ counters, worker utilization, and DCGM GPU gauges. | `apps/api/tests/unit/observability.test.ts`<br>`apps/api/tests/integration/observability-routes.test.ts`<br>`request.rest` (Cycle 8.5) |
+| **TC-34** | **OTel Collector, Prometheus & Grafana Operational Dashboard** | Unit | Local File Validator | `deploy/observability/`, `docker-compose.yml` | Validates OTel Collector pipeline, Prometheus scrape targets, Grafana datasource/dashboard provisioning, and operational panels covering all required metrics. | `tests/unit/test_observability.py` |
+
+---
+
+## 6. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M06–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M05 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M06 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).
    - `Measured (Live)`: Backed by real hardware execution (e.g. RTX 5070 Ti CUDA tokens/sec or AWS cloud API calls).
 4. **CI Requirement**: All automated test cases added to the matrix must execute and pass in `make test` and `make ci`.
+
 
 
