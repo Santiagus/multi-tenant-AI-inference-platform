@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespaces.controlPlane }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tier: control-plane
+    platform.ai/environment: {{ .Values.global.environment | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tier: inference-workers
+    platform.ai/environment: {{ .Values.global.environment | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespaces.observability }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tier: observability
+    platform.ai/environment: {{ .Values.global.environment | quote }}
+

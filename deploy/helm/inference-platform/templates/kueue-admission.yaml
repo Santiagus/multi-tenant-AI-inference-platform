@@ -1,0 +1,171 @@
+{{- if .Values.kueue.enabled }}
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: WorkloadPriorityClass
+metadata:
+  name: inference-realtime-high
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+value: 1000
+description: "High-priority interactive or SLA-bound inference workloads"
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: WorkloadPriorityClass
+metadata:
+  name: inference-batch-standard
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+value: 500
+description: "Standard priority asynchronous batch GPU inference workloads"
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: WorkloadPriorityClass
+metadata:
+  name: inference-batch-backfill
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+value: 100
+description: "Opportunistic backfill batch inference jobs borrowing idle GPU quota"
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: {{ .Values.kueue.flavors.gpu.name }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  nodeLabels:
+    {{ .Values.kueue.flavors.gpu.nodeLabelKey }}: {{ .Values.kueue.flavors.gpu.nodeLabelValue | quote }}
+  nodeTaints:
+    - key: {{ .Values.kueue.flavors.gpu.taintKey | quote }}
+      value: "present"
+      effect: NoSchedule
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: {{ .Values.kueue.flavors.cpu.name }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  nodeLabels:
+    {{ .Values.kueue.flavors.cpu.nodeLabelKey }}: {{ .Values.kueue.flavors.cpu.nodeLabelValue | quote }}
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: {{ .Values.kueue.clusterQueueName }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  namespaceSelector: {}
+  cohort: {{ .Values.kueue.cohortName }}
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    withinClusterQueue: LowerPriority
+    reclaimWithinCohort: Any
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+      flavors:
+        - name: {{ .Values.kueue.flavors.gpu.name }}
+          resources:
+            - name: "cpu"
+              nominalQuota: {{ .Values.kueue.quotas.nominalCpu | quote }}
+              borrowingLimit: {{ .Values.kueue.quotas.borrowingLimitCpu | quote }}
+            - name: "memory"
+              nominalQuota: {{ .Values.kueue.quotas.nominalMemory | quote }}
+              borrowingLimit: {{ .Values.kueue.quotas.borrowingLimitMemory | quote }}
+            - name: "nvidia.com/gpu"
+              nominalQuota: {{ .Values.kueue.quotas.nominalGpu | quote }}
+              borrowingLimit: {{ .Values.kueue.quotas.borrowingLimitGpu | quote }}
+        - name: {{ .Values.kueue.flavors.cpu.name }}
+          resources:
+            - name: "cpu"
+              nominalQuota: {{ .Values.kueue.quotas.nominalCpu | quote }}
+            - name: "memory"
+              nominalQuota: {{ .Values.kueue.quotas.nominalMemory | quote }}
+            - name: "nvidia.com/gpu"
+              nominalQuota: "0"
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: {{ .Values.kueue.localQueueName }}
+  namespace: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tenant: {{ .Values.global.tenantDefault }}
+spec:
+  clusterQueue: {{ .Values.kueue.clusterQueueName }}
+{{- if .Values.kueue.batchJobTemplate.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.kueue.batchJobTemplate.name }}
+  namespace: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.kueue.batchJobTemplate.name }}
+    app.kubernetes.io/component: batch-gpu-inference
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tenant: {{ .Values.global.tenantDefault }}
+    kueue.x-k8s.io/queue-name: {{ .Values.kueue.localQueueName }}
+    kueue.x-k8s.io/priority-class: {{ .Values.kueue.batchJobTemplate.priorityClassName }}
+spec:
+  suspend: true
+  parallelism: {{ .Values.kueue.batchJobTemplate.parallelism }}
+  completions: {{ .Values.kueue.batchJobTemplate.completions }}
+  backoffLimit: {{ .Values.kueue.batchJobTemplate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.kueue.batchJobTemplate.name }}
+        app.kubernetes.io/component: batch-gpu-inference
+        app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+        platform.ai/tenant: {{ .Values.global.tenantDefault }}
+        kueue.x-k8s.io/queue-name: {{ .Values.kueue.localQueueName }}
+    spec:
+      restartPolicy: Never
+      runtimeClassName: nvidia
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Equal"
+          value: "present"
+          effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: batch-worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          args: ["python3", "-m", "apps.worker.consumer", "--healthcheck"]
+          env:
+            - name: WORKER_EXECUTION_MODE
+              value: "pytorch-cuda"
+            - name: DEFAULT_TENANT_ID
+              value: {{ .Values.global.tenantDefault | quote }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: {{ .Values.kueue.batchJobTemplate.resources.requests.cpu | quote }}
+              memory: {{ .Values.kueue.batchJobTemplate.resources.requests.memory | quote }}
+              nvidia.com/gpu: {{ .Values.kueue.batchJobTemplate.resources.limits.nvidiaGpu | quote }}
+            limits:
+              cpu: {{ .Values.kueue.batchJobTemplate.resources.limits.cpu | quote }}
+              memory: {{ .Values.kueue.batchJobTemplate.resources.limits.memory | quote }}
+              nvidia.com/gpu: {{ .Values.kueue.batchJobTemplate.resources.limits.nvidiaGpu | quote }}
+{{- end }}
+{{- end }}
+

@@ -1,0 +1,53 @@
+# Local Kind / k3d CPU-First Kubernetes Profile
+global:
+  environment: local-kind
+  tenantDefault: tenant-default
+
+api:
+  replicaCount: 2
+  service:
+    type: NodePort
+    port: 3000
+    nodePort: 30080
+
+worker:
+  replicaCount: 1
+  executionMode: cpu-fallback
+  runtimeClassName: ""
+  nodeSelector:
+    workload-role: api-and-cpu-worker
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1500m"
+      memory: "1Gi"
+      nvidiaGpu: 0
+
+keda:
+  enabled: true
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  targetQueueDepthPerReplica: 4
+  activationQueueDepthThreshold: 1
+
+kueue:
+  enabled: true
+  quotas:
+    nominalCpu: "8"
+    borrowingLimitCpu: "4"
+    nominalMemory: "16Gi"
+    borrowingLimitMemory: "8Gi"
+    nominalGpu: 1
+    borrowingLimitGpu: 1
+
+kyverno:
+  enabled: true
+  validationFailureAction: Enforce
+
+gpu:
+  enabled: false
+  dcgmExporter:
+    enabled: false
+

@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.worker.name }}
+  namespace: {{ .Values.global.namespaces.workers }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.worker.name }}
+    app.kubernetes.io/component: inference-worker
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+    platform.ai/tenant: {{ .Values.global.tenantDefault }}
+    platform.ai/execution-mode: {{ .Values.worker.executionMode | quote }}
+{{- if gt (int .Values.worker.resources.limits.nvidiaGpu) 0 }}
+    kueue.x-k8s.io/queue-name: {{ .Values.kueue.localQueueName }}
+{{- end }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.worker.name }}
+      app.kubernetes.io/component: inference-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.worker.name }}
+        app.kubernetes.io/component: inference-worker
+        app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+        platform.ai/tenant: {{ .Values.global.tenantDefault }}
+        platform.ai/execution-mode: {{ .Values.worker.executionMode | quote }}
+{{- if gt (int .Values.worker.resources.limits.nvidiaGpu) 0 }}
+        kueue.x-k8s.io/queue-name: {{ .Values.kueue.localQueueName }}
+{{- end }}
+    spec:
+{{- if .Values.worker.runtimeClassName }}
+      runtimeClassName: {{ .Values.worker.runtimeClassName }}
+{{- end }}
+      nodeSelector:
+{{- range $key, $val := .Values.worker.nodeSelector }}
+        {{ $key }}: {{ $val | quote }}
+{{- end }}
+{{- if .Values.worker.tolerations }}
+      tolerations:
+{{- range .Values.worker.tolerations }}
+        - key: {{ .key | quote }}
+          operator: {{ .operator | quote }}
+          value: {{ .value | quote }}
+          effect: {{ .effect | quote }}
+{{- end }}
+{{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          env:
+            - name: WORKER_ENABLED
+              value: "true"
+            - name: WORKER_EXECUTION_MODE
+              value: {{ .Values.worker.executionMode | quote }}
+            - name: DEFAULT_TENANT_ID
+              value: {{ .Values.global.tenantDefault | quote }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.api.env.s3Endpoint | quote }}
+            - name: S3_REGION
+              value: {{ .Values.api.env.s3Region | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.api.env.s3Bucket | quote }}
+            - name: SQS_ENDPOINT
+              value: {{ .Values.api.env.sqsEndpoint | quote }}
+            - name: SQS_REGION
+              value: {{ .Values.api.env.sqsRegion | quote }}
+            - name: SQS_QUEUE_URL
+              value: {{ .Values.api.env.sqsQueueUrl | quote }}
+            - name: SQS_DLQ_URL
+              value: {{ .Values.api.env.sqsDlqUrl | quote }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: {{ .Values.worker.resources.requests.cpu | quote }}
+              memory: {{ .Values.worker.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.worker.resources.limits.cpu | quote }}
+              memory: {{ .Values.worker.resources.limits.memory | quote }}
+{{- if gt (int .Values.worker.resources.limits.nvidiaGpu) 0 }}
+              nvidia.com/gpu: {{ .Values.worker.resources.limits.nvidiaGpu | quote }}
+{{- end }}
+

@@ -1,0 +1,204 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Inference Operations Dashboard (M05)",
+      "type": "link",
+      "url": "/d/platform-inference-operations",
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Control-Plane Target Up & Readiness Probe Rate (/healthz & /readyz)",
+      "description": "Prometheus scrape target health (up) and Kubernetes liveness/readiness probe request rates over time.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"control-plane-api\"}",
+          "legendFormat": "Target Up ({{instance}})",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (route, status) (rate(http_server_requests_total{route=~\"/healthz|/readyz\"}[1m]))",
+          "legendFormat": "Probe {{route}} (HTTP {{status}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "KEDA Queue-Driven Worker Autoscaling (0 -> N -> 0)",
+      "description": "Desired vs active worker replicas scaled by KEDA ScaledObject in response to visible SQS queue depth.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 4 },
+              { "color": "red", "value": 8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "keda_scaler_desired_replicas",
+          "legendFormat": "KEDA Desired Replicas ({{scaled_object}})",
+          "refId": "A"
+        },
+        {
+          "expr": "keda_scaler_active_replicas",
+          "legendFormat": "KEDA Active Replicas ({{scaled_object}})",
+          "refId": "B"
+        },
+        {
+          "expr": "queue_messages_visible{queue_name=\"inference-jobs\"}",
+          "legendFormat": "Queue Depth (inference-jobs)",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Kueue ClusterQueue GPU Quota Saturation & Pending Queue",
+      "description": "Allocated NVIDIA GPUs vs nominal ClusterQueue quota and suspended batch GPU workloads waiting for quota.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 2 },
+              { "color": "red", "value": 4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "kueue_cluster_queue_gpu_quota_used",
+          "legendFormat": "Used GPU Quota ({{cluster_queue}})",
+          "refId": "A"
+        },
+        {
+          "expr": "kueue_cluster_queue_gpu_quota_nominal",
+          "legendFormat": "Nominal GPU Quota ({{cluster_queue}})",
+          "refId": "B"
+        },
+        {
+          "expr": "kueue_pending_workloads",
+          "legendFormat": "Pending Suspended Workloads ({{cluster_queue}})",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Kueue Workload Admissions & Kyverno Policy Enforcement",
+      "description": "Cumulative Kueue batch GPU admissions by priority class and Kyverno ClusterPolicy pass/fail evaluations.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (priority_class) (kueue_admitted_workloads_total)",
+          "legendFormat": "Kueue Admitted ({{priority_class}})",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (kyverno_policy_evaluations_total)",
+          "legendFormat": "Kyverno Policy ({{result}})",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["inference", "kubernetes", "keda", "kueue", "kyverno", "m06"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Multi-Tenant AI Inference Platform — Kubernetes Scheduling & Autoscaling (M06)",
+  "uid": "platform-kubernetes-scheduling",
+  "version": 1
+}
+

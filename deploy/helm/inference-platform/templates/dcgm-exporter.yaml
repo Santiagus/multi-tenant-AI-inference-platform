@@ -1,0 +1,84 @@
+{{- if .Values.gpu.dcgmExporter.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: {{ .Values.global.namespaces.observability }}
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/component: gpu-telemetry
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+      app.kubernetes.io/component: gpu-telemetry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dcgm-exporter
+        app.kubernetes.io/component: gpu-telemetry
+        app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.gpu.dcgmExporter.port | quote }}
+        prometheus.io/path: "/metrics"
+    spec:
+      runtimeClassName: {{ .Values.gpu.dcgmExporter.runtimeClassName }}
+      nodeSelector:
+{{- range $key, $val := .Values.gpu.dcgmExporter.nodeSelector }}
+        {{ $key }}: {{ $val | quote }}
+{{- end }}
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dcgm-exporter
+          image: "{{ .Values.gpu.dcgmExporter.image.repository }}:{{ .Values.gpu.dcgmExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.gpu.dcgmExporter.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.gpu.dcgmExporter.port }}
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-exporter
+  namespace: {{ .Values.global.namespaces.observability }}
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/component: gpu-telemetry
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/component: gpu-telemetry
+  ports:
+    - name: metrics
+      port: {{ .Values.gpu.dcgmExporter.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
+

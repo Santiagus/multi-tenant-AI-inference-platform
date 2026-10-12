@@ -1,0 +1,114 @@
+{{- if .Values.kyverno.enabled }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root-and-drop-capabilities
+  labels:
+    app.kubernetes.io/component: kyverno-security-policy
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  validationFailureAction: {{ .Values.kyverno.validationFailureAction }}
+  background: true
+  rules:
+    - name: enforce-non-root-and-no-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - {{ .Values.global.namespaces.controlPlane }}
+                - {{ .Values.global.namespaces.workers }}
+      validate:
+        message: "All control-plane and inference worker containers must run as non-root, disallow privilege escalation, and drop ALL capabilities."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                      - ALL
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-workload-resource-bounds
+  labels:
+    app.kubernetes.io/component: kyverno-resource-policy
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  validationFailureAction: {{ .Values.kyverno.validationFailureAction }}
+  background: true
+  rules:
+    - name: require-cpu-and-memory-requests-and-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - {{ .Values.global.namespaces.controlPlane }}
+                - {{ .Values.global.namespaces.workers }}
+      validate:
+        message: "Every container must declare explicit CPU and memory requests and limits."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+    - name: require-kueue-queue-label-for-batch-gpu-jobs
+      match:
+        any:
+          - resources:
+              kinds:
+                - Job
+              namespaces:
+                - {{ .Values.global.namespaces.workers }}
+      validate:
+        message: "Batch GPU Jobs in inference-workers must be suspended at creation and carry a valid kueue.x-k8s.io/queue-name label for Kueue quota admission."
+        pattern:
+          metadata:
+            labels:
+              kueue.x-k8s.io/queue-name: "?*"
+          spec:
+            suspend: true
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-tenant-isolation-labels
+  labels:
+    app.kubernetes.io/component: kyverno-tenancy-policy
+    app.kubernetes.io/part-of: multi-tenant-ai-inference-platform
+spec:
+  validationFailureAction: {{ .Values.kyverno.validationFailureAction }}
+  background: true
+  rules:
+    - name: require-tenant-and-part-of-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - Job
+              namespaces:
+                - {{ .Values.global.namespaces.controlPlane }}
+                - {{ .Values.global.namespaces.workers }}
+      validate:
+        message: "Workloads must declare platform.ai/tenant and app.kubernetes.io/part-of labels for multi-tenant governance and cost attribution."
+        pattern:
+          metadata:
+            labels:
+              platform.ai/tenant: "?*"
+              app.kubernetes.io/part-of: "multi-tenant-ai-inference-platform"
+{{- end }}
+
