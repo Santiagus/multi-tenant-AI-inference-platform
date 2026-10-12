@@ -31,11 +31,19 @@ const DeployEphemeralSchema = z.object({
 
 const ExecuteTwoPathWorkflowSchema = z.object({
   path: z.enum(['path_a_sqs_keda', 'path_b_flyte_dag']),
+  modality: z.enum(['text_to_image', 'text_to_video', 'video_to_video']).optional(),
   job_id: z.string().min(1),
   tenant_id: z.string().min(1).default('tenant-enterprise-01'),
   model_id: z.string().min(1).default('TinyLlama/TinyLlama-1.1B-Chat-v1.0'),
   prompt: z.string().min(1),
   asset_uri: z.string().optional(),
+  resolution: z.string().default('1280x720'),
+  fps: z.number().int().positive().default(24),
+  duration_seconds: z.number().int().nonnegative().default(4),
+  edit_operation: z
+    .enum(['style_transfer', 'inpainting', 'motion_brush', 'camera_control'])
+    .optional(),
+  edit_strength: z.number().min(0).max(1).default(0.75),
   use_torchscript: z.boolean().default(true),
   max_new_tokens: z.number().int().positive().default(24),
 });
@@ -180,16 +188,42 @@ export const awsPlatformRoutes: FastifyPluginAsync<AwsPlatformRoutesOptions> = a
     const body = parsed.data;
     const workflowResult = awsController.executeTwoPathWorkflow({
       path: body.path,
+      modality: body.modality,
       jobId: body.job_id,
       tenantId: body.tenant_id,
       modelId: body.model_id,
       prompt: body.prompt,
       assetUri: body.asset_uri,
+      resolution: body.resolution,
+      fps: body.fps,
+      durationSeconds: body.duration_seconds,
+      editOperation: body.edit_operation,
+      editStrength: body.edit_strength,
       useTorchscript: body.use_torchscript,
       maxNewTokens: body.max_new_tokens,
     });
 
+    metrics.incCounter(
+      'inference_tokens_total',
+      {
+        tenant_id: workflowResult.tenantId,
+        model_id: workflowResult.modelId,
+        modality: workflowResult.modality,
+      },
+      workflowResult.usageAndBilling.totalTokens
+    );
+    metrics.incCounter(
+      'inference_estimated_cost_usd_total',
+      {
+        tenant_id: workflowResult.tenantId,
+        model_id: workflowResult.modelId,
+        modality: workflowResult.modality,
+      },
+      workflowResult.usageAndBilling.estimatedCostUsd
+    );
+
     return reply.status(200).send(workflowResult);
   });
 };
+
 

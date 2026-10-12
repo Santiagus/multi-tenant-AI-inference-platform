@@ -251,14 +251,26 @@ export function evaluateAwsDeploymentGuardrails(
 }
 
 export type OrchestrationPathType = 'path_a_sqs_keda' | 'path_b_flyte_dag';
+export type GenerativeModalityType = 'text_to_image' | 'text_to_video' | 'video_to_video';
+export type VideoEditOperationType =
+  | 'style_transfer'
+  | 'inpainting'
+  | 'motion_brush'
+  | 'camera_control';
 
 export interface TwoPathWorkflowRequest {
   path: OrchestrationPathType;
+  modality?: GenerativeModalityType;
   jobId: string;
   tenantId: string;
   modelId: string;
   prompt: string;
   assetUri?: string;
+  resolution?: string;
+  fps?: number;
+  durationSeconds?: number;
+  editOperation?: VideoEditOperationType;
+  editStrength?: number;
   useTorchscript?: boolean;
   maxNewTokens?: number;
 }
@@ -273,6 +285,7 @@ export interface TwoPathStageRecord {
 
 export interface TwoPathWorkflowResult {
   path: OrchestrationPathType;
+  modality: GenerativeModalityType;
   architecturePattern:
     | 'Path A: Low-Latency Queue (ECS Fargate -> SQS -> KEDA GPU Worker -> S3/CloudFront -> Kinesis)'
     | 'Path B: Multi-Stage DAG (ECS Fargate -> Flyte [CPU Preprocess -> Kueue/Kyverno TorchScript GPU -> CPU Package] -> S3/CloudFront -> Kinesis)';
@@ -284,8 +297,24 @@ export interface TwoPathWorkflowResult {
   stages: TwoPathStageRecord[];
   artifacts: {
     s3ArtifactKey: string;
+    s3MediaKey: string;
     cloudfrontDeliveryUrl: string;
+    cloudfrontMediaUrl: string;
+    cloudfrontPosterUrl: string;
     flytePreprocessingCacheKey: string | null;
+  };
+  usageAndBilling: {
+    label: 'estimated';
+    promptTokens: number;
+    completionTokens: number;
+    spatiotemporalPatchTokens: number;
+    totalTokens: number;
+    framesGenerated: number;
+    resolution: string;
+    fps: number;
+    durationSeconds: number;
+    gpuSeconds: number;
+    estimatedCostUsd: number;
   };
   kueueKyvernoAdmission: {
     enforced: boolean;
@@ -298,7 +327,10 @@ export interface TwoPathWorkflowResult {
     partitionKey: string;
     eventType: 'INFERENCE_COMPLETED';
     orchestrationPath: OrchestrationPathType;
+    modality: GenerativeModalityType;
     tokensGenerated: number;
+    framesGenerated: number;
+    estimatedCostUsd: number;
   };
 }
 
@@ -308,14 +340,33 @@ export class AwsPlatformController {
   executeTwoPathWorkflow(req: TwoPathWorkflowRequest): TwoPathWorkflowResult {
     const useTorchscript = req.useTorchscript ?? true;
     const maxNewTokens = req.maxNewTokens ?? 24;
+    const modality: GenerativeModalityType =
+      req.modality ?? (req.path === 'path_a_sqs_keda' ? 'text_to_image' : 'text_to_video');
+    const resolution = req.resolution ?? '1280x720';
+    const fps = modality === 'text_to_image' ? 1 : (req.fps ?? 24);
+    const durationSeconds = modality === 'text_to_image' ? 0 : (req.durationSeconds ?? 4);
+    const framesGenerated = modality === 'text_to_image' ? 1 : Math.max(1, fps * durationSeconds);
+    const promptTokens = Math.max(4, req.prompt.trim().split(/\s+/).length * 2);
+    const spatiotemporalPatchTokens = framesGenerated * 16;
+    const totalTokens = promptTokens + maxNewTokens + spatiotemporalPatchTokens;
+    const gpuSeconds = Number((framesGenerated * 0.12).toFixed(2));
+    const estimatedCostUsd = Number((totalTokens * 0.000002 + gpuSeconds * 0.00028).toFixed(6));
+
     const backend = useTorchscript ? 'pytorch_torchscript_cpu' : 'pytorch_cpu';
+    const mediaExt = modality === 'text_to_image' ? 'png' : 'mp4';
     const s3ArtifactKey = `tenants/${req.tenantId}/jobs/${req.jobId}/result.json`;
-    const cloudfrontDeliveryUrl = `https://d111111abcdef8.cloudfront.net/${s3ArtifactKey}`;
+    const s3MediaKey = `tenants/${req.tenantId}/jobs/${req.jobId}/output.${mediaExt}`;
+    const s3PosterKey = `tenants/${req.tenantId}/jobs/${req.jobId}/poster.webp`;
+    const cdnBase = 'https://d111111abcdef8.cloudfront.net';
+    const cloudfrontDeliveryUrl = `${cdnBase}/${s3ArtifactKey}`;
+    const cloudfrontMediaUrl = `${cdnBase}/${s3MediaKey}`;
+    const cloudfrontPosterUrl = `${cdnBase}/${s3PosterKey}`;
     const streamName = 'inference-ephemeral-events';
 
     if (req.path === 'path_a_sqs_keda') {
       return {
         path: 'path_a_sqs_keda',
+        modality,
         architecturePattern:
           'Path A: Low-Latency Queue (ECS Fargate -> SQS -> KEDA GPU Worker -> S3/CloudFront -> Kinesis)',
         jobId: req.jobId,
@@ -332,6 +383,7 @@ export class AwsPlatformController {
             details: {
               queueName: 'inference-ephemeral-jobs',
               kedaTargetQueueDepthPerReplica: 5,
+              modality,
             },
           },
           {
@@ -341,7 +393,10 @@ export class AwsPlatformController {
             status: 'SUCCEEDED',
             details: {
               backend,
-              tokensGenerated: maxNewTokens,
+              modality,
+              resolution,
+              framesGenerated,
+              tokensGenerated: totalTokens,
             },
           },
           {
@@ -351,15 +406,33 @@ export class AwsPlatformController {
             status: 'SUCCEEDED',
             details: {
               s3ArtifactKey,
+              s3MediaKey,
               cloudfrontDeliveryUrl,
+              cloudfrontMediaUrl,
               kinesisStream: streamName,
             },
           },
         ],
         artifacts: {
           s3ArtifactKey,
+          s3MediaKey,
           cloudfrontDeliveryUrl,
+          cloudfrontMediaUrl,
+          cloudfrontPosterUrl,
           flytePreprocessingCacheKey: null,
+        },
+        usageAndBilling: {
+          label: 'estimated',
+          promptTokens,
+          completionTokens: maxNewTokens,
+          spatiotemporalPatchTokens,
+          totalTokens,
+          framesGenerated,
+          resolution,
+          fps,
+          durationSeconds,
+          gpuSeconds,
+          estimatedCostUsd,
         },
         kueueKyvernoAdmission: {
           enforced: false,
@@ -372,14 +445,22 @@ export class AwsPlatformController {
           partitionKey: req.tenantId,
           eventType: 'INFERENCE_COMPLETED',
           orchestrationPath: 'path_a_sqs_keda',
-          tokensGenerated: maxNewTokens,
+          modality,
+          tokensGenerated: totalTokens,
+          framesGenerated,
+          estimatedCostUsd,
         },
       };
     }
 
     const cacheKey = `tenants/${req.tenantId}/flyte-cache/${req.jobId}/preprocessed.json`;
+    const editOperation =
+      modality === 'video_to_video' ? (req.editOperation ?? 'style_transfer') : null;
+    const editStrength = modality === 'video_to_video' ? (req.editStrength ?? 0.75) : null;
+
     return {
       path: 'path_b_flyte_dag',
+      modality,
       architecturePattern:
         'Path B: Multi-Stage DAG (ECS Fargate -> Flyte [CPU Preprocess -> Kueue/Kyverno TorchScript GPU -> CPU Package] -> S3/CloudFront -> Kinesis)',
       jobId: req.jobId,
@@ -395,7 +476,12 @@ export class AwsPlatformController {
           status: 'SUCCEEDED',
           details: {
             flyteTask: 'preprocess_media_asset',
-            assetUri: req.assetUri ?? `s3://inference-ephemeral-artifacts/tenants/${req.tenantId}/inputs/${req.jobId}.mp4`,
+            modality,
+            assetUri:
+              req.assetUri ??
+              `s3://inference-ephemeral-artifacts/tenants/${req.tenantId}/inputs/${req.jobId}.mp4`,
+            editOperation,
+            editStrength,
             s3MemoizationCacheKey: cacheKey,
             gpuAllocated: 0,
           },
@@ -410,7 +496,12 @@ export class AwsPlatformController {
             kueueLocalQueue: 'tenant-default-gpu-queue',
             kyvernoPolicyValidated: true,
             backend,
-            tokensGenerated: maxNewTokens,
+            modality,
+            resolution,
+            fps,
+            durationSeconds,
+            framesGenerated,
+            tokensGenerated: totalTokens,
             gpuAllocated: 1,
           },
         },
@@ -422,7 +513,10 @@ export class AwsPlatformController {
           details: {
             flyteTask: 'package_s3_cloudfront_artifact',
             s3ArtifactKey,
+            s3MediaKey,
             cloudfrontDeliveryUrl,
+            cloudfrontMediaUrl,
+            cloudfrontPosterUrl,
             kinesisStream: streamName,
             gpuAllocated: 0,
           },
@@ -430,8 +524,24 @@ export class AwsPlatformController {
       ],
       artifacts: {
         s3ArtifactKey,
+        s3MediaKey,
         cloudfrontDeliveryUrl,
+        cloudfrontMediaUrl,
+        cloudfrontPosterUrl,
         flytePreprocessingCacheKey: cacheKey,
+      },
+      usageAndBilling: {
+        label: 'estimated',
+        promptTokens,
+        completionTokens: maxNewTokens,
+        spatiotemporalPatchTokens,
+        totalTokens,
+        framesGenerated,
+        resolution,
+        fps,
+        durationSeconds,
+        gpuSeconds,
+        estimatedCostUsd,
       },
       kueueKyvernoAdmission: {
         enforced: true,
@@ -444,10 +554,14 @@ export class AwsPlatformController {
         partitionKey: req.tenantId,
         eventType: 'INFERENCE_COMPLETED',
         orchestrationPath: 'path_b_flyte_dag',
-        tokensGenerated: maxNewTokens,
+        modality,
+        tokensGenerated: totalTokens,
+        framesGenerated,
+        estimatedCostUsd,
       },
     };
   }
+
 
   deployEphemeralStack(spec: AwsDeploymentSpec): {
     stack: EphemeralStackRecord;
