@@ -1,0 +1,458 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "API Request Rate (req/sec)",
+      "description": "Control-plane HTTP ingress throughput grouped by route and status code.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 25 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (route, status) (rate(http_server_requests_total[1m]))",
+          "legendFormat": "{{route}} ({{status}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Queue Depth & Active Worker Slots",
+      "description": "Pending SQS messages in inference-jobs queue and active worker concurrency.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 15 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Worker Utilization Ratio" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 0.8 },
+                    { "color": "red", "value": 0.95 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "queue_messages_visible{queue_name=\"inference-jobs\"}",
+          "legendFormat": "Queue Depth (msgs)",
+          "refId": "A"
+        },
+        {
+          "expr": "worker_active_jobs",
+          "legendFormat": "Active Worker Jobs",
+          "refId": "B"
+        },
+        {
+          "expr": "worker_utilization_ratio",
+          "legendFormat": "Worker Utilization Ratio",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Queue Wait Latency (P50 / P95 / P99)",
+      "description": "Time jobs spend waiting in SQS before worker pickup. Dashed lines mark P95 warning (1.0s) and P99 SLA breach (2.5s).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1.0 },
+              { "color": "red", "value": 2.5 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^P95.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/^P99.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, model_id) (rate(queue_wait_duration_seconds_bucket[5m])))",
+          "legendFormat": "P50 ({{model_id}})",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model_id) (rate(queue_wait_duration_seconds_bucket[5m])))",
+          "legendFormat": "P95 ({{model_id}})",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, model_id) (rate(queue_wait_duration_seconds_bucket[5m])))",
+          "legendFormat": "P99 ({{model_id}})",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Inference Execution Latency P50 / P95 / P99",
+      "description": "End-to-end model execution duration. Dashed reference lines mark P95 warning (0.5s) and P99 SLA breach (1.5s).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "red", "value": 1.5 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/.*(P95|q=0\\.95).*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/.*(P99|q=0\\.99).*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, model_id, provider) (rate(inference_job_duration_seconds_bucket[5m])))",
+          "legendFormat": "P50 {{model_id}} ({{provider}})",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model_id, provider) (rate(inference_job_duration_seconds_bucket[5m])))",
+          "legendFormat": "P95 {{model_id}} ({{provider}})",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, model_id, provider) (rate(inference_job_duration_seconds_bucket[5m])))",
+          "legendFormat": "P99 {{model_id}} ({{provider}})",
+          "refId": "C"
+        },
+        {
+          "expr": "inference_job_duration_seconds_quantile",
+          "legendFormat": "Exact q={{quantile}} {{model_id}}",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Token Throughput (tok/s) & TTFT P95 (s)",
+      "description": "Prompt and completion token generation rate alongside Time-To-First-Token P95 latency.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "tps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.25 },
+              { "color": "red", "value": 0.75 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^TTFT P95.*/" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id, model_id, type) (rate(inference_tokens_total[1m]))",
+          "legendFormat": "Tokens/sec {{tenant_id}} ({{type}})",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, model_id) (rate(inference_token_generation_duration_seconds_bucket[5m])))",
+          "legendFormat": "TTFT P95 ({{model_id}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Errors, Transient Retries & DLQ Quarantine (5m window)",
+      "description": "Counts of worker errors, transient retries, DLQ poison pills, and API 4xx rejections. Dashed lines mark warning (1) and critical (3) thresholds.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^DLQ Quarantine.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/^Retries.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (error_code) (increase(inference_job_errors_total[5m]))",
+          "legendFormat": "Errors ({{error_code}})",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (error_type) (increase(inference_job_retries_total[5m]))",
+          "legendFormat": "Retries ({{error_type}})",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (queue_name) (increase(inference_job_dlq_total[5m]))",
+          "legendFormat": "DLQ Quarantine ({{queue_name}})",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (reason) (increase(jobs_rejected_total[5m]))",
+          "legendFormat": "API Rejected ({{reason}})",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "CPU & Host RAM Telemetry (Measured — Active on CPU Host)",
+      "description": "Live measured host process RSS memory (MiB) and CPU compute utilization (%). Dashed lines mark 80% warning and 95% saturation.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 80 },
+              { "color": "red", "value": 95 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/.*RSS Memory.*/" },
+            "properties": [
+              { "id": "unit", "value": "decmbytes" },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "worker_cpu_utilization_pct",
+          "legendFormat": "CPU Compute Util % ({{device}} / {{mode}})",
+          "refId": "A"
+        },
+        {
+          "expr": "worker_process_rss_mb",
+          "legendFormat": "Host RSS Memory MiB ({{backend}} / {{mode}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "GPU Hardware Telemetry (DCGM — 0 when no GPU present)",
+      "description": "NVIDIA DCGM GPU compute utilization (%) and framebuffer VRAM (MiB). Reports 0 on CPU-only hosts in accordance with Evidence Over Claims.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 85 },
+              { "color": "red", "value": 95 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/.*VRAM.*/" },
+            "properties": [
+              { "id": "unit", "value": "decmbytes" },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
+          "legendFormat": "GPU Compute Util % ({{device}} / {{mode}})",
+          "refId": "A"
+        },
+        {
+          "expr": "DCGM_FI_DEV_FB_USED",
+          "legendFormat": "GPU VRAM Allocated MiB ({{device}} / {{mode}})",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["inference", "observability", "m05", "gpu", "cpu", "traces"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "title": "Multi-Tenant AI Inference Operations & Debugging",
+  "uid": "platform-inference-operations",
+  "version": 2
+}
