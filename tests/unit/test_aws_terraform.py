@@ -335,6 +335,96 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual(out_png["asset_inspection"]["height"], 64)
         self.assertTrue(out_png["asset_inspection"]["valid_header"])
 
+        # Verify pet JPEG fixture inspection (cat.jpg)
+        out_cat = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-cat-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Identify domestic cat and extract segmentation mask.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/cat.jpg",
+            loader=loader,
+        )
+        self.assertEqual(out_cat["asset_inspection"]["container_format"], "jpeg")
+        self.assertEqual(out_cat["asset_inspection"]["width"], 600)
+        self.assertEqual(out_cat["asset_inspection"]["height"], 400)
+        self.assertTrue(out_cat["asset_inspection"]["valid_header"])
+
+        # Verify person portrait fixture inspection (portrait_person.jpg for background removal)
+        out_portrait = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-portrait-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Remove background from human selfie portrait.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/portrait_person.jpg",
+            loader=loader,
+        )
+        self.assertEqual(out_portrait["asset_inspection"]["container_format"], "jpeg")
+        self.assertEqual(out_portrait["asset_inspection"]["width"], 820)
+        self.assertEqual(out_portrait["asset_inspection"]["height"], 1024)
+        self.assertTrue(out_portrait["asset_inspection"]["valid_header"])
+
+        # Verify full MP4 video clip inspection (sample_bunny_clip.mp4)
+        out_bunny = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-bunny-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Apply stylized neural render to bunny video clip.",
+            max_new_tokens=8,
+            modality="video_to_video",
+            source_asset_uri="tests/fixtures/media/sample_bunny_clip.mp4",
+            loader=loader,
+        )
+        self.assertEqual(out_bunny["asset_inspection"]["container_format"], "mp4")
+        self.assertTrue(out_bunny["asset_inspection"]["valid_header"])
+        self.assertGreater(out_bunny["asset_inspection"]["byte_size"], 900000)
+
+        # Verify athlete fixtures (Jorge Martin MotoGP, Fernando Alonso F1, Lamine Yamal Spain)
+        out_martin = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-martin-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Segment MotoGP world champion rider Jorge Martin with helmet.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/jorge_martin_motogp.jpg",
+            loader=loader,
+        )
+        self.assertEqual(out_martin["asset_inspection"]["container_format"], "jpeg")
+        self.assertEqual(out_martin["asset_inspection"]["width"], 960)
+        self.assertEqual(out_martin["asset_inspection"]["height"], 1281)
+
+        out_alonso = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-alonso-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Isolate F1 champion Fernando Alonso race suit and background.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/fernando_alonso_f1.jpg",
+            loader=loader,
+        )
+        self.assertEqual(out_alonso["asset_inspection"]["container_format"], "jpeg")
+        self.assertEqual(out_alonso["asset_inspection"]["width"], 960)
+        self.assertEqual(out_alonso["asset_inspection"]["height"], 1268)
+
+        out_yamal = multi_stage_inference_workflow(
+            tenant_id="tenant-runway",
+            job_id="job-flyte-yamal-01",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="Detect Spain national team player Lamine Yamal in match action.",
+            max_new_tokens=8,
+            modality="text_to_image",
+            source_asset_uri="tests/fixtures/media/lamine_yamal_spain.jpg",
+            loader=loader,
+        )
+        self.assertEqual(out_yamal["asset_inspection"]["container_format"], "jpeg")
+        self.assertEqual(out_yamal["asset_inspection"]["width"], 960)
+        self.assertEqual(out_yamal["asset_inspection"]["height"], 640)
+
         # Verify Flyte task specs and rendered K8s GPU Job compliance with Kyverno & Kueue
         specs = get_flyte_pipeline_task_specs()
         self.assertEqual([s.requests.gpu for s in specs], ["0", "1", "0"])
