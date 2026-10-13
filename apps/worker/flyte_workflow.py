@@ -21,8 +21,31 @@ from apps.worker.models import ModelLoader, tokenize_prompt
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def parse_jpeg_dimensions(raw: bytes) -> tuple[int | None, int | None]:
+    """Parse JPEG width and height from Start of Frame (SOF) marker segments."""
+    if not (raw.startswith(b"\xff\xd8") and len(raw) > 4):
+        return None, None
+    idx = 2
+    while idx < len(raw) - 8:
+        if raw[idx] != 0xFF:
+            idx += 1
+            continue
+        marker = raw[idx + 1]
+        if marker in (0xD8, 0xD9, 0x00) or (0xD0 <= marker <= 0xD7):
+            idx += 2
+            continue
+        length = struct.unpack(">H", raw[idx + 2 : idx + 4])[0]
+        if marker in (
+            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF
+        ):
+            height, width = struct.unpack(">HH", raw[idx + 5 : idx + 9])
+            return width, height
+        idx += 2 + length
+    return None, None
+
+
 def inspect_local_media_asset(asset_uri: str | None) -> dict[str, Any]:
-    """Inspect a local `.png` or `.mp4` media asset, verifying binary magic headers and SHA-256 digest."""
+    """Inspect a local `.png`, `.jpg`, `.jpeg`, or `.mp4` media asset, verifying binary magic headers and SHA-256 digest."""
     if not asset_uri or asset_uri.startswith(("s3://", "http://", "https://")):
         return {
             "exists_on_disk": False,
@@ -57,7 +80,18 @@ def inspect_local_media_asset(asset_uri: str | None) -> dict[str, Any]:
             "height": height,
             "valid_header": True,
         }
-    if len(raw) >= 12 and raw[4:8] == b"ftyp" and b"moov" in raw and b"mdat" in raw:
+    if raw.startswith(b"\xff\xd8"):
+        width, height = parse_jpeg_dimensions(raw)
+        return {
+            "exists_on_disk": True,
+            "container_format": "jpeg",
+            "byte_size": len(raw),
+            "content_sha256": digest,
+            "width": width,
+            "height": height,
+            "valid_header": True,
+        }
+    if len(raw) >= 12 and raw[4:8] == b"ftyp" and (b"moov" in raw or b"mdat" in raw):
         return {
             "exists_on_disk": True,
             "container_format": "mp4",

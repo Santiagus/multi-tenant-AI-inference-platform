@@ -1,0 +1,15 @@
+[
+  {
+    "id": "prompt-json-01",
+    "category": "structured_schema",
+    "prompt": "Extract the athlete entity name, sport category, nationality, and jersey number as strict JSON matching schema: {\"athlete\": str, \"sport\": str, \"country\": str}.",
+    "expected_structure": ["athlete", "sport", "country"]
+  },
+  {
+    "id": "prompt-code-02",
+    "category": "code_generation",
+    "prompt": "Write a Fastify route plugin in TypeScript that validates tenant headers and returns RFC 7807 problem details on authorization error.",
+    "expected_structure": ["fastify", "tenant", "RFC 7807"]
+  }
+]
+

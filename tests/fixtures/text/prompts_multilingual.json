@@ -1,0 +1,33 @@
+[
+  {
+    "id": "prompt-es-01",
+    "language": "es",
+    "prompt": "Un primer plano cinematográfico de Fernando Alonso celebrando en el podio de F1 con confeti cayendo.",
+    "category": "spanish_sports"
+  },
+  {
+    "id": "prompt-es-02",
+    "language": "es",
+    "prompt": "Jorge Martín adelantando en la última curva del Gran Premio con chispas saliendo de las deslizaderas.",
+    "category": "spanish_motogp"
+  },
+  {
+    "id": "prompt-es-03",
+    "language": "es",
+    "prompt": "Lamine Yamal regateando en la banda derecha con la camiseta de la selección española.",
+    "category": "spanish_football"
+  },
+  {
+    "id": "prompt-fr-01",
+    "language": "fr",
+    "prompt": "Plan large cinématique de la tour Eiffel illuminée sous une pluie d'étoiles filantes.",
+    "category": "french_scenery"
+  },
+  {
+    "id": "prompt-de-01",
+    "language": "de",
+    "prompt": "Ein schnelles Sportauto fährt auf der regennassen Autobahn bei Sonnenuntergang.",
+    "category": "german_automotive"
+  }
+]
+
