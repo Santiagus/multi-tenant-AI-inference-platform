@@ -505,3 +505,236 @@ Authorization: Bearer {{apiKey}}
     "dropped_capabilities": []
   }
 }
+
+
+### ==============================================================================
+### USE CASE 10: AWS Ephemeral Cloud Platform, Two-Path Architecture & Guardrails (M07)
+### Inspect Terraform modules, deploy ephemeral S3/CloudFront/SQS/Fargate/Kinesis stack,
+### execute BOTH Path A (SQS+KEDA) and Path B (Flyte+Kueue+Kyverno+TorchScript), and destroy
+### ==============================================================================
+
+# 10.1 Inspect AWS Terraform Module Catalog (7 Modules), Active Ephemeral Runs & Default Budget Guardrails
+GET {{baseUrl}}/v1/cloud/aws/status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.2 Deploy Ephemeral AWS Stack (S3 + CloudFront OAC + SQS + ECS Fargate + Kinesis/Lambda + OIDC/IRSA IAM + Budget, enable_eks=false -> $0.00/hr fixed cost)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/deploy
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "ephemeral_run_id": "ephemeral-rest-demo-01",
+  "environment": "ephemeral",
+  "aws_region": "eu-central-1",
+  "enable_eks": false,
+  "enable_gpu_node_group": false,
+  "gpu_min_nodes": 0,
+  "monthly_budget_limit_usd": 25.0,
+  "ephemeral_ttl_hours": 4
+}
+
+###
+
+# 10.3 Inspect Active Ephemeral Deployment Status
+GET {{baseUrl}}/v1/cloud/aws/status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.4 Guardrail Rejection Test: Wildcard IAM Actions & Static Access Keys Rejected (400 AWS_GUARDRAIL_VIOLATION)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/deploy
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "ephemeral_run_id": "ephemeral-rest-rejected-iam",
+  "use_long_lived_access_keys": true,
+  "iam_actions": ["s3:*", "sqs:*"],
+  "iam_resources": ["*"]
+}
+
+###
+
+# 10.5 Destroy Ephemeral AWS Stack (Verifies surviving_resources = 0 and post_destroy_hourly_cost_usd = 0)
+POST {{baseUrl}}/v1/cloud/aws/ephemeral/ephemeral-rest-demo-01/destroy
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 10.6 Two-Path Architecture — PATH A (`text_to_image`): Interactive Keyframe Generation (ECS Fargate -> SQS -> KEDA GPU Worker -> TorchScript -> S3/CloudFront .png -> Kinesis/Lambda Billing)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "modality": "text_to_image",
+  "job_id": "job-path-a-keyframe-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Cinematic wide shot of a neon-lit rain-soaked cybernetic alley at dusk, 35mm anamorphic keyframe.",
+  "asset_uri": "tests/fixtures/media/sample_keyframe.png",
+  "resolution": "1280x720",
+  "use_torchscript": true,
+  "max_new_tokens": 24
+}
+
+###
+
+# 10.7 Two-Path Architecture — PATH B (`text_to_video`): Multi-Stage Generative Video DAG (ECS Fargate -> Flyte [Stage 1 CPU S3 Cache -> Stage 2 Kueue/Kyverno TorchScript GPU -> Stage 3 CPU S3/CloudFront .mp4] -> Kinesis/Lambda Billing)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_b_flyte_dag",
+  "modality": "text_to_video",
+  "job_id": "job-path-b-t2v-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Slow tracking camera through a bioluminescent forest with floating embers, 24fps temporal coherence.",
+  "resolution": "1280x720",
+  "fps": 24,
+  "duration_seconds": 4,
+  "use_torchscript": true,
+  "max_new_tokens": 32
+}
+
+###
+
+# 10.8 Two-Path Architecture — PATH B (`video_to_video`): Multi-Stage Video Modification / Style Transfer & Motion Edit (Demux & Condition Local Fixture sample_clip.mp4 on CPU with S3 Cache -> Kueue/Kyverno TorchScript GPU -> CloudFront .mp4 + Billing)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_b_flyte_dag",
+  "modality": "video_to_video",
+  "job_id": "job-path-b-v2v-mod-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Transform street footage into stylized stop-motion claymation while preserving subject optical flow.",
+  "asset_uri": "tests/fixtures/media/sample_clip.mp4",
+  "resolution": "1280x720",
+  "fps": 24,
+  "duration_seconds": 4,
+  "edit_operation": "style_transfer",
+  "edit_strength": 0.8,
+  "use_torchscript": true,
+  "max_new_tokens": 32
+###
+
+# 10.9 Two-Path Architecture — PATH A (`text_to_image`): Pet & Human Portrait Background Removal / Keyframe Matting (cat.jpg / portrait_person.jpg)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "modality": "text_to_image",
+  "job_id": "job-pet-background-removal-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Segment domestic cat subject and remove background with clean alpha matte.",
+  "asset_uri": "tests/fixtures/media/cat.jpg",
+  "resolution": "600x400",
+  "use_torchscript": true,
+  "max_new_tokens": 16
+}
+
+###
+
+# 10.10 Two-Path Architecture — PATH A (`text_to_image`): Multi-Object Identification & Scene Inpainting (fruits_objects.jpg)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "modality": "text_to_image",
+  "job_id": "job-multi-object-inpainting-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Identify fruit objects in bowl and inpaint central apple with stylized golden pear.",
+  "asset_uri": "tests/fixtures/media/fruits_objects.jpg",
+  "resolution": "512x480",
+  "use_torchscript": true,
+  "max_new_tokens": 16
+}
+
+###
+
+# 10.11 Two-Path Architecture — PATH B (`video_to_video`): Multi-Stage Video Modification & Style Transfer on Animal Clip (sample_bunny_clip.mp4)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_b_flyte_dag",
+  "modality": "video_to_video",
+  "job_id": "job-bunny-style-transfer-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Restyle animated bunny forest footage with vibrant cyberpunk neon cel-shading.",
+  "asset_uri": "tests/fixtures/media/sample_bunny_clip.mp4",
+  "resolution": "640x360",
+  "fps": 24,
+  "duration_seconds": 4,
+  "edit_operation": "style_transfer",
+  "edit_strength": 0.85,
+  "use_torchscript": true,
+  "max_new_tokens": 32
+###
+
+# 10.12 Two-Path Architecture — PATH A (`text_to_image`): MotoGP & F1 Athlete Background Isolation (jorge_martin_motogp.jpg / fernando_alonso_f1.jpg)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "modality": "text_to_image",
+  "job_id": "job-motogp-f1-isolation-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Segment MotoGP rider Jorge Martin and F1 driver Fernando Alonso, isolating race suit and helmet from track background.",
+  "asset_uri": "tests/fixtures/media/jorge_martin_motogp.jpg",
+  "resolution": "960x1281",
+  "use_torchscript": true,
+  "max_new_tokens": 16
+}
+
+###
+
+# 10.13 Two-Path Architecture — PATH A (`text_to_image`): Spain National Football Team Player Segmentation (lamine_yamal_spain.jpg)
+POST {{baseUrl}}/v1/cloud/aws/workflows/execute
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "path": "path_a_sqs_keda",
+  "modality": "text_to_image",
+  "job_id": "job-spain-football-segmentation-01",
+  "tenant_id": "{{tenantId}}",
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "prompt": "Segment Spain national team forward Lamine Yamal in match action with stadium background matting.",
+  "asset_uri": "tests/fixtures/media/lamine_yamal_spain.jpg",
+  "resolution": "960x640",
+  "use_torchscript": true,
+  "max_new_tokens": 16
+}

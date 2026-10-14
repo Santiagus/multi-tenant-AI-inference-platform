@@ -65,9 +65,12 @@ flowchart TD
 
 ---
 
-## 2. Cloud Production Topology (AWS EKS & Managed Services)
+## 2. Cloud Production Topology (AWS ECS Fargate, EKS, CloudFront, SQS & Kinesis)
 
-The cloud production topology targets AWS using Amazon Elastic Kubernetes Service (EKS) managed with Terraform and reconciled via Argo CD. Stateless API and worker components run inside EKS, while stateful tiers rely on managed AWS infrastructure.
+The cloud production topology targets AWS managed with Terraform and reconciled via Argo CD. The stateless **TypeScript Control Plane API** runs on **AWS ECS Fargate** (decoupled from GPU cluster maintenance), while **Python PyTorch / TorchScript** inference workers run on **Amazon EKS** orchestrated via two workload paths:
+- **Path A (Low-Latency Queue)**: **Amazon SQS** + **KEDA** scales warm worker pods (`0 -> N -> 0`).
+- **Path B (Multi-Stage DAG Pipeline)**: **Flyte** (`@workflow` / `@task`) + **Kueue** (`ClusterQueue` GPU quota admission) + **Kyverno** (`ClusterPolicy` enforcement).
+- **Edge & Streaming Building Blocks**: **Amazon S3 + CloudFront (OAC)** for media/artifact delivery, and **Amazon Kinesis + AWS Lambda** for out-of-band token metering and lifecycle event streaming.
 
 ```mermaid
 %%{init: {'theme': 'dark', 'themeVariables': { 'darkMode': true }}}%%
@@ -77,43 +80,39 @@ flowchart TD
     end
 
     subgraph AWSCloud["AWS Region (eu-central-1)"]
-        subgraph Edge["Edge & Load Balancing"]
-            CF["Amazon CloudFront (Dashboard Assets)"]
-            WAF["AWS WAF (Rate Limiting & DDoS)"]
-            ALB["Application Load Balancer (ALB)"]
+        subgraph Edge["Edge & API Control Plane"]
+            CF["Amazon CloudFront CDN (OAC)\n(Dashboard & S3 Media/Artifact Edge)"]
+            WAF["AWS WAF & Application Load Balancer"]
+            ECSFargate["AWS ECS Fargate Service\n(TypeScript Fastify API)"]
         end
 
-        subgraph EKSCluster["Amazon EKS Cluster (v1.30+)"]
-            subgraph IngressNamespace["Namespace: ingress-system"]
-                AWSLoadBalancerController["AWS Load Balancer Controller"]
-            end
-
+        subgraph EKSCluster["Amazon EKS Cluster (Python PyTorch / TorchScript Workers)"]
             subgraph PlatformNamespace["Namespace: inference-platform"]
-                APIDeployment["api Pods (Fastify)\nHorizontal Pod Autoscaler (HPA)"]
-                KEDAOperator["KEDA Autoscaler Operator"]
-                KueueOperator["Kueue Batch Admission"]
+                KEDAOperator["KEDA Autoscaler Operator\n(Path A: SQS Queue Depth)"]
+                FlyteOperator["Flyte Workflow Engine\n(Path B: Multi-Stage CPU/GPU DAGs)"]
+                KueueOperator["Kueue Batch Admission & Kyverno Policies"]
             end
 
             subgraph WorkerNamespace["Namespace: inference-workers"]
-                WorkerGPU["worker Pods (Local GPU)\nScaled by KEDA on SQS depth"]
-                WorkerCPU["worker Pods (Cloud Dispatcher)"]
+                WorkerGPU["worker Pods (PyTorch / TorchScript GPU)\nScaled by KEDA & Admitted by Kueue"]
+                WorkerCPU["worker Pods (Flyte CPU Preprocess & Cloud Dispatcher)"]
             end
 
             subgraph MonitoringNamespace["Namespace: observability"]
                 OTelDaemon["OTel Collector DaemonSet / Deployment"]
-                PrometheusOperator["Prometheus Operator & DCGM Exporter"]
+                PrometheusOperator["Prometheus & Grafana + DCGM Exporter"]
             end
         end
 
         subgraph ManagedServices["AWS Managed Infrastructure"]
-            RDS[("Amazon RDS PostgreSQL (Multi-AZ)")]
+            RDS[("Amazon RDS PostgreSQL")]
             ElastiCache[("Amazon ElastiCache Redis")]
-            SQSMain["Amazon SQS (Async Inference Queue)"]
-            SQSDLQ["Amazon SQS (Dead-Letter Queue)"]
+            SQSMain["Amazon SQS + DLQ (Async Job Queue)"]
+            KinesisStream["Amazon Kinesis + AWS Lambda\n(Real-Time Metering & Event Stream)"]
             S3Bucket[("Amazon S3 (Artifacts & Models)")]
         end
 
-        subgraph ExternalCloud["Cloud Inference Providers"]
+        subgraph ExternalCloud["Multi-Cloud Inference Providers"]
             RunPod["RunPod Serverless"]
             Bedrock["AWS Bedrock"]
             SageMaker["AWS SageMaker Endpoints"]
@@ -122,31 +121,33 @@ flowchart TD
 
     Users --> CF
     Users --> WAF
-    WAF --> ALB
-    ALB --> APIDeployment
+    WAF --> ECSFargate
+    CF --> S3Bucket
 
-    APIDeployment --> RDS
-    APIDeployment --> ElastiCache
-    APIDeployment --> SQSMain
-    SQSMain -.->|"Redrive"| SQSDLQ
+    ECSFargate --> RDS
+    ECSFargate --> ElastiCache
+    ECSFargate --> SQSMain
+    ECSFargate --> KinesisStream
+    ECSFargate --> FlyteOperator
 
     KEDAOperator -->|"Polls Queue Length"| SQSMain
-    KEDAOperator -->|"Scales Pods"| WorkerGPU
-    KEDAOperator -->|"Scales Pods"| WorkerCPU
-    KueueOperator -->|"Admits Batches to GPUs"| WorkerGPU
+    KEDAOperator -->|"Scales Pods (Path A)"| WorkerGPU
+    FlyteOperator -->|"Submits Stage Pods (Path B)"| KueueOperator
+    KueueOperator -->|"Admits GPU Tasks"| WorkerGPU
+    FlyteOperator -->|"Runs CPU Tasks"| WorkerCPU
 
     WorkerGPU --> SQSMain
     WorkerGPU --> RDS
     WorkerGPU --> S3Bucket
+    WorkerGPU --> KinesisStream
 
-    WorkerCPU --> SQSMain
-    WorkerCPU --> RDS
     WorkerCPU --> S3Bucket
+    WorkerCPU --> KinesisStream
     WorkerCPU --> RunPod
     WorkerCPU --> Bedrock
     WorkerCPU --> SageMaker
 
-    APIDeployment --> OTelDaemon
+    ECSFargate --> OTelDaemon
     WorkerGPU --> OTelDaemon
     WorkerCPU --> OTelDaemon
     PrometheusOperator --> OTelDaemon
@@ -154,18 +155,17 @@ flowchart TD
 
 ---
 
-## 3. Kubernetes Autoscaling Architecture
+## 3. Kubernetes Autoscaling & Two-Path Orchestration Architecture
 
-The platform separates real-time API scaling from heavy batch/inference scaling (see [ADR-0008](../adr/0008-keda-and-kueue-workload-responsibilities.md)):
+The platform separates real-time API scaling, single-hop queue scaling, and multi-stage batch/media DAG admission (see [ADR-0008](../adr/0008-keda-and-kueue-workload-responsibilities.md)):
 
-1. **Control Plane Scaling**:
-   - `api` pods scale via standard Kubernetes Horizontal Pod Autoscaler ([`templates/api-hpa.yaml`](../../deploy/helm/inference-platform/templates/api-hpa.yaml)) based on CPU (`70%`) and memory (`80%`) utilization.
-2. **Worker Queue-Depth Autoscaling (KEDA)**:
+1. **Control Plane Scaling (ECS Fargate / K8s HPA)**:
+   - Stateless TypeScript `api` tasks run on **AWS ECS Fargate** ([`modules/ecs-fargate-api`](../../infrastructure/terraform/modules/ecs-fargate-api/main.tf)) or scale in-cluster via Kubernetes HPA ([`templates/api-hpa.yaml`](../../deploy/helm/inference-platform/templates/api-hpa.yaml)).
+2. **Path A — Worker Queue-Depth Autoscaling (SQS + KEDA)**:
    - Inference workers scale from `0` to `maxReplicaCount` using KEDA ([`templates/keda-scaledobject.yaml`](../../deploy/helm/inference-platform/templates/keda-scaledobject.yaml)) measuring SQS queue depth (`ApproximateNumberOfMessagesVisible`) and Prometheus `queue_messages_visible`.
-   - Enables rapid scale-out during batch bursts and scale-to-zero after `cooldownPeriod` when queues are idle to eliminate idle GPU compute spend.
-3. **Batch Admission & Fair Sharing (Kueue)**:
-   - Multi-tenant GPU quota sharing and priority queueing (`inference-realtime-high` > `inference-batch-standard` > `inference-batch-backfill`) are governed by Kueue ([`templates/kueue-admission.yaml`](../../deploy/helm/inference-platform/templates/kueue-admission.yaml)).
-   - Prevents GPU out-of-memory (OOM) faults by creating batch `Job` workloads with `suspend: true` until `ClusterQueue` nominal or cohort-borrowed GPU quota is granted.
+3. **Path B — Multi-Stage Media/Batch DAGs & GPU Quota Admission (Flyte + Kueue + Kyverno)**:
+   - Multi-stage workflows ([`apps/worker/flyte_workflow.py`](../../apps/worker/flyte_workflow.py)) run CPU preprocessing and S3/CloudFront packaging on cheap CPU pods while requesting GPU quota (`nvidia.com/gpu: 1`) exclusively for the PyTorch/TorchScript inference stage.
+   - Multi-tenant GPU quota sharing and priority queueing (`inference-realtime-high` > `inference-batch-standard` > `inference-batch-backfill`) are governed by Kueue ([`templates/kueue-admission.yaml`](../../deploy/helm/inference-platform/templates/kueue-admission.yaml)) and validated by Kyverno ([`templates/kyverno-policies.yaml`](../../deploy/helm/inference-platform/templates/kyverno-policies.yaml)).
 
 ---
 
@@ -179,5 +179,14 @@ All Kubernetes resources are packaged in [`deploy/helm/inference-platform/`](../
 | **Default Values** | [`deploy/helm/inference-platform/values.yaml`](../../deploy/helm/inference-platform/values.yaml) | Baseline chart values for namespaces (`inference-platform`, `inference-workers`, `observability`), API, worker, KEDA, Kueue, and Kyverno. |
 | **Local CPU Profile** | [`deploy/helm/inference-platform/values-local.yaml`](../../deploy/helm/inference-platform/values-local.yaml) | CPU-fallback worker profile (`nvidiaGpu: 0`, `NodePort: 30080`, `dcgmExporter.enabled: false`). |
 | **GPU Node Profile** | [`deploy/helm/inference-platform/values-gpu.yaml`](../../deploy/helm/inference-platform/values-gpu.yaml) | GPU worker profile (`runtimeClassName: nvidia`, `nvidia.com/gpu: 1`, GPU nodeSelector/tolerations, and `dcgm-exporter` `DaemonSet` enabled). |
+| **AWS Ephemeral Profile** | [`deploy/helm/inference-platform/values-aws-ephemeral.yaml`](../../deploy/helm/inference-platform/values-aws-ephemeral.yaml) | Configures control plane and KEDA against ephemeral AWS S3 (`s3.eu-central-1.amazonaws.com`) and SQS (`sqs.eu-central-1.amazonaws.com`) with scale-to-zero workers. |
 | **Kyverno Policies** | [`deploy/helm/inference-platform/templates/kyverno-policies.yaml`](../../deploy/helm/inference-platform/templates/kyverno-policies.yaml) | Enforces `require-non-root-and-drop-capabilities`, `require-workload-resource-bounds`, and `require-tenant-isolation-labels` (see [ADR-0011](../adr/0011-kyverno-admission-policy-enforcement.md)). |
+
+---
+
+## 5. AWS Terraform Modules, Least-Privilege IAM & Ephemeral Cost Controls (M07)
+
+Cloud infrastructure (`s3-artifacts` + CloudFront, `sqs-async-queue`, `ecs-fargate-api`, `kinesis-event-stream` + Lambda, `iam-least-privilege`, `cost-guardrails`, and `eks-cluster`) is provisioned via modular Terraform under [`infrastructure/terraform/`](../../infrastructure/terraform/) and validated offline via `make validate-terraform` ([`scripts/validate_terraform.py`](../../scripts/validate_terraform.py)). Detailed IAM boundaries, cost budgets, and ephemeral teardown workflows are documented in [`docs/architecture/aws-deployment.md`](aws-deployment.md) and [ADR-0012](../adr/0012-ephemeral-aws-terraform-and-cost-guardrails.md).
+
+
 

@@ -174,6 +174,28 @@ export class MetricsRegistry {
       'kyverno_policy_evaluations_total',
       'Total number of Kubernetes admission evaluations checked against Kyverno policies'
     );
+
+    // AWS ephemeral platform, IAM least-privilege & cost guardrail metrics (M07)
+    this.defineGauge(
+      'aws_ephemeral_active_deployments',
+      'Number of currently active ephemeral AWS cloud deployments'
+    );
+    this.defineGauge(
+      'aws_estimated_hourly_cost_usd',
+      'Estimated fixed hourly AWS cloud infrastructure cost in USD'
+    );
+    this.defineGauge(
+      'aws_budget_utilization_ratio',
+      'Projected cloud spend to monthly AWS budget cap ratio (0.0 to 1.0+)'
+    );
+    this.defineCounter(
+      'aws_ephemeral_deployments_total',
+      'Total number of ephemeral AWS deployments provisioned or destroyed'
+    );
+    this.defineCounter(
+      'aws_iam_policy_evaluations_total',
+      'Total number of AWS IAM least-privilege and cost guardrail evaluations'
+    );
   }
 
   defineCounter(name: string, help: string): void {

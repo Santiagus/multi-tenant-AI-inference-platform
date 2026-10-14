@@ -14,12 +14,26 @@ from typing import Any, Protocol
 
 import numpy as np  # type: ignore[import-not-found]
 
+import enum
+
 from apps.worker.contracts import InferenceError
+
+
+class ExecutionEngine(str, enum.Enum):
+    """Supported inference execution engines across local and accelerated environments."""
+
+    AUTO = "auto"
+    EAGER = "eager"
+    TORCHSCRIPT = "torchscript"
+    TORCH_COMPILE = "torch-compile"
+    ONNX = "onnx"
+    VLLM = "vllm"
+    NUMPY_FALLBACK = "numpy"
 
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """Architecture and cost metadata for a registered inference model."""
+    """Architecture, content-hash, and cost metadata for a registered inference model."""
 
     model_id: str
     hidden_dim: int
@@ -28,6 +42,15 @@ class ModelSpec:
     max_context_length: int
     cost_microcents_per_token: int
     estimated_vram_mb: float
+    content_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.content_sha256:
+            # Deterministic SHA-256 fingerprint derived from model architecture and identifier
+            digest = hashlib.sha256(
+                f"{self.model_id}:{self.hidden_dim}:{self.num_layers}:{self.vocab_size}".encode("utf-8")
+            ).hexdigest()
+            object.__setattr__(self, "content_sha256", digest)
 
 
 DEFAULT_MODEL_REGISTRY: dict[str, ModelSpec] = {
@@ -226,12 +249,34 @@ class NumpyCpuModelBackend:
 
 
 class PyTorchModelBackend:
-    """PyTorch neural network backend supporting CUDA GPU and CPU execution."""
+    """PyTorch neural network backend supporting CUDA GPU, CPU, TorchScript, and modern PyTorch 2 compile execution."""
 
-    def __init__(self, spec: ModelSpec, torch_module: Any, device: str) -> None:
+    def __init__(
+        self,
+        spec: ModelSpec,
+        torch_module: Any,
+        device: str,
+        use_torchscript: bool = False,
+        engine: str | ExecutionEngine = ExecutionEngine.AUTO,
+    ) -> None:
         self._spec = spec
         self._torch = torch_module
         self._device = device
+        self._use_torchscript = use_torchscript
+        self._traced_forward: Any | None = None
+        self._compiled_forward: Any | None = None
+        self._engine: ExecutionEngine
+
+        if isinstance(engine, ExecutionEngine):
+            self._engine = engine
+        else:
+            try:
+                self._engine = ExecutionEngine(str(engine).lower())
+            except ValueError:
+                self._engine = ExecutionEngine.AUTO
+
+        if self._use_torchscript and self._engine in (ExecutionEngine.AUTO, ExecutionEngine.EAGER):
+            self._engine = ExecutionEngine.TORCHSCRIPT
 
         seed = int.from_bytes(hashlib.sha256(spec.model_id.encode("utf-8")).digest()[:4], "little")
         self._torch.manual_seed(seed)
@@ -248,6 +293,24 @@ class PyTorchModelBackend:
             self._torch.randn((spec.hidden_dim, spec.vocab_size), device=device) / scale
         )
 
+        # 1. TorchScript JIT Tracing
+        if self._engine == ExecutionEngine.TORCHSCRIPT:
+            jit_mod = getattr(self._torch, "jit", None)
+            if jit_mod is not None and hasattr(jit_mod, "trace"):
+                sample_idx = self._torch.tensor([1, 2], dtype=self._torch.long, device=device)
+                self._traced_forward = jit_mod.trace(self._forward_tensor, (sample_idx,))
+
+        # 2. Modern PyTorch 2.x torch.compile
+        elif self._engine == ExecutionEngine.TORCH_COMPILE:
+            compile_fn = getattr(self._torch, "compile", None)
+            if compile_fn is not None:
+                try:
+                    self._compiled_forward = compile_fn(self._forward_tensor, mode="reduce-overhead")
+                except Exception:
+                    self._compiled_forward = self._forward_tensor
+            else:
+                self._compiled_forward = self._forward_tensor
+
         elem_size = 4
         total_elems = (
             spec.vocab_size * spec.hidden_dim
@@ -256,9 +319,31 @@ class PyTorchModelBackend:
         )
         self._footprint_mb = round((total_elems * elem_size) / (1024 * 1024), 4)
 
+    def _forward_tensor(self, idx_tensor: Any) -> Any:
+        seq_embeds = self._embeddings[idx_tensor]
+        hidden = seq_embeds.mean(dim=0, keepdim=True)
+        for weight in self._layers:
+            projected = self._torch.matmul(hidden, weight)
+            hidden = self._torch.tanh(projected) + hidden
+        return self._torch.matmul(hidden, self._lm_head)[0]
+
+    @property
+    def is_torchscript(self) -> bool:
+        return self._engine == ExecutionEngine.TORCHSCRIPT or self._use_torchscript
+
+    @property
+    def engine(self) -> ExecutionEngine:
+        return self._engine
+
     @property
     def backend_name(self) -> str:
-        return "pytorch_cuda" if self._device.startswith("cuda") else "pytorch_cpu"
+        suffix = "cuda" if self._device.startswith("cuda") else "cpu"
+        if self._engine in (ExecutionEngine.AUTO, ExecutionEngine.EAGER):
+            return f"pytorch_{suffix}"
+        if self._engine == ExecutionEngine.TORCHSCRIPT:
+            return f"pytorch_torchscript_{suffix}"
+        engine_str = self._engine.value.replace("-", "_")
+        return f"pytorch_{engine_str}_{suffix}"
 
     @property
     def footprint_mb(self) -> float:
@@ -284,16 +369,16 @@ class PyTorchModelBackend:
         context_ids = list(input_ids)
         ttft_ms = 0.0
         temp = max(float(temperature), 1e-3)
+        forward_fn = (
+            self._compiled_forward
+            if self._compiled_forward is not None
+            else (self._traced_forward if self._traced_forward is not None else self._forward_tensor)
+        )
 
         with self._torch.no_grad():
             for step in range(target_tokens):
                 idx_tensor = self._torch.tensor(context_ids[-64:], dtype=self._torch.long, device=self._device)
-                seq_embeds = self._embeddings[idx_tensor]
-                hidden = seq_embeds.mean(dim=0, keepdim=True)
-                for weight in self._layers:
-                    projected = self._torch.matmul(hidden, weight)
-                    hidden = self._torch.tanh(projected) + hidden
-                logits = self._torch.matmul(hidden, self._lm_head)[0] / temp
+                logits = forward_fn(idx_tensor) / temp
                 next_token = int(self._torch.argmax(logits).item())
                 generated.append(next_token)
                 context_ids.append(next_token)
@@ -323,20 +408,26 @@ class LoadedModel:
     spec: ModelSpec
     backend: ModelBackend
     load_duration_ms: float
+    engine_requested: str = "auto"
+    engine_executed: str = "eager"
+    upgraded_automatically: bool = False
+    content_sha256: str = ""
 
 
 class ModelLoader:
-    """Caches and manages loaded inference models across GPU and CPU backends."""
+    """Caches and manages loaded inference models across GPU, CPU, TorchScript, and compiled backends."""
 
     def __init__(
         self,
         registry: dict[str, ModelSpec] | None = None,
         torch_module: Any | None = None,
         prefer_device: str = "auto",
+        allow_auto_upgrade: bool = False,
     ) -> None:
         self._registry = dict(registry) if registry is not None else dict(DEFAULT_MODEL_REGISTRY)
         self._cache: dict[str, LoadedModel] = {}
         self._prefer_device = prefer_device
+        self._allow_auto_upgrade = allow_auto_upgrade
         if torch_module is not None:
             self._torch = torch_module
         else:
@@ -370,28 +461,81 @@ class ModelLoader:
             return "cuda"
         return "cpu"
 
-    def load(self, model_id: str) -> tuple[LoadedModel, bool]:
-        """Load or retrieve a cached model.
+    def load(
+        self,
+        model_id: str,
+        use_torchscript: bool = False,
+        engine: str | ExecutionEngine = ExecutionEngine.AUTO,
+        allow_auto_upgrade: bool | None = None,
+    ) -> tuple[LoadedModel, bool]:
+        """Load or retrieve a cached model with content-hash tracking and optional transparent upgrades.
 
         Returns:
             (LoadedModel, is_warm_cache_hit)
         """
-        if model_id in self._cache:
-            return self._cache[model_id], True
+        effective_auto_upgrade = (
+            allow_auto_upgrade if allow_auto_upgrade is not None else self._allow_auto_upgrade
+        )
+
+        requested_engine_enum: ExecutionEngine
+        if isinstance(engine, ExecutionEngine):
+            requested_engine_enum = engine
+        else:
+            try:
+                requested_engine_enum = ExecutionEngine(str(engine).lower())
+            except ValueError:
+                requested_engine_enum = ExecutionEngine.AUTO
+
+        if use_torchscript and requested_engine_enum in (ExecutionEngine.AUTO, ExecutionEngine.EAGER):
+            requested_engine_enum = ExecutionEngine.TORCHSCRIPT
+
+        spec = self.resolve_spec(model_id)
+
+        executed_engine_enum = requested_engine_enum
+        is_upgraded = False
+        if effective_auto_upgrade and requested_engine_enum == ExecutionEngine.TORCHSCRIPT:
+            if self._torch is not None and hasattr(self._torch, "compile"):
+                executed_engine_enum = ExecutionEngine.TORCH_COMPILE
+                is_upgraded = True
+
+        if use_torchscript or executed_engine_enum == ExecutionEngine.TORCHSCRIPT:
+            cache_key = f"{model_id}::torchscript=True"
+        elif executed_engine_enum in (ExecutionEngine.AUTO, ExecutionEngine.EAGER):
+            cache_key = model_id
+        else:
+            cache_key = (
+                f"{model_id}::engine={executed_engine_enum.value}::sha256={spec.content_sha256[:12]}"
+            )
+
+        if cache_key in self._cache:
+            return self._cache[cache_key], True
 
         start_ns = time.perf_counter_ns()
-        spec = self.resolve_spec(model_id)
         device = self.resolve_device()
 
         backend: ModelBackend
         if self._torch is not None:
-            backend = PyTorchModelBackend(spec=spec, torch_module=self._torch, device=device)
+            backend = PyTorchModelBackend(
+                spec=spec,
+                torch_module=self._torch,
+                device=device,
+                use_torchscript=(executed_engine_enum == ExecutionEngine.TORCHSCRIPT),
+                engine=executed_engine_enum,
+            )
         else:
             backend = NumpyCpuModelBackend(spec=spec)
 
         load_ms = round(max((time.perf_counter_ns() - start_ns) / 1_000_000, 0.05), 3)
-        loaded = LoadedModel(spec=spec, backend=backend, load_duration_ms=load_ms)
-        self._cache[model_id] = loaded
+        loaded = LoadedModel(
+            spec=spec,
+            backend=backend,
+            load_duration_ms=load_ms,
+            engine_requested=requested_engine_enum.value,
+            engine_executed=executed_engine_enum.value,
+            upgraded_automatically=is_upgraded,
+            content_sha256=spec.content_sha256,
+        )
+        self._cache[cache_key] = loaded
         return loaded, False
 
     def clear_cache(self) -> None:

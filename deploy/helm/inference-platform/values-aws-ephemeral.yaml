@@ -1,0 +1,46 @@
+global:
+  environment: aws-ephemeral
+
+api:
+  replicaCount: 2
+  service:
+    type: ClusterIP
+    port: 3000
+  env:
+    nodeEnv: production
+    logLevel: info
+    s3Endpoint: https://s3.eu-central-1.amazonaws.com
+    s3Region: eu-central-1
+    s3Bucket: inference-ephemeral-dev-ephemeral-01-artifacts
+    sqsEndpoint: https://sqs.eu-central-1.amazonaws.com
+    sqsRegion: eu-central-1
+    sqsQueueUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-ephemeral-dev-ephemeral-01-jobs
+    sqsDlqUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-ephemeral-dev-ephemeral-01-jobs-dlq
+
+worker:
+  replicaCount: 0
+  executionMode: cpu-fallback
+  runtimeClassName: ""
+  nodeSelector:
+    platform.ai/node-role: cpu-general
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+      nvidiaGpu: 0
+
+keda:
+  enabled: true
+  minReplicaCount: 0
+  maxReplicaCount: 4
+  targetQueueDepthPerReplica: 5
+  queueName: inference-ephemeral-dev-ephemeral-01-jobs
+  awsRegion: eu-central-1
+
+gpu:
+  enabled: false
+  dcgmExporter:
+    enabled: false

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "prompt-short-01",
+    "category": "creative_caption",
+    "prompt": "Cinematic wide shot of a neon-lit rain-soaked street at dusk with vibrant reflections.",
+    "expected_tokens_min": 10,
+    "target_modality": "text_to_image"
+  },
+  {
+    "id": "prompt-short-02",
+    "category": "technical_summary",
+    "prompt": "Summarize the architectural differences between SQS single-hop queue and Flyte multi-stage DAG.",
+    "expected_tokens_min": 12,
+    "target_modality": "text"
+  },
+  {
+    "id": "prompt-short-03",
+    "category": "video_motion_prompt",
+    "prompt": "Slow aerial tracking shot moving over a misty pine valley with morning sunlight, 24fps smooth camera motion.",
+    "expected_tokens_min": 16,
+    "target_modality": "text_to_video"
+  }
+]
+

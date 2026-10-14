@@ -15,7 +15,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M04** | GPU Inference & Workers | Local RTX 5070 Ti / CPU Fallback | PyTorch inference, VRAM telemetry, reproducible benchmarks | **Passed** |
 | **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | **Passed** |
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | **Passed** |
-| **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | _Planned_ |
+| **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | **Passed** |
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | _Planned_ |
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | _Planned_ |
 | **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | _Planned_ |
@@ -106,11 +106,26 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 7. Maintenance Rules for Subsequent Milestones
+## 7. M07 Verification Matrix (AWS Ephemeral Platform, IAM, Two-Path Flyte/SQS & Cost Guardrails)
 
-When implementing future milestones (M07–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-40** | **Terraform Module & Environment Structural Validation** | Unit | Local File Validator | `infrastructure/terraform/modules/*`, `environments/{ephemeral,production}`, `scripts/validate_terraform.py` | Validates HCL formatting, balanced blocks, required providers, variable/output metadata across all 7 modules (`s3-artifacts`, `sqs-async-queue`, `ecs-fargate-api`, `kinesis-event-stream`, `iam-least-privilege`, `cost-guardrails`, and `eks-cluster`). | `tests/unit/test_aws_terraform.py`<br>`scripts/validate_terraform.py` |
+| **TC-41** | **Least-Privilege IAM, ECS Task Role, EKS IRSA & GitHub OIDC Static Analysis** | Unit / Integration | Simulated / Local File Validator | `modules/iam-least-privilege`, `evaluateAwsDeploymentGuardrails`, `POST /v1/cloud/aws/ephemeral/deploy` | Enforces short-lived `sts:AssumeRoleWithWebIdentity` (GitHub OIDC + EKS IRSA), ECS Task execution/task roles, Lambda metering role, prohibits `aws_iam_access_key` and wildcard actions/resources (`*`, `s3:*`, `sqs:*`), and scopes S3 permissions to `${bucket_arn}/tenants/*`. | `tests/unit/test_aws_terraform.py`<br>`apps/api/tests/unit/aws-platform.test.ts`<br>`request.rest` (Cycle 10.4) |
+| **TC-42** | **S3 + CloudFront OAC, SQS DLQ, ECS Fargate, Kinesis + Lambda & Two-Path Flyte/TorchScript** | Unit / Integration | Measured CPU / Simulated | `modules/{s3-artifacts,sqs-async-queue,ecs-fargate-api,kinesis-event-stream}`, `POST /v1/cloud/aws/workflows/execute`, `apps/worker/flyte_workflow.py` | Enforces S3 public access blocks, SSE, CloudFront OAC (`PriceClass_100`), SQS DLQ (`maxReceiveCount = 3`), ECS Fargate private task networking, Kinesis `ON_DEMAND` + Lambda metering, `torch.jit.trace` TorchScript backend, and both Path A (`SQS + KEDA`) & Path B (`Flyte + Kueue + Kyverno` 3-stage `CPU -> GPU -> CPU` DAG). | `tests/unit/test_aws_terraform.py`<br>`apps/api/tests/integration/aws-platform-routes.test.ts`<br>`request.rest` (Cycle 10.6–10.7) |
+| **TC-43** | **Cost/Budget Guardrails & Zero Permanent GPU/EKS Dependency** | Unit / Integration | Simulated / Local File Validator | `modules/cost-guardrails`, `modules/eks-cluster`, `environments/ephemeral`, `evaluateAwsDeploymentGuardrails` | Defaults `enable_eks = false`, `fargate_desired_count = 0` (`$0.00/hr` fixed cost), and `gpu_min_nodes = 0` (scale-to-zero), configures `aws_budgets_budget` (80% forecasted / 100% actual alerts), and blocks unapproved production apply (`CONFIRM_PRODUCTION_APPLY=yes`). | `tests/unit/test_aws_terraform.py`<br>`apps/api/tests/unit/aws-platform.test.ts`<br>`request.rest` (Cycle 10.1–10.2) |
+| **TC-44** | **Ephemeral Deploy/Destroy Workflow & Zero Surviving Resources** | Unit / Integration | Simulated | `ephemeral-lifecycle.sh`, `AwsPlatformController`, `POST /v1/cloud/aws/ephemeral/:runId/destroy`, `GET /metrics` | Provisions ephemeral stack (`18` resources default / `21` with EKS opt-in), transitions to `DESTROYED` on teardown with `surviving_resources = 0` and `post_destroy_hourly_cost_usd = 0.0`, and exposes `aws_ephemeral_*` and `aws_iam_policy_evaluations_total` metrics. | `tests/unit/test_aws_terraform.py`<br>`apps/api/tests/integration/aws-platform-routes.test.ts`<br>`request.rest` (Cycle 10.2–10.5) |
+| **TC-45** | **Two-Path Architecture & Media/Text Fixture Verification** | Unit / Integration | Measured CPU / Simulated | `POST /v1/cloud/aws/workflows/execute`, `apps/worker/flyte_workflow.py`, `tests/fixtures/media/*`, `tests/fixtures/text/*` | Exhaustively verifies all 12 media fixtures (PNG/JPEG headers, dimensions, MP4 containers) and text suites (short, multilingual, code/JSON, adversarial, long context), contrasting Path A (single-hop low-latency, fast TorchScript JIT) and Path B (Flyte 3-stage DAG, Kueue GPU admission, Kyverno security context). | `tests/unit/test_two_path_architecture.py`<br>`apps/api/tests/integration/two-path-multi-tenant.test.ts`<br>`request.rest` (Cycle 10.6–10.13) |
+| **TC-46** | **Multi-Tenant Capacity, Sandbox Isolation & Quota Arbitration** | Unit / Integration | Measured CPU / Simulated | `apps/worker/flyte_workflow.py`, `POST /v1/cloud/aws/workflows/execute`, `KueueAdmissionController` | Verifies strict tenant artifact sandboxing (`/tenants/{tenant_id}` S3 and CloudFront keys), tenant-partitioned Flyte S3 task memoization caching, independent Kinesis token and microcent billing attribution, and concurrent Kueue GPU quota fair-sharing across tenants. | `tests/unit/test_multi_tenant_capacity.py`<br>`apps/api/tests/integration/two-path-multi-tenant.test.ts`<br>`request.rest` (Cycle 10.6, 10.12–10.13) |
+| **TC-47** | **Multi-Engine Inference Benchmark & Transparent Upgrade Verification** | Unit | Measured CPU | `apps/worker/models.py`, `tests/unit/test_engine_benchmarks.py`, `docs/benchmarks/engine-comparison.md` | Benchmarks 2 canonical models (`TinyLlama` and `Llama-3-8B`) under identical conditions across 5 engine targets (NumPy, Eager, TorchScript, PyTorch 2.x compile, Auto-Upgrade). Verifies content SHA-256 fingerprinting, zero-breaking backwards compatibility for legacy TorchScript callers, and automated transparent upgrade to modern compiled execution. | `tests/unit/test_engine_benchmarks.py`<br>`docs/benchmarks/engine-comparison.md` |
+
+---
+
+## 8. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M08–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M07 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M08 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).

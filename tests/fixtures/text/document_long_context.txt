@@ -1,0 +1,20 @@
+# Architecture Overview: Multi-Tenant AI Inference Platform
+
+## Section 1: Workload Lifecycle and Ingestion
+In modern AI inference platforms, workloads vary dramatically across modalities and latency requirements. Interactive requests—such as real-time text completion, agentic function calling, and single-hop image keyframe synthesis—require deterministic low-latency execution. These workloads arrive at the API control plane, undergo strict tenant authentication and authorization, and are routed to immediate processing. Conversely, complex multi-modal generation workloads—such as high-definition video synthesis, video-to-video style transfer, and spatiotemporal conditioning—exhibit heavy compute profiles with multi-second or multi-minute execution times requiring multi-stage orchestration.
+
+## Section 2: Two-Path Orchestration Architecture
+To handle this bimodal distribution efficiently without compromising latency or wasting GPU compute, the platform implements a Two-Path Orchestration Architecture:
+- Path A (Low-Latency Single-Hop Path): Leverages AWS SQS and Kubernetes KEDA. Worker pods run warm PyTorch or TorchScript JIT runtimes. Fastify control plane enqueues tasks directly to SQS. KEDA scales worker replicas based on queue depth, scaling from zero to N and back to zero when idle.
+- Path B (Multi-Stage Media & Batch DAG Path): Implements Flyte, Kueue, and Kyverno. Complex workflows are decomposed into distinct, heterogeneous pipeline stages:
+  - Stage 1 (CPU): Preprocesses raw media assets, extracts conditioning tensors, and writes intermediate artifacts to S3 with memoization caching.
+  - Stage 2 (GPU): Runs isolated TorchScript latent diffusion or autoregressive passes admitted by Kubernetes Kueue under strict ClusterQueue quotas.
+  - Stage 3 (CPU): Packages the final artifact, uploads to S3, generates CloudFront CDN delivery URLs, and emits an immutable Kinesis metering event for billing.
+
+## Section 3: Multi-Tenant Isolation and Capacity Management
+Tenant isolation is maintained across every operational boundary:
+1. Storage Isolation: All S3 artifacts reside in paths scoped by tenant ID (`tenants/{tenant_id}/*`).
+2. Database and State: Database queries strictly filter by tenant identifier, preventing cross-tenant information disclosure.
+3. Queue Partitioning and Fair Sharing: Queue envelopes include verified tenant headers. Kueue admission queues prevent any single burst tenant from starving others.
+4. Billing and Telemetry: Prometheus metrics and Kinesis metering records attribute token consumption and compute durations strictly per tenant.
+
