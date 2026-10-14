@@ -9,6 +9,8 @@ import subprocess
 from typing import Any
 import unittest
 
+import numpy as np  # type: ignore[import-not-found]
+
 from apps.worker.flyte_workflow import (
     clear_flyte_task_cache,
     get_flyte_pipeline_task_specs,
@@ -41,26 +43,39 @@ class _MockJitModule:
 
 class _MockTensor:
     def __init__(self, shape_or_data: Any) -> None:
-        self.shape = shape_or_data
+        if isinstance(shape_or_data, np.ndarray):
+            self.arr = shape_or_data.astype(np.float32)
+        elif isinstance(shape_or_data, tuple):
+            self.arr = np.zeros(shape_or_data, dtype=np.float32)
+        elif isinstance(shape_or_data, list):
+            self.arr = np.array(shape_or_data, dtype=np.float32)
+        else:
+            self.arr = np.array([shape_or_data], dtype=np.float32)
+        self.shape = self.arr.shape
 
-    def __mul__(self, _other: Any) -> _MockTensor:
-        return self
+    def __mul__(self, other: Any) -> _MockTensor:
+        factor = other.arr if isinstance(other, _MockTensor) else float(other)
+        return _MockTensor(self.arr * factor)
 
-    def __truediv__(self, _other: Any) -> _MockTensor:
-        return self
+    def __truediv__(self, other: Any) -> _MockTensor:
+        denom = other.arr if isinstance(other, _MockTensor) else float(other)
+        return _MockTensor(self.arr / denom)
 
-    def __add__(self, _other: Any) -> _MockTensor:
-        return self
+    def __add__(self, other: Any) -> _MockTensor:
+        addend = other.arr if isinstance(other, _MockTensor) else float(other)
+        return _MockTensor(self.arr + addend)
 
-    def __getitem__(self, _idx: Any) -> _MockTensor:
-        return self
+    def __getitem__(self, idx: Any) -> _MockTensor:
+        if isinstance(idx, _MockTensor):
+            indices = idx.arr.astype(np.int64)
+            return _MockTensor(self.arr[indices])
+        return _MockTensor(self.arr[idx])
 
     def mean(self, dim: int = 0, keepdim: bool = True) -> _MockTensor:
-        _ = (dim, keepdim)
-        return self
+        return _MockTensor(np.mean(self.arr, axis=dim, keepdims=keepdim))
 
-    def item(self) -> int:
-        return 7
+    def item(self) -> float:
+        return float(self.arr.item())
 
 
 class _MockNoGrad:
@@ -85,29 +100,34 @@ class _MockTorchWithJit:
     def __init__(self) -> None:
         self.jit = _MockJitModule()
         self.cuda = _MockCuda()
+        self._rng = np.random.default_rng(42)
 
-    def manual_seed(self, _seed: int) -> None:
-        return None
+    def manual_seed(self, seed: int) -> None:
+        self._rng = np.random.default_rng(seed)
 
     def randn(self, shape: tuple[int, ...], device: str = "cpu") -> _MockTensor:
         _ = device
-        return _MockTensor(shape)
+        return _MockTensor(self._rng.standard_normal(shape, dtype=np.float32))
 
     def tensor(self, data: Any, dtype: Any = None, device: str = "cpu") -> _MockTensor:
         _ = (dtype, device)
         return _MockTensor(data)
 
-    def matmul(self, a: _MockTensor, _b: _MockTensor) -> _MockTensor:
-        return a
+    def matmul(self, a: _MockTensor, b: _MockTensor) -> _MockTensor:
+        return _MockTensor(a.arr @ b.arr)
 
     def tanh(self, a: _MockTensor) -> _MockTensor:
-        return a
+        return _MockTensor(np.tanh(a.arr))
 
     def argmax(self, a: _MockTensor) -> _MockTensor:
-        return a
+        return _MockTensor(np.array(np.argmax(a.arr)))
 
     def no_grad(self) -> _MockNoGrad:
         return _MockNoGrad()
+
+    def compile(self, fn: Any, mode: str = "default") -> Any:
+        _ = mode
+        return fn
 
 
 class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
