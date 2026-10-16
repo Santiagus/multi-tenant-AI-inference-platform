@@ -17,6 +17,8 @@ IGNORE_DIRS = {
     ".git",
     ".vscode",
     "node_modules",
+    ".pnpm-store",
+    ".cache",
     "dist",
     "build",
     ".venv",
@@ -42,21 +44,21 @@ def check_ast_type_annotations(repo_root: Path) -> list[str]:
     return issues
 
 
-def find_mypy_binary() -> str | None:
-    """Find mypy executable in PATH or ~/.local/bin."""
+def find_mypy_binary(repo_root: Path) -> str | None:
+    """Find mypy executable in .venv/bin or PATH."""
+    venv_mypy = repo_root / ".venv" / "bin" / "mypy"
+    if venv_mypy.is_file() and os.access(venv_mypy, os.X_OK):
+        return str(venv_mypy)
     found = shutil.which("mypy")
     if found:
         return found
-    user_bin = Path.home() / ".local" / "bin" / "mypy"
-    if user_bin.is_file() and os.access(user_bin, os.X_OK):
-        return str(user_bin)
     return None
 
 
 def run_mypy(repo_root: Path) -> list[str]:
     """Run mypy if available."""
     issues: list[str] = []
-    mypy = find_mypy_binary()
+    mypy = find_mypy_binary(repo_root)
     if mypy:
         print(f"Running mypy ({mypy})...")
         targets = ["--explicit-package-bases", "scripts", "tests", "apps/worker", "benchmarks"]
@@ -66,27 +68,30 @@ def run_mypy(repo_root: Path) -> list[str]:
     return issues
 
 
-def find_pnpm_binary() -> str | None:
-    """Find pnpm executable in PATH or ~/.local/bin."""
+def find_pnpm_binary(repo_root: Path) -> str | None:
+    """Find pnpm executable in .venv/bin or PATH."""
+    venv_pnpm = repo_root / ".venv" / "bin" / "pnpm"
+    if venv_pnpm.is_file() and os.access(venv_pnpm, os.X_OK):
+        return str(venv_pnpm)
     found = shutil.which("pnpm")
     if found:
         return found
-    user_bin = Path.home() / ".local" / "bin" / "pnpm"
-    if user_bin.is_file() and os.access(user_bin, os.X_OK):
-        return str(user_bin)
     return None
 
 
 def run_tsc(repo_root: Path) -> list[str]:
     """Run TypeScript compiler check across workspace projects."""
     issues: list[str] = []
-    pnpm = find_pnpm_binary()
+    pnpm = find_pnpm_binary(repo_root)
     if pnpm and (repo_root / "package.json").is_file():
         print(f"Running TypeScript typecheck ({pnpm} typecheck)...")
         env = os.environ.copy()
-        user_bin_dir = str(Path.home() / ".local" / "bin")
-        if user_bin_dir not in env.get("PATH", ""):
-            env["PATH"] = f"{user_bin_dir}:{env.get('PATH', '')}"
+        env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"
+        env["COREPACK_HOME"] = str(repo_root / ".cache" / "corepack")
+        venv_bin = str(repo_root / ".venv" / "bin")
+        current_path = env.get("PATH", "")
+        if venv_bin not in current_path.split(":"):
+            env["PATH"] = f"{venv_bin}:{current_path}"
         res = subprocess.run([pnpm, "typecheck"], cwd=repo_root, env=env)
         if res.returncode != 0:
             issues.append("TypeScript type checking reported violations.")

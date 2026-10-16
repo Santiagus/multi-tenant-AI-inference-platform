@@ -16,6 +16,8 @@ IGNORE_DIRS = {
     ".git",
     ".vscode",
     "node_modules",
+    ".pnpm-store",
+    ".cache",
     "dist",
     "build",
     ".venv",

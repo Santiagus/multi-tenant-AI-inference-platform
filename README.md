@@ -128,11 +128,9 @@ This project is built using disciplined agentic pair-programming governed by:
 
 ### First Steps & Local Development
 
-1. **Install workspace dependencies (Node.js & Python worker)**:
+1. **Initialize the local environment (Python `.venv`, Corepack/`pnpm`, and workspace dependencies)**:
    ```bash
-   pnpm install
-   pnpm build
-   pip install -e ./apps/worker   # or: uv pip install --system -e ./apps/worker
+   source scripts/init_env.sh   # or: make init
    ```
 
 2. **Option A: Start full platform & observability stack via Docker Compose**:
@@ -181,11 +179,13 @@ make ci
 
 Individual validation targets:
 ```bash
+make init                   # Initialize local Python .venv, pnpm, and workspace dependencies
 make format-check           # Check line endings, trailing whitespace, and EOF newlines
 make lint                   # Check Python, JSON, and Mermaid diagram syntax
 make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
 make test                   # Run Python and TypeScript unit & integration test suites
 make validate-k8s           # Render Helm chart profiles and validate KEDA, Kueue, and Kyverno policies
+make validate-terraform     # Validate Terraform modules, least-privilege IAM, cost guardrails & ephemeral plan
 make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)

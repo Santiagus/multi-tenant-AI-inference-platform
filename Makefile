@@ -1,12 +1,16 @@
 SHELL := /bin/bash
-PYTHON ?= python3
+PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
+export PATH := $(CURDIR)/.venv/bin:$(PATH)
+export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
+export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform
+.PHONY: all help init format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform
 
 all: ci
 
 help:
 	@echo "Available targets:"
+	@echo "  make init                   - Initialize local .venv, pnpm, and workspace dependencies"
 	@echo "  make ci                     - Run complete local CI gate (format, lint, types, tests, scan, handoff)"
 	@echo "  make format-check           - Check line endings, whitespace, and formatting standards"
 	@echo "  make lint                   - Run syntax and code quality checks (Python, JSON, Mermaid)"
@@ -19,6 +23,9 @@ help:
 	@echo "  make validate-terraform     - Validate Terraform modules, least-privilege IAM, cost guardrails & ephemeral plan"
 	@echo "  make simulate-observability - Run live workload simulator to populate Grafana & Prometheus"
 	@echo "  make install-hooks          - Configure local Git repository to run pre-commit hook"
+
+init:
+	@bash scripts/init_env.sh
 
 format-check:
 	@echo "==> Running format check..."
@@ -39,7 +46,7 @@ typecheck:
 test:
 	@echo "==> Running tests..."
 	@$(PYTHON) -m unittest discover -s tests
-	@if [ -f package.json ]; then export PATH="$$HOME/.local/bin:$$PATH"; pnpm test; fi
+	@if [ -f package.json ]; then pnpm test; fi
 
 scan:
 	@echo "==> Running secret & PII scan..."
