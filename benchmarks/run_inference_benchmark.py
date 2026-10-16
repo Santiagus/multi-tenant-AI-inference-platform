@@ -311,6 +311,8 @@ def _build_chart_series_and_routing_matrix(
     scenarios: list[ScenarioMetricsRecord],
     provider_name: str,
     model_id: str,
+    initial_hw: Any | None = None,
+    cold_start_ms: float | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Build pre-indexed chart datasets for Web UI visualization and prompt-tier provider routing."""
     # 1. Throughput & Latency vs Concurrency curves (grouped by prompt_tier for warm runs)
@@ -350,40 +352,74 @@ def _build_chart_series_and_routing_matrix(
             )
 
     # 3. Cross-Provider Reference Comparison Matrix (for M08 Routing & M11 Web Pareto Chart)
-    # Combines Measured local run metrics with Estimated cloud adapter profiles per prompt tier
-    reference_providers: list[dict[str, Any]] = [
-        {
-            "provider": "local_pytorch_gpu",
-            "hardware": "NVIDIA GeForce RTX 5070 Ti (16 GB GDDR7)",
-            "model_id": model_id,
-            "precision": "awq_int4",
-            "vram_footprint_gb": 6.4,
-            "cold_start_ms": 450.0,
-            "profiles_by_prompt_tier": {
-                "short": {
-                    "ttft_p50_ms": 14.0,
-                    "itl_p50_ms": 9.8,
-                    "e2e_p95_ms": 340.0,
-                    "batch_c8_tokens_per_sec": 360.0,
-                    "cost_per_1m_tokens_usd": 0.12,
-                },
-                "medium": {
-                    "ttft_p50_ms": 22.0,
-                    "itl_p50_ms": 10.2,
-                    "e2e_p95_ms": 365.0,
-                    "batch_c8_tokens_per_sec": 340.0,
-                    "cost_per_1m_tokens_usd": 0.12,
-                },
-                "long": {
-                    "ttft_p50_ms": 68.0,
-                    "itl_p50_ms": 11.5,
-                    "e2e_p95_ms": 460.0,
-                    "batch_c8_tokens_per_sec": 285.0,
-                    "cost_per_1m_tokens_usd": 0.14,
-                },
+    # Uses Measured local GPU metrics when executed on CUDA hardware; falls back to Estimated when CPU-only.
+    is_cuda_measured = initial_hw is not None and getattr(initial_hw, "device_type", "") == "cuda"
+    local_gpu_entry: dict[str, Any] = {
+        "provider": "local_pytorch_gpu",
+        "hardware": (
+            f"{initial_hw.device_name} ({round(initial_hw.vram_total_mb / 1024.0, 1)} GB VRAM)"
+            if is_cuda_measured and initial_hw is not None
+            else "NVIDIA GeForce RTX 5070 Ti (16 GB GDDR7)"
+        ),
+        "model_id": model_id,
+        "precision": "fp32" if is_cuda_measured else "awq_int4",
+        "vram_footprint_gb": (
+            round(max((s.vram_peak_mb for s in scenarios), default=0.0) / 1024.0, 4)
+            if is_cuda_measured
+            else 6.4
+        ),
+        "cold_start_ms": round(cold_start_ms, 2) if (is_cuda_measured and cold_start_ms is not None) else 450.0,
+        "profiles_by_prompt_tier": {
+            "short": {
+                "ttft_p50_ms": 14.0,
+                "itl_p50_ms": 9.8,
+                "e2e_p95_ms": 340.0,
+                "batch_c8_tokens_per_sec": 360.0,
+                "cost_per_1m_tokens_usd": 0.12,
             },
-            "measurement_type": "estimated",
+            "medium": {
+                "ttft_p50_ms": 22.0,
+                "itl_p50_ms": 10.2,
+                "e2e_p95_ms": 365.0,
+                "batch_c8_tokens_per_sec": 340.0,
+                "cost_per_1m_tokens_usd": 0.12,
+            },
+            "long": {
+                "ttft_p50_ms": 68.0,
+                "itl_p50_ms": 11.5,
+                "e2e_p95_ms": 460.0,
+                "batch_c8_tokens_per_sec": 285.0,
+                "cost_per_1m_tokens_usd": 0.14,
+            },
         },
+        "measurement_type": "measured" if is_cuda_measured else "estimated",
+    }
+
+    if is_cuda_measured:
+        for tier_name in ("short", "medium", "long"):
+            tier_c1 = next(
+                (s for s in scenarios if s.warm_state == "warm" and s.prompt_tier == tier_name and s.concurrency == 1),
+                None,
+            )
+            tier_max_c = next(
+                (
+                    s
+                    for s in sorted(scenarios, key=lambda x: x.concurrency, reverse=True)
+                    if s.warm_state == "warm" and s.prompt_tier == tier_name
+                ),
+                tier_c1,
+            )
+            if tier_c1 is not None and tier_max_c is not None:
+                local_gpu_entry["profiles_by_prompt_tier"][tier_name] = {
+                    "ttft_p50_ms": tier_c1.ttft_p50_ms,
+                    "itl_p50_ms": tier_c1.itl_p50_ms,
+                    "e2e_p95_ms": tier_c1.latency_p95_ms,
+                    "batch_c8_tokens_per_sec": tier_max_c.aggregate_output_tokens_per_sec,
+                    "cost_per_1m_tokens_usd": tier_c1.cost_per_1m_tokens_usd,
+                }
+
+    reference_providers: list[dict[str, Any]] = [
+        local_gpu_entry,
         {
             "provider": "runpod_serverless",
             "hardware": "RunPod NVIDIA A100-SXM4-80GB",
@@ -507,6 +543,7 @@ def run_benchmark_suite(
     concurrency_levels: list[int] | None = None,
     prompt_tiers: list[str] | None = None,
     run_timestamp: datetime | None = None,
+    prefer_device: str = "auto",
 ) -> dict[str, Any]:
     """Run the complete multi-prompt-tier, cold/warm, and concurrency benchmark suite."""
     levels = concurrency_levels if concurrency_levels is not None else [1, 2, 4, 8]
@@ -516,13 +553,15 @@ def run_benchmark_suite(
     file_ts_slug = ts_now.strftime("%Y-%m-%dT%H-%M-%SZ")
 
     telemetry = TelemetryCollector()
-    loader = ModelLoader()
+    loader = ModelLoader(prefer_device=prefer_device)
     adapter = LocalPyTorchAdapter(model_loader=loader, telemetry_collector=telemetry)
 
     loaded, _ = loader.load(model_id)
+    resolved_dev = loader.resolve_device()
     initial_hw = telemetry.capture_snapshot(
         active_backend=loaded.backend.backend_name,
         model_footprint_mb=loaded.backend.footprint_mb,
+        force_cpu=(resolved_dev == "cpu"),
     )
 
     hw_slug = _slugify(f"{initial_hw.device_type}-{initial_hw.backend}")
@@ -575,6 +614,8 @@ def run_benchmark_suite(
         scenarios=scenarios,
         provider_name=adapter.name,
         model_id=model_id,
+        initial_hw=initial_hw,
+        cold_start_ms=cold_res.latency_p50_ms,
     )
 
     peak_throughput = max((s.aggregate_output_tokens_per_sec for s in scenarios), default=0.0)
@@ -594,7 +635,7 @@ def run_benchmark_suite(
             "backend": initial_hw.backend,
             "cpu_count_logical": os.cpu_count() or 1,
             "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
-            "cuda_available": telemetry.is_cuda_available(),
+            "cuda_available": telemetry.is_cuda_available() and (resolved_dev == "cuda"),
             "vram_total_mb": initial_hw.vram_total_mb,
             "measurement_mode": "measured",
         },
@@ -747,10 +788,16 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             f"| `{rec['recommended_burst_fallback']}` | {rec['rationale']} |"
         )
 
+    has_measured_gpu = any(
+        p.get("measurement_type") == "measured"
+        for p in report["reference_provider_comparison_estimated"]
+    )
+    sec5_mode = "`Measured` Local GPU + `Estimated` Cloud" if has_measured_gpu else "`Estimated`"
+
     lines.extend(
         [
             "",
-            "## 5. Reference Cloud & Local GPU Targets (`Estimated`)",
+            f"## 5. Reference Cloud & Local GPU Targets ({sec5_mode})",
             "",
             "| Provider Adapter | Target Hardware | Precision | Cold Start | Short Prompt E2E p95 | Long Prompt E2E p95 | Batch (c=8) Throughput | Unit Cost ($/1M tok) | Mode |",
             "|---|---|---|---|---|---|---|---|---|",
@@ -761,20 +808,20 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         short_p = prov["profiles_by_prompt_tier"]["short"]
         long_p = prov["profiles_by_prompt_tier"]["long"]
         lines.append(
-            f"| `{prov['provider']}` | `{prov['hardware']}` | `{prov['precision']}` | {prov['cold_start_ms']:.0f} ms "
-            f"| {short_p['e2e_p95_ms']:.0f} ms | {long_p['e2e_p95_ms']:.0f} ms "
-            f"| {short_p['batch_c8_tokens_per_sec']:.0f} tok/s | \\${short_p['cost_per_1m_tokens_usd']:.2f} | `{prov['measurement_type']}` |"
+            f"| `{prov['provider']}` | `{prov['hardware']}` | `{prov['precision']}` | {prov['cold_start_ms']:.1f} ms "
+            f"| {short_p['e2e_p95_ms']:.2f} ms | {long_p['e2e_p95_ms']:.2f} ms "
+            f"| {short_p['batch_c8_tokens_per_sec']:.1f} tok/s | \\${short_p['cost_per_1m_tokens_usd']:.2f} | `{prov['measurement_type']}` |"
         )
 
     lines.extend(
         [
             "",
-            f"- **RTX 5070 Ti Baseline Note (`Estimated`)**: `{est['vram_footprint_gb_estimated']} GiB` VRAM, `{est['single_stream_tokens_per_sec_estimated']} tok/s` single-stream, `{est['batch_c8_aggregate_tokens_per_sec_estimated']} tok/s` at `c=8`, `{est['ttft_p50_ms_estimated']} ms` TTFT.",
+            f"- **RTX 5070 Ti Baseline Note (`Estimated` full 4-bit weights)**: `{est['vram_footprint_gb_estimated']} GiB` VRAM, `{est['single_stream_tokens_per_sec_estimated']} tok/s` single-stream, `{est['batch_c8_aggregate_tokens_per_sec_estimated']} tok/s` at `c=8`, `{est['ttft_p50_ms_estimated']} ms` TTFT.",
             "",
             "## 6. Reproducibility Command",
             "",
             "```bash",
-            "python3 benchmarks/run_inference_benchmark.py --output-dir benchmarks/results",
+            ".venv/bin/python benchmarks/run_inference_benchmark.py --output-dir benchmarks/results",
             "```",
             "",
         ]
@@ -926,6 +973,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated prompt size tiers to evaluate (short,medium,long).",
     )
     parser.add_argument(
+        "--device",
+        type=str,
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Preferred execution device (auto uses CUDA if available, cpu forces CPU-only).",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("benchmarks/results"),
@@ -942,6 +996,7 @@ def main(argv: list[str] | None = None) -> int:
         max_new_tokens=args.max_new_tokens,
         samples_per_level=args.samples,
         prompt_tiers=tiers,
+        prefer_device=args.device,
     )
 
     paths = update_run_ledgers(args.output_dir, report)

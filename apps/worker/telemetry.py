@@ -101,11 +101,21 @@ class TelemetryCollector:
             pass
         return None
 
-    def capture_snapshot(self, active_backend: str, model_footprint_mb: float = 0.0) -> HardwareTelemetry:
+    def capture_snapshot(
+        self,
+        active_backend: str,
+        model_footprint_mb: float = 0.0,
+        force_cpu: bool = False,
+    ) -> HardwareTelemetry:
         """Capture a point-in-time hardware telemetry snapshot."""
         rss_mb = self.get_process_rss_mb()
+        is_cpu_backend = (
+            force_cpu
+            or active_backend.endswith("_cpu")
+            or active_backend == "numpy_cpu_fallback"
+        )
 
-        if self.is_cuda_available() and self._torch is not None:
+        if not is_cpu_backend and self.is_cuda_available() and self._torch is not None:
             device_idx = 0
             device_name = str(self._torch.cuda.get_device_name(device_idx))
             alloc_mb = round(float(self._torch.cuda.memory_allocated(device_idx)) / (1024 * 1024), 2)
