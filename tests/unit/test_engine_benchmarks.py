@@ -315,7 +315,91 @@ class TestEngineBenchmarkHarness(unittest.TestCase):
                 self.assertEqual(res["engine_executed"], "torchscript")
                 self.assertFalse(res["upgraded_automatically"])
 
+    def test_open_weights_leaderboard_models_across_modalities(self) -> None:
+        fixtures_text_dir = Path(repo_root) / "tests" / "fixtures" / "text"
+        t2i_items = json.loads(
+            (fixtures_text_dir / "prompts_text_to_image.json").read_text(encoding="utf-8")
+        )
+        media_items = json.loads(
+            (fixtures_text_dir / "prompts_media_inference.json").read_text(encoding="utf-8")
+        )
+
+        mock_torch = _MockTorchWithJit()
+        loader = ModelLoader(torch_module=mock_torch, prefer_device="cpu")
+
+        # 1. Text-to-Text open-weights leaderboard models (Qwen2.5, DeepSeek-R1-Distill, Gemma-2, Mistral)
+        for llm_id in (
+            "Qwen/Qwen2.5-7B-Instruct",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            "google/gemma-2-9b-it",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+        ):
+            metrics = run_scenario_benchmark(
+                loader=loader,
+                model_id=llm_id,
+                engine="torchscript",
+                scenario_key="llm_open_weights",
+                scenario={
+                    "name": f"Open-Weights LLM ({llm_id})",
+                    "modality": "text_to_text",
+                    "prompt": "Compare SwiGLU feed-forward expansion ratios and KV-cache memory bandwidth.",
+                    "target_new_tokens": 12,
+                    "media_asset_uri": None,
+                },
+                allow_auto_upgrade=True,
+                iterations=2,
+            )
+            self.assertEqual(metrics["modality"], "text_to_text")
+            self.assertGreater(metrics["tokens_per_sec"], 0.0)
+            self.assertGreater(metrics["footprint_mb"], 0.0)
+
+        # 2. Text-to-Image DiT models (FLUX.1-schnell, Stable Diffusion 3.5 Medium)
+        for item in t2i_items:
+            metrics = run_scenario_benchmark(
+                loader=loader,
+                model_id=item["model_id"],
+                engine="torchscript",
+                scenario_key=item["id"],
+                scenario={
+                    "name": item["category"],
+                    "modality": item["modality"],
+                    "prompt": item["prompt"],
+                    "target_new_tokens": 8,
+                    "media_asset_uri": "tests/fixtures/media/sample_keyframe.png",
+                },
+                allow_auto_upgrade=False,
+                iterations=2,
+            )
+            self.assertEqual(metrics["modality"], "text_to_image")
+            self.assertGreater(metrics["tokens_per_sec"], 0.0)
+
+        # 3. Media Inference (Photo ViT/VLM & Video 3D DiT) paired with real binary fixtures
+        for item in media_items:
+            asset_info = inspect_local_media_asset(item["asset_uri"])
+            self.assertTrue(asset_info["exists_on_disk"])
+            self.assertTrue(asset_info["valid_header"])
+
+            metrics = run_scenario_benchmark(
+                loader=loader,
+                model_id=item["model_id"],
+                engine="torchscript",
+                scenario_key=item["id"],
+                scenario={
+                    "name": item["category"],
+                    "modality": item["modality"],
+                    "prompt": item["prompt"],
+                    "target_new_tokens": 8,
+                    "media_asset_uri": item["asset_uri"],
+                },
+                allow_auto_upgrade=False,
+                iterations=2,
+            )
+            self.assertIn(metrics["modality"], ("media_photo", "media_video"))
+            self.assertGreater(metrics["media_overhead_ms"], 0.0)
+            self.assertGreater(metrics["tokens_per_sec"], 0.0)
+
 
 if __name__ == "__main__":
     matrix = execute_comprehensive_engine_matrix()
     print(json.dumps(matrix, indent=2))
+

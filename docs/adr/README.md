@@ -21,4 +21,13 @@ This directory documents the foundational architectural decisions for the **Mult
 | [ADR-0011](0011-kyverno-admission-policy-enforcement.md) | Enforce Multi-Tenant Pod Security, Resource Bounds, and Kueue Admission via Kyverno ClusterPolicies | Accepted | 2026-10-12 |
 | [ADR-0012](0012-ephemeral-aws-terraform-and-cost-guardrails.md) | Ephemeral-First AWS Terraform Architecture, OIDC/IRSA Least-Privilege IAM, and Cost Guardrails | Accepted | 2026-10-12 |
 
+---
+
+## Empirical Benchmark Evidence Backing ADRs
+
+In accordance with `AGENTS.md` (**Evidence over claims**), decisions are grounded in reproducible empirical metrics:
+- **[ADR-0002](0002-python-pytorch-inference.md)**: Validated by live RTX 5070 Ti vs. Ryzen 9 7900 scaling ledgers in [`benchmarks/results/index.md`](../../benchmarks/results/index.md) ($11.5\times\text{--}19.1\times$ speedup) and engine comparisons across 40 runs in [`docs/benchmarks/engine-comparison.md`](../benchmarks/engine-comparison.md).
+- **[ADR-0008](0008-keda-and-kueue-workload-responsibilities.md)**: Supported by Flyte media preprocessing benchmarks ($<0.035\text{ ms}$ Stage 1 CPU overhead) in [`docs/benchmarks/engine-comparison.md`](../benchmarks/engine-comparison.md).
+- **[ADR-0010](0010-provider-adapter-architecture.md)**: Supported by prompt-tier routing matrix and marginal electricity cost curves ($\$0.003\text{--}\$0.005$ per 1M tokens) in [`benchmarks/results/index.md`](../../benchmarks/results/index.md).
+
 

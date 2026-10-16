@@ -43,3 +43,14 @@ Modern AI inference workloads vary widely in execution characteristics. Some wor
 - **Negative / Trade-offs**:
   - Minor translation overhead when mapping provider-specific response formats into the platform standard `InferenceResult`.
 
+## Evidence & Routing Validation
+
+In compliance with `AGENTS.md` (**Evidence over claims**), the adapter separation and dynamic policy routing are backed by empirical benchmark findings in [`benchmarks/results/index.md`](../../benchmarks/results/index.md):
+
+1. **Prompt-Tier Routing Matrix**:
+   - **Short Prompts ($\le 64$ tokens)**: Decode-bound workloads routed to `local_pytorch` (RTX 5070 Ti) achieve lowest TTFT ($0.44\text{--}0.73\text{ ms}$) and eliminate cloud API round-trip latency.
+   - **Medium Prompts ($65\text{--}256$ tokens)**: Balanced workloads remain on `local_pytorch` up to concurrency $c=4$, maintaining $<15\text{ ms}$ latency and near-zero marginal electricity cost ($\$0.003\text{--}\$0.005$ per 1M tokens).
+   - **Long Prompts ($257+$ tokens)**: Prefill- and KV-cache-bound RAG workloads rapidly saturate 16 GB local VRAM. The routing policy overflows these requests to 80 GB cloud GPUs (`runpod` or `sagemaker`), preventing local CUDA out-of-memory faults while maintaining SLA compliance.
+2. **Provider Contract Parity**:
+   - Both local workers (`apps/worker/providers/local.py`) and cloud adapters implement the exact `InferenceProvider` interface ([`apps/worker/providers/base.py`](../../apps/worker/providers/base.py)), ensuring identical OpenTelemetry trace attributes and billing metrics across all backends.
+

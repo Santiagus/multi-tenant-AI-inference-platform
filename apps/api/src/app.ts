@@ -9,6 +9,7 @@ import { DistributedTracer } from './infrastructure/telemetry/tracer.js';
 import { MetricsRegistry } from './infrastructure/telemetry/metrics.js';
 import { KueueAdmissionController } from './domain/kubernetes-scheduler.js';
 import { AwsPlatformController } from './domain/aws-platform.js';
+import { ProviderRouterController } from './domain/provider-routing.js';
 import { JobService } from './application/job-service.js';
 import { JobWorker, type IInferenceExecutor } from './application/job-worker.js';
 import { registerRequestContextHooks } from './plugins/request-context.js';
@@ -18,6 +19,7 @@ import { jobRoutes } from './routes/jobs.js';
 import { observabilityRoutes } from './routes/observability.js';
 import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
+import { providerRoutingRoutes } from './routes/provider-routing.js';
 
 export interface AppDependencies {
   config: EnvConfig;
@@ -31,6 +33,7 @@ export interface AppDependencies {
   metrics?: MetricsRegistry;
   kueueController?: KueueAdmissionController;
   awsController?: AwsPlatformController;
+  routerController?: ProviderRouterController;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -45,6 +48,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const metrics = deps.metrics ?? new MetricsRegistry();
   const kueueController = deps.kueueController ?? new KueueAdmissionController();
   const awsController = deps.awsController ?? new AwsPlatformController();
+  const routerController = deps.routerController ?? new ProviderRouterController();
 
   const jobService = new JobService(
     deps.jobRepo,
@@ -89,6 +93,12 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.register(awsPlatformRoutes, {
     metrics,
     awsController,
+  });
+
+  app.register(providerRoutingRoutes, {
+    metrics,
+    routerController,
+    tracer,
   });
 
   app.register(jobRoutes, {

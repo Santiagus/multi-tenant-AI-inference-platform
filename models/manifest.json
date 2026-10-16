@@ -1,0 +1,402 @@
+{
+  "schema_version": "1.0.0",
+  "repository_pattern": "NVIDIA Triton / KServe / Hugging Face Enterprise Domain Model Store",
+  "store_root": "models",
+  "total_models": 12,
+  "domains": {
+    "text-to-text": [
+      "meta-llama/Llama-3-8B-Instruct",
+      "Qwen/Qwen2.5-7B-Instruct",
+      "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "google/gemma-2-9b-it",
+      "mistralai/Mistral-7B-Instruct-v0.3",
+      "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    ],
+    "text-to-image": [
+      "black-forest-labs/FLUX.1-schnell",
+      "stabilityai/stable-diffusion-3.5-medium"
+    ],
+    "media-photo": [
+      "Qwen/Qwen2.5-VL-7B-Instruct",
+      "openai/clip-vit-large-patch14"
+    ],
+    "media-video": [
+      "Wan-AI/Wan2.1-T2V-1.3B",
+      "THUDM/CogVideoX-2b"
+    ]
+  },
+  "models": [
+    {
+      "model_id": "meta-llama/Llama-3-8B-Instruct",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_llm_baseline",
+      "local_dir": "models/text-to-text/meta-llama--Llama-3-8B-Instruct",
+      "huggingface_url": "https://huggingface.co/meta-llama/Llama-3-8B-Instruct",
+      "production_geometry": {
+        "hidden_dim": 4096,
+        "intermediate_dim": 14336,
+        "num_layers": 32,
+        "ffn_expansion_ratio": 3.5,
+        "estimated_fp16_vram_gb": 16.5
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 3584,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 3.5,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "af8634ee5de635dd345b7c437bb8ac5742d7384fbab0841d6096a511812d8fba"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 448,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 3.5,
+        "content_sha256": "e025c5b1f1af6df930feae1a475ca46a57b6065006fa4d0bb518da78258417e1"
+      }
+    },
+    {
+      "model_id": "Qwen/Qwen2.5-7B-Instruct",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_llm_top_general_coding",
+      "local_dir": "models/text-to-text/Qwen--Qwen2.5-7B-Instruct",
+      "huggingface_url": "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct",
+      "production_geometry": {
+        "hidden_dim": 3584,
+        "intermediate_dim": 18944,
+        "num_layers": 28,
+        "ffn_expansion_ratio": 5.29,
+        "estimated_fp16_vram_gb": 15.2
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4608,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.5,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "20bf0ee15ca8d3509fe8f359e734bb3ff39a637911148d8a6dce54ff0d8292e4"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 576,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.5,
+        "content_sha256": "9d4af3429650dc073596636e8a6ac6ed324b139ae08d02bc94dc757e61c0e5ce"
+      }
+    },
+    {
+      "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_llm_top_reasoning",
+      "local_dir": "models/text-to-text/deepseek-ai--DeepSeek-R1-Distill-Qwen-7B",
+      "huggingface_url": "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "production_geometry": {
+        "hidden_dim": 3584,
+        "intermediate_dim": 18944,
+        "num_layers": 28,
+        "ffn_expansion_ratio": 5.29,
+        "estimated_fp16_vram_gb": 15.2
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4608,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.5,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "c7f11226d9e30efa2491d0ab8e123cc3930431e54d23914c2561cd3fde176063"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 576,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.5,
+        "content_sha256": "5d01476e640ba50dac9e2d70221e8f22b75ae9ab9134c45744b207b9eb0443e5"
+      }
+    },
+    {
+      "model_id": "google/gemma-2-9b-it",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_llm_efficiency_leader",
+      "local_dir": "models/text-to-text/google--gemma-2-9b-it",
+      "huggingface_url": "https://huggingface.co/google/gemma-2-9b-it",
+      "production_geometry": {
+        "hidden_dim": 3584,
+        "intermediate_dim": 14336,
+        "num_layers": 42,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 18.4
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 5,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "afc0fe515e2a3ae5ee8df840f77863f7add9838326a5279396193fff6dd1279a"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 512,
+        "num_layers": 5,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "bdbc18e3b19b840d934809b8d4394a341c40b80cde373f9d8b3e1aa09774be00"
+      }
+    },
+    {
+      "model_id": "mistralai/Mistral-7B-Instruct-v0.3",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_llm_low_latency_gqa",
+      "local_dir": "models/text-to-text/mistralai--Mistral-7B-Instruct-v0.3",
+      "huggingface_url": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3",
+      "production_geometry": {
+        "hidden_dim": 4096,
+        "intermediate_dim": 14336,
+        "num_layers": 32,
+        "ffn_expansion_ratio": 3.5,
+        "estimated_fp16_vram_gb": 14.8
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 3584,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 3.5,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "2129acb48ae5cecf68ece07f82a631003035eff83d04b89c25b3733a830a54b4"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 448,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 3.5,
+        "content_sha256": "2bfc7297d5656d648fe85e44d2ea357af0e977ab8b71874c9618d2764c321cdb"
+      }
+    },
+    {
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "domain": "text-to-text",
+      "modality": "text_to_text",
+      "leaderboard_tier": "open_weights_slm_edge",
+      "local_dir": "models/text-to-text/TinyLlama--TinyLlama-1.1B-Chat-v1.0",
+      "huggingface_url": "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "production_geometry": {
+        "hidden_dim": 2048,
+        "intermediate_dim": 5632,
+        "num_layers": 22,
+        "ffn_expansion_ratio": 2.75,
+        "estimated_fp16_vram_gb": 2.2
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 768,
+        "intermediate_dim": 2112,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 2.75,
+        "num_patches": 0,
+        "denoising_steps": 0,
+        "content_sha256": "5333e03c299595622f28b5a7034935bb47c4c39344fa86bbe9fde06132b75afa"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 64,
+        "intermediate_dim": 176,
+        "num_layers": 2,
+        "ffn_expansion_ratio": 2.75,
+        "content_sha256": "1e6a7aff1af900e25e7591e3b12c7b88d611da1efc3c67f3c550db44e1bf3ca5"
+      }
+    },
+    {
+      "model_id": "black-forest-labs/FLUX.1-schnell",
+      "domain": "text-to-image",
+      "modality": "text_to_image",
+      "leaderboard_tier": "open_weights_t2i_leader_apache2",
+      "local_dir": "models/text-to-image/black-forest-labs--FLUX.1-schnell",
+      "huggingface_url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+      "production_geometry": {
+        "hidden_dim": 3072,
+        "intermediate_dim": 12288,
+        "num_layers": 19,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 12.4
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 64,
+        "denoising_steps": 4,
+        "content_sha256": "27352c4e6e702feea9347cfcb77e8bac7a7e8aa0f1baf15e5cf8fd16ad001ede"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 512,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "682c256526fa9d1a85998011c641b026223522b5aaa43bc8de2b666a088a7278"
+      }
+    },
+    {
+      "model_id": "stabilityai/stable-diffusion-3.5-medium",
+      "domain": "text-to-image",
+      "modality": "text_to_image",
+      "leaderboard_tier": "open_weights_t2i_consumer_gpu",
+      "local_dir": "models/text-to-image/stabilityai--stable-diffusion-3.5-medium",
+      "huggingface_url": "https://huggingface.co/stabilityai/stable-diffusion-3.5-medium",
+      "production_geometry": {
+        "hidden_dim": 1536,
+        "intermediate_dim": 6144,
+        "num_layers": 24,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 9.8
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 64,
+        "denoising_steps": 8,
+        "content_sha256": "abceaadbb4870f8a27ff90a8b7cf7da826f2e5f3ea7085b930af881bcd02fa18"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 128,
+        "intermediate_dim": 512,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "d2c3fbc15f1050ea1281e6ab4783c1f4b3071f9dee1ffbb80f82bcb3c1564d85"
+      }
+    },
+    {
+      "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+      "domain": "media-photo",
+      "modality": "media_photo",
+      "leaderboard_tier": "open_weights_vlm_photo_leader",
+      "local_dir": "models/media-photo/Qwen--Qwen2.5-VL-7B-Instruct",
+      "huggingface_url": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct",
+      "production_geometry": {
+        "hidden_dim": 1280,
+        "intermediate_dim": 5120,
+        "num_layers": 32,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 15.8
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 196,
+        "denoising_steps": 0,
+        "content_sha256": "2bef1fc715d381f92ce592174d3a58c01f71f95ae32c801a41a3ff7c9c1717b5"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 96,
+        "intermediate_dim": 384,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "49560217f681014d377a84272c6905baea7982052dd320b804a470119855ee1e"
+      }
+    },
+    {
+      "model_id": "openai/clip-vit-large-patch14",
+      "domain": "media-photo",
+      "modality": "media_photo",
+      "leaderboard_tier": "open_weights_vit_photo_encoder",
+      "local_dir": "models/media-photo/openai--clip-vit-large-patch14",
+      "huggingface_url": "https://huggingface.co/openai/clip-vit-large-patch14",
+      "production_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 24,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 1.7
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 256,
+        "denoising_steps": 0,
+        "content_sha256": "472a142a8af9c50b7593f58ae04c397974809a1e40fbde8590f4b9b1a6b466e0"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 96,
+        "intermediate_dim": 384,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "d0bc3787381fcccad84b9206c3e3daebca28d9c6f42ac19f738178b151d068d6"
+      }
+    },
+    {
+      "model_id": "Wan-AI/Wan2.1-T2V-1.3B",
+      "domain": "media-video",
+      "modality": "media_video",
+      "leaderboard_tier": "open_weights_video_leader_16gb_gpu",
+      "local_dir": "models/media-video/Wan-AI--Wan2.1-T2V-1.3B",
+      "huggingface_url": "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B",
+      "production_geometry": {
+        "hidden_dim": 1536,
+        "intermediate_dim": 8960,
+        "num_layers": 30,
+        "ffn_expansion_ratio": 5.83,
+        "estimated_fp16_vram_gb": 8.2
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 128,
+        "denoising_steps": 4,
+        "content_sha256": "6f657e09ddc796c4ccb580888add5909bb288c67494314460665d26cba73a93b"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 96,
+        "intermediate_dim": 384,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "a798554529a042cf94cc0c7b83c7436da4bfd1584a12f4c3ebff22dfeb5f69e8"
+      }
+    },
+    {
+      "model_id": "THUDM/CogVideoX-2b",
+      "domain": "media-video",
+      "modality": "media_video",
+      "leaderboard_tier": "open_weights_video_3d_dit",
+      "local_dir": "models/media-video/THUDM--CogVideoX-2b",
+      "huggingface_url": "https://huggingface.co/THUDM/CogVideoX-2b",
+      "production_geometry": {
+        "hidden_dim": 1920,
+        "intermediate_dim": 7680,
+        "num_layers": 30,
+        "ffn_expansion_ratio": 4.0,
+        "estimated_fp16_vram_gb": 9.6
+      },
+      "benchmark_geometry": {
+        "hidden_dim": 1024,
+        "intermediate_dim": 4096,
+        "num_layers": 4,
+        "ffn_expansion_ratio": 4.0,
+        "num_patches": 128,
+        "denoising_steps": 6,
+        "content_sha256": "5158cecc3bd91b20d7d5306cd9d5a3c0e7210ccc951b69c52c1993e614c73975"
+      },
+      "ci_fixture_geometry": {
+        "hidden_dim": 96,
+        "intermediate_dim": 384,
+        "num_layers": 3,
+        "ffn_expansion_ratio": 4.0,
+        "content_sha256": "de8b0c43608131f1622d75c838dc6c9ddb355e77966d2786bd69887b603959c8"
+      }
+    }
+  ]
+}

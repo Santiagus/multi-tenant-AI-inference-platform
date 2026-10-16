@@ -1,0 +1,23 @@
+[
+  {
+    "id": "t2i-flux-01",
+    "category": "photorealistic_architecture",
+    "model_id": "black-forest-labs/FLUX.1-schnell",
+    "modality": "text_to_image",
+    "prompt": "Architectural photography of a glass data center nestled in Nordic fjords at twilight, warm server rack glow, 35mm f/1.8.",
+    "resolution": "1024x1024",
+    "num_patches": 64,
+    "denoising_steps": 4
+  },
+  {
+    "id": "t2i-sd35-02",
+    "category": "technical_diagram_illustration",
+    "model_id": "stabilityai/stable-diffusion-3.5-medium",
+    "modality": "text_to_image",
+    "prompt": "Isometric vector illustration of a multi-tenant GPU cluster with glowing optical interconnects and cybernetic routing nodes.",
+    "resolution": "1024x1024",
+    "num_patches": 64,
+    "denoising_steps": 8
+  }
+]
+

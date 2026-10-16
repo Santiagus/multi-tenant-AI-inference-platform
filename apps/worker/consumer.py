@@ -17,6 +17,7 @@ from apps.worker.artifacts import ArtifactHandler
 from apps.worker.contracts import InferenceError, InferenceRequest
 from apps.worker.providers.base import InferenceProvider
 from apps.worker.providers.local import LocalPyTorchAdapter
+from apps.worker.providers.registry import ProviderRegistry, get_default_registry
 
 
 class WorkerRuntime:
@@ -26,16 +27,41 @@ class WorkerRuntime:
         self,
         provider: InferenceProvider | None = None,
         artifact_handler: ArtifactHandler | None = None,
+        registry: ProviderRegistry | None = None,
     ) -> None:
-        self._provider = provider if provider is not None else LocalPyTorchAdapter()
+        self._registry = registry if registry is not None else get_default_registry()
+        self._provider = provider if provider is not None else self._registry.get("local_pytorch")
         self._artifacts = artifact_handler if artifact_handler is not None else ArtifactHandler()
+
+    @property
+    def registry(self) -> ProviderRegistry:
+        return self._registry
+
+    def resolve_provider(self, requested_name: str | None = None) -> InferenceProvider:
+        if requested_name and requested_name.strip():
+            return self._registry.get(requested_name.strip())
+        return self._provider
 
     async def process_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single inference job payload and return structured response envelope."""
         try:
             request = InferenceRequest.from_dict(payload)
-            result = await self._provider.predict(request)
+            # Support provider override via payload or parameters
+            requested_provider = payload.get("provider") or request.parameters.get("provider")
+            provider = self.resolve_provider(str(requested_provider) if requested_provider else None)
+
+            result = await provider.predict(request)
+            mode = str(
+                result.metadata.get(
+                    "execution_mode", "live" if result.provider_name == "local_pytorch" else "mock"
+                )
+            )
+            is_mocked = bool(result.metadata.get("is_mocked", mode == "mock"))
+            sys.stderr.write(
+                f"[PROVIDER_EXECUTION] job_id={request.job_id} provider={result.provider_name} mode={mode} is_mocked={is_mocked}\n"
+            )
             artifact_uri = self._artifacts.write_local_artifact(request, result)
+
             return {
                 "ok": True,
                 "job_id": request.job_id,
@@ -44,6 +70,8 @@ class WorkerRuntime:
                 "traceparent": request.traceparent,
                 "model_id": request.model_id,
                 "provider": result.provider_name,
+                "execution_mode": mode,
+                "is_mocked": is_mocked,
                 "output_text": result.output_text,
                 "finish_reason": result.finish_reason,
                 "tokens_in": result.usage.prompt_tokens,
@@ -53,6 +81,8 @@ class WorkerRuntime:
                 "output_uri": artifact_uri,
                 "metadata": {
                     **result.metadata,
+                    "execution_mode": mode,
+                    "is_mocked": is_mocked,
                     "correlation_id": request.correlation_id,
                     "traceparent": request.traceparent,
                     "ttft_ms": result.usage.time_to_first_token_ms,
@@ -94,14 +124,36 @@ def run_cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Verify worker runtime and provider health.",
     )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        help="Specific provider name to healthcheck or dispatch to.",
+    )
     args = parser.parse_args(argv)
 
     runtime = WorkerRuntime()
 
     if args.healthcheck:
-        healthy = asyncio.run(runtime._provider.is_healthy())
-        print(json.dumps({"status": "ok" if healthy else "unhealthy", "provider": runtime._provider.name}))
-        return 0 if healthy else 1
+        if args.provider:
+            provider = runtime.resolve_provider(args.provider)
+            healthy = asyncio.run(provider.is_healthy())
+            print(json.dumps({"status": "ok" if healthy else "unhealthy", "provider": provider.name}))
+            return 0 if healthy else 1
+        all_health = asyncio.run(runtime.registry.check_health())
+        local_healthy = all_health.get("local_pytorch", {}).get("healthy", False)
+        all_healthy = all(p["healthy"] for p in all_health.values())
+        print(
+            json.dumps(
+                {
+                    "status": "ok" if local_healthy else "unhealthy",
+                    "provider": runtime._provider.name,
+                    "all_healthy": all_healthy,
+                    "providers": all_health,
+                }
+            )
+        )
+        return 0 if local_healthy else 1
 
     raw_input = args.payload if args.payload is not None else sys.stdin.read()
     try:
@@ -130,4 +182,3 @@ def run_cli(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run_cli())
-

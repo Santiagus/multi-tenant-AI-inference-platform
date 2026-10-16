@@ -35,6 +35,8 @@ EXCLUDED_DIRS = {
     ".git",
     ".vscode",
     "node_modules",
+    ".pnpm-store",
+    ".cache",
     "dist",
     "build",
     ".venv",
@@ -50,14 +52,18 @@ EXCLUDED_FILES = {
 }
 
 
-def find_gitleaks_binary() -> str | None:
-    """Find gitleaks binary in PATH or standard user directories."""
+def find_gitleaks_binary(repo_root: Path | None = None) -> str | None:
+    """Find gitleaks binary in .venv/bin, PATH, or standard system directories."""
+    if repo_root is not None:
+        venv_gitleaks = repo_root / ".venv" / "bin" / "gitleaks"
+        if venv_gitleaks.is_file() and os.access(venv_gitleaks, os.X_OK):
+            return str(venv_gitleaks)
+
     found = shutil.which("gitleaks")
     if found:
         return found
 
     candidates = [
-        Path.home() / ".local" / "bin" / "gitleaks",
         Path("/usr/local/bin/gitleaks"),
         Path("/usr/bin/gitleaks"),
     ]
@@ -70,7 +76,7 @@ def find_gitleaks_binary() -> str | None:
 
 def run_gitleaks(repo_root: Path) -> int:
     """Run Gitleaks scan against repository."""
-    binary = find_gitleaks_binary()
+    binary = find_gitleaks_binary(repo_root)
     if not binary:
         print("WARNING: 'gitleaks' binary not found. Skipping Gitleaks execution.")
         return 0

@@ -32,9 +32,17 @@ def _try_import_psutil() -> Any | None:
 class TelemetryCollector:
     """Collects VRAM, GPU utilization, and host process RAM telemetry."""
 
-    def __init__(self, torch_module: Any | None = None, psutil_module: Any | None = None) -> None:
+    def __init__(
+        self,
+        torch_module: Any | None = None,
+        psutil_module: Any | None = None,
+        nvidia_smi_ttl_sec: float = 2.0,
+    ) -> None:
         self._torch = torch_module if torch_module is not None else _try_import_torch()
         self._psutil = psutil_module if psutil_module is not None else _try_import_psutil()
+        self._nvidia_smi_ttl_sec = nvidia_smi_ttl_sec
+        self._cached_gpu_util: float | None = None
+        self._cached_gpu_util_ts: float = 0.0
 
     def is_cuda_available(self) -> bool:
         if self._torch is None:
@@ -81,8 +89,18 @@ class TelemetryCollector:
         proc = platform.processor()
         return proc if proc else platform.machine() or "Generic-CPU"
 
-    def query_nvidia_smi_utilization(self) -> float | None:
-        """Query GPU compute utilization percentage via nvidia-smi when available."""
+    def query_nvidia_smi_utilization(self, force_refresh: bool = False) -> float | None:
+        """Query GPU compute utilization percentage via nvidia-smi (cached with TTL to avoid 50ms subprocess overhead per request)."""
+        import time
+
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and self._cached_gpu_util_ts > 0.0
+            and (now - self._cached_gpu_util_ts) < self._nvidia_smi_ttl_sec
+        ):
+            return self._cached_gpu_util
+
         nvidia_smi = shutil.which("nvidia-smi")
         if not nvidia_smi:
             return None
@@ -96,16 +114,29 @@ class TelemetryCollector:
             )
             if res.returncode == 0 and res.stdout.strip():
                 first_line = res.stdout.strip().splitlines()[0].strip()
-                return round(float(first_line), 1)
+                val = round(float(first_line), 1)
+                self._cached_gpu_util = val
+                self._cached_gpu_util_ts = now
+                return val
         except Exception:
             pass
         return None
 
-    def capture_snapshot(self, active_backend: str, model_footprint_mb: float = 0.0) -> HardwareTelemetry:
+    def capture_snapshot(
+        self,
+        active_backend: str,
+        model_footprint_mb: float = 0.0,
+        force_cpu: bool = False,
+    ) -> HardwareTelemetry:
         """Capture a point-in-time hardware telemetry snapshot."""
         rss_mb = self.get_process_rss_mb()
+        is_cpu_backend = (
+            force_cpu
+            or active_backend.endswith("_cpu")
+            or active_backend == "numpy_cpu_fallback"
+        )
 
-        if self.is_cuda_available() and self._torch is not None:
+        if not is_cpu_backend and self.is_cuda_available() and self._torch is not None:
             device_idx = 0
             device_name = str(self._torch.cuda.get_device_name(device_idx))
             alloc_mb = round(float(self._torch.cuda.memory_allocated(device_idx)) / (1024 * 1024), 2)

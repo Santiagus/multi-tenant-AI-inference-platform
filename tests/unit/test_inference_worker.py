@@ -24,10 +24,13 @@ from apps.worker.contracts import (
     UsageMetrics,
 )
 from apps.worker.models import (
+    BENCHMARK_MODEL_REGISTRY,
+    DEFAULT_MODEL_REGISTRY,
     ModelLoader,
     ModelSpec,
     NumpyCpuModelBackend,
     PyTorchModelBackend,
+    build_step_token_ids,
     tokenize_prompt,
 )
 from apps.worker.providers.local import LocalPyTorchAdapter
@@ -472,6 +475,110 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
             self.assertIn("`Estimated`", md_text)
             self.assertIn("Prompt-Size-Aware Provider Routing Reference Matrix", md_text)
 
+    def test_multimodal_open_weights_models_and_fixtures(self) -> None:
+        # 1. Verify both registries expose all 12 curated open-weights models across all 4 modalities
+        expected_models = {
+            "meta-llama/Llama-3-8B-Instruct": "text_to_text",
+            "Qwen/Qwen2.5-7B-Instruct": "text_to_text",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": "text_to_text",
+            "google/gemma-2-9b-it": "text_to_text",
+            "mistralai/Mistral-7B-Instruct-v0.3": "text_to_text",
+            "TinyLlama/TinyLlama-1.1B-Chat-v1.0": "text_to_text",
+            "black-forest-labs/FLUX.1-schnell": "text_to_image",
+            "stabilityai/stable-diffusion-3.5-medium": "text_to_image",
+            "Qwen/Qwen2.5-VL-7B-Instruct": "media_photo",
+            "openai/clip-vit-large-patch14": "media_photo",
+            "Wan-AI/Wan2.1-T2V-1.3B": "media_video",
+            "THUDM/CogVideoX-2b": "media_video",
+        }
+        self.assertEqual(set(DEFAULT_MODEL_REGISTRY.keys()), set(expected_models.keys()))
+        self.assertEqual(set(BENCHMARK_MODEL_REGISTRY.keys()), set(expected_models.keys()))
+
+        for model_id, expected_modality in expected_models.items():
+            for reg in (DEFAULT_MODEL_REGISTRY, BENCHMARK_MODEL_REGISTRY):
+                spec = reg[model_id]
+                self.assertEqual(spec.modality, expected_modality)
+                self.assertGreater(spec.effective_intermediate_dim, spec.hidden_dim)
+                self.assertGreaterEqual(spec.ffn_expansion_ratio, 2.75)
+                self.assertGreater(spec.production_hidden_dim, 0)
+                self.assertGreater(spec.production_intermediate_dim, spec.production_hidden_dim)
+                self.assertTrue(bool(spec.leaderboard_tier))
+
+        # 2. Verify step token geometry per modality (Prefill GEMM vs Decode GEMV vs Patch GEMM)
+        sample_ctx = [10, 20, 30, 40, 50]
+        t2t_spec = DEFAULT_MODEL_REGISTRY["Qwen/Qwen2.5-7B-Instruct"]
+        self.assertEqual(len(build_step_token_ids(t2t_spec, sample_ctx, 0)), 5)  # Prefill GEMM
+        self.assertEqual(len(build_step_token_ids(t2t_spec, sample_ctx, 1)), 1)  # Decode GEMV
+
+        t2i_spec = DEFAULT_MODEL_REGISTRY["black-forest-labs/FLUX.1-schnell"]
+        self.assertEqual(len(build_step_token_ids(t2i_spec, sample_ctx, 0)), t2i_spec.num_patches)
+        self.assertEqual(len(build_step_token_ids(t2i_spec, sample_ctx, 10)), 1)
+
+        photo_spec = DEFAULT_MODEL_REGISTRY["Qwen/Qwen2.5-VL-7B-Instruct"]
+        self.assertEqual(
+            len(build_step_token_ids(photo_spec, sample_ctx, 0)),
+            photo_spec.num_patches + len(sample_ctx),
+        )
+        self.assertEqual(len(build_step_token_ids(photo_spec, sample_ctx, 1)), 1)
+
+        video_spec = DEFAULT_MODEL_REGISTRY["Wan-AI/Wan2.1-T2V-1.3B"]
+        self.assertEqual(len(build_step_token_ids(video_spec, sample_ctx, 0)), video_spec.num_patches)
+        self.assertEqual(len(build_step_token_ids(video_spec, sample_ctx, 10)), 1)
+
+        # 3. Execute Text-to-Image and Media (Photo & Video) fixtures across NumPy and PyTorch backends
+        repo_root = Path(__file__).resolve().parents[2]
+        t2i_fixtures = json.loads(
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_text_to_image.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        media_fixtures = json.loads(
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_media_inference.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        fake_torch = _FakeTorchModule(cuda_available=True)
+        pytorch_loader = ModelLoader(torch_module=fake_torch, prefer_device="cuda")
+        numpy_loader = ModelLoader(torch_module=None, prefer_device="cpu")
+        numpy_loader._torch = None
+
+        for item in t2i_fixtures + media_fixtures:
+            model_id = item["model_id"]
+            prompt = item["prompt"]
+            for loader in (numpy_loader, pytorch_loader):
+                loaded, _ = loader.load(model_id)
+                out_text, tok_in, tok_out, ttft_ms, total_ms = loaded.backend.generate(
+                    prompt=prompt, max_new_tokens=6
+                )
+                self.assertIn(f"[{model_id}]", out_text)
+                self.assertGreater(tok_in, 0)
+                self.assertEqual(tok_out, 6)
+                self.assertGreater(ttft_ms, 0.0)
+                self.assertGreaterEqual(total_ms, ttft_ms)
+
+        # 4. Verify enterprise domain-organized model store (`models/` & `scripts/sync_models.py`)
+        from scripts.sync_models import sync_all_models
+
+        with tempfile.TemporaryDirectory() as tmp_models_dir:
+            tmp_store = Path(tmp_models_dir)
+            synced_manifest = sync_all_models(store_root=tmp_store, fetch_hf=False, profile="default")
+            self.assertEqual(synced_manifest["total_runs" if "total_runs" in synced_manifest else "total_models"], 12)
+            self.assertEqual(
+                set(synced_manifest["domains"].keys()),
+                {"text-to-text", "text-to-image", "media-photo", "media-video"},
+            )
+            for model_id, spec in DEFAULT_MODEL_REGISTRY.items():
+                local_dir = spec.resolve_local_dir(tmp_store)
+                self.assertTrue((local_dir / "config.json").is_file(), f"Missing config.json for {model_id}")
+                self.assertTrue((local_dir / "weights.npz").is_file(), f"Missing weights.npz for {model_id}")
+                self.assertTrue(
+                    (local_dir / "artifact_metadata.json").is_file(),
+                    f"Missing artifact_metadata.json for {model_id}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

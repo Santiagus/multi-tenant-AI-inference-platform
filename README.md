@@ -107,6 +107,32 @@ Implementation proceeds in disciplined, incremental milestones. Each milestone i
 
 ---
 
+## Empirical Benchmarks & Architectural Decisions Evidence
+
+In strict accordance with `AGENTS.md` (**Evidence over claims**), all architectural trade-offs across engines, models, hardware, and providers are grounded in reproducible, empirical data:
+
+### 1. Live Hardware Scaling & GPU vs. CPU Parity ([`benchmarks/results/index.md`](benchmarks/results/index.md))
+- **Live Empirical Benchmark Ledger**: Tracks dated runs across all 12 curated models on the **NVIDIA GeForce RTX 5070 Ti (16 GB)** vs. **AMD Ryzen 9 7900 (12-Core)** under short, medium, and long prompt tiers across concurrency levels ($c \in \{1, 2, 4, 8\}$).
+- **Key Findings**:
+  - **Latency**: RTX 5070 Ti delivers **$11.5\times\text{--}19.1\times$ lower latency** on enterprise models (`Llama-3-8B`, `Wan2.1`, `SD 3.5`).
+  - **L3-Cache Cliff**: Smaller models $\le 50\text{ MiB}$ (`TinyLlama-1.1B`) fit into CPU L3 cache with acceptable throughput ($857\text{ tok/s}$), while $\ge 7\text{B}$ models spill into DDR5 RAM, driving a massive $5\times\text{--}7\times$ marginal electricity cost advantage ($\$/1\text{M tokens}$) on GPU.
+- **Web UI & Analytics Artifacts**: [`benchmarks/results/manifest.json`](benchmarks/results/manifest.json) and [`benchmarks/results/history.jsonl`](benchmarks/results/history.jsonl).
+
+### 2. GPU Inference Engine Comparison on RTX 5070 Ti ([`benchmarks/results/index.md`](benchmarks/results/index.md))
+- Live comparative benchmark of **PyTorch Eager** vs. **TorchScript JIT** vs. **PyTorch 2.x `torch.compile`** (`dynamic=True`):
+  - **PyTorch Eager (`pytorch_cuda`)**: Best for local interactive serving (lowest TTFT of $0.44\text{--}0.73\text{ ms}$, peak throughput of $2,481\text{--}2,980\text{ tok/s}$, and lowest VRAM footprint).
+  - **TorchScript JIT (`pytorch_torchscript_cuda`)**: Retains $94\%\text{--}99\%$ of Eager throughput for legacy pipelines with strict contract fidelity.
+  - **`torch.compile` (`pytorch_torch_compile_cuda`)**: Reserved for long-context prefill and Flyte batch DAG pipelines where operator fusion offsets the $650\text{--}860\text{ ms}$ cold JIT initialization.
+
+### 3. Multi-Engine Scenarios & Transparent Auto-Upgrade ([`docs/benchmarks/engine-comparison.md`](docs/benchmarks/engine-comparison.md))
+- 40 evaluated runs across 5 engine configurations and 4 MLPerf-aligned scenarios (Interactive Chat, Summarization, Long-Context RAG, Multimodal Media Diffusion).
+- Demonstrates content-addressed SHA-256 model fingerprinting to transparently auto-upgrade legacy TorchScript requests to compiled execution with zero breaking contract changes.
+
+### 4. Enterprise Domain-Organized Model Store ([`models/README.md`](models/README.md))
+- 12 open-weight models structured into 4 domain repositories (`text-to-text`, `text-to-image`, `media-photo`, `media-video`) backed by declarative lockfile [`models/manifest.json`](models/manifest.json).
+
+---
+
 ## AI-Assisted Engineering Process
 
 This project is built using disciplined agentic pair-programming governed by:
@@ -128,11 +154,9 @@ This project is built using disciplined agentic pair-programming governed by:
 
 ### First Steps & Local Development
 
-1. **Install workspace dependencies (Node.js & Python worker)**:
+1. **Initialize the local environment (Python `.venv`, Corepack/`pnpm`, and workspace dependencies)**:
    ```bash
-   pnpm install
-   pnpm build
-   pip install -e ./apps/worker   # or: uv pip install --system -e ./apps/worker
+   source scripts/init_env.sh   # or: make init
    ```
 
 2. **Option A: Start full platform & observability stack via Docker Compose**:
@@ -181,11 +205,13 @@ make ci
 
 Individual validation targets:
 ```bash
+make init                   # Initialize local Python .venv, pnpm, and workspace dependencies
 make format-check           # Check line endings, trailing whitespace, and EOF newlines
 make lint                   # Check Python, JSON, and Mermaid diagram syntax
 make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
 make test                   # Run Python and TypeScript unit & integration test suites
 make validate-k8s           # Render Helm chart profiles and validate KEDA, Kueue, and Kyverno policies
+make validate-terraform     # Validate Terraform modules, least-privilege IAM, cost guardrails & ephemeral plan
 make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)

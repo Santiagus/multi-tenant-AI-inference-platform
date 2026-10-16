@@ -738,3 +738,174 @@ Authorization: Bearer {{apiKey}}
   "use_torchscript": true,
   "max_new_tokens": 16
 }
+
+### ==============================================================================
+### USE CASE 11: Provider Routing, Deterministic Policies & Explainability (M08)
+### Route workloads between Local PyTorch, RunPod, AWS Bedrock, and AWS SageMaker
+### ==============================================================================
+
+# 11.1 Inspect Provider Catalog, Health Status, Latency P95, and Cost Rates
+GET {{baseUrl}}/v1/routing/providers
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 11.2 Evaluate Routing Policy: Local Capacity Optimal (Queue Low + VRAM Available)
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 128,
+    "max_new_tokens": 64,
+    "estimated_vram_mb": 4096,
+    "modality": "text_to_text"
+  },
+  "capacity": {
+    "local_vram_total_mb": 16384,
+    "local_vram_allocated_mb": 4096,
+    "local_queue_depth": 2,
+    "local_queue_threshold": 10
+  },
+  "slo": {
+    "latency_slo_ms": 1500
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "routing_preference": "local_first",
+    "billed_rate_microcents_per_token": 40
+  },
+  "economics": {
+    "target_gross_margin": 0.40
+  }
+}
+
+###
+
+# 11.3 Evaluate Routing Policy: Spillover to External GPU (Local Queue High + SLO Risk + Margin OK)
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 128,
+    "max_new_tokens": 64,
+    "estimated_vram_mb": 4096,
+    "modality": "text_to_text"
+  },
+  "capacity": {
+    "local_vram_total_mb": 16384,
+    "local_vram_allocated_mb": 4096,
+    "local_queue_depth": 14,
+    "local_queue_threshold": 10
+  },
+  "slo": {
+    "latency_slo_ms": 1500
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "routing_preference": "local_first",
+    "billed_rate_microcents_per_token": 40
+  },
+  "economics": {
+    "target_gross_margin": 0.40
+  }
+}
+
+###
+
+# 11.4 Evaluate Routing Policy: Proprietary Model Routed to AWS Bedrock
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+    "prompt_tokens": 256,
+    "max_new_tokens": 128,
+    "is_proprietary": true
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "routing_preference": "local_first",
+    "billed_rate_microcents_per_token": 50
+  },
+  "economics": {
+    "target_gross_margin": 0.35
+  }
+}
+
+###
+
+# 11.5 Evaluate Routing Policy: VPC Enterprise Isolation Routed to SageMaker
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "sagemaker-llama3-70b-instruct",
+    "prompt_tokens": 128,
+    "max_new_tokens": 64,
+    "requires_vpc": true
+  },
+  "capacity": {
+    "local_queue_depth": 15,
+    "local_queue_threshold": 10
+  },
+  "tenant_policy": {
+    "tenant_id": "tenant-enterprise-bank",
+    "routing_preference": "local_first",
+    "billed_rate_microcents_per_token": 45
+  },
+  "economics": {
+    "target_gross_margin": 0.40
+  }
+}
+
+###
+
+# 11.6 Simulate Queue Depth Parameter Sweep (Demonstrates Transition from Local to Cloud Spillover)
+POST {{baseUrl}}/v1/routing/simulate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 128,
+    "max_new_tokens": 32
+  },
+  "queue_depth_range": [0, 4, 8, 12, 16, 20],
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "routing_preference": "local_first",
+    "billed_rate_microcents_per_token": 40
+  },
+  "economics": {
+    "target_gross_margin": 0.40
+  }
+}
+
+###
+
+# 11.7 Chaos & Failover: Temporarily Toggle Provider Health
+PATCH {{baseUrl}}/v1/routing/providers/runpod/health
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "healthy": false
+}

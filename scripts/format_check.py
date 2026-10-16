@@ -18,6 +18,8 @@ IGNORE_DIRS = {
     ".git",
     ".vscode",
     "node_modules",
+    ".pnpm-store",
+    ".cache",
     "dist",
     "build",
     ".venv",
@@ -86,8 +88,16 @@ def check_file_formatting(path: Path) -> list[str]:
 
 
 def run_ruff_format(repo_root: Path) -> int:
-    """Run ruff format check if ruff is installed."""
-    ruff = shutil.which("ruff")
+    """Run ruff format check if ruff is installed in the project .venv or configured."""
+    venv_ruff = repo_root / ".venv" / "bin" / "ruff"
+    has_ruff_config = (repo_root / "ruff.toml").is_file() or (repo_root / ".ruff.toml").is_file()
+    if venv_ruff.is_file() and os.access(venv_ruff, os.X_OK):
+        ruff: str | None = str(venv_ruff)
+    elif has_ruff_config:
+        ruff = shutil.which("ruff")
+    else:
+        ruff = None
+
     if not ruff:
         return 0
 

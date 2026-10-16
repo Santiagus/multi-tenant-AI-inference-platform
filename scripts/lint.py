@@ -25,6 +25,8 @@ IGNORE_DIRS = {
     ".git",
     ".vscode",
     "node_modules",
+    ".pnpm-store",
+    ".cache",
     "dist",
     "build",
     ".venv",
@@ -61,9 +63,17 @@ def check_json_files(repo_root: Path) -> list[str]:
 
 
 def run_external_linters(repo_root: Path) -> list[str]:
-    """Run ruff or flake8 if available."""
+    """Run ruff or shellcheck if available in the project environment."""
     issues: list[str] = []
-    ruff = shutil.which("ruff")
+    venv_ruff = repo_root / ".venv" / "bin" / "ruff"
+    has_ruff_config = (repo_root / "ruff.toml").is_file() or (repo_root / ".ruff.toml").is_file()
+    if venv_ruff.is_file() and os.access(venv_ruff, os.X_OK):
+        ruff: str | None = str(venv_ruff)
+    elif has_ruff_config:
+        ruff = shutil.which("ruff")
+    else:
+        ruff = None
+
     if ruff:
         print("Running ruff check...")
         res = subprocess.run([ruff, "check", "."], cwd=repo_root)

@@ -64,3 +64,15 @@ htmlcov/
 # Caches and scratch
 .cache/
 tmp/
+
+# Local AI Model Store (keep README.md and manifest.json tracked; ignore weight binaries & domain dirs)
+models/*
+!models/README.md
+!models/manifest.json
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.npz
+
