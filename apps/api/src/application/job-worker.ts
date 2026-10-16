@@ -449,8 +449,20 @@ export class JobWorker {
                   ? hwTelemetry.vram_peak_mb
                   : 0;
 
+              const isMocked = Boolean(
+                execRes.metadata?.is_mocked ??
+                  (execRes.metadata?.execution_mode === 'mock' ||
+                    execRes.provider !== 'local_pytorch')
+              );
+              const executionMode = String(
+                execRes.metadata?.execution_mode ?? (isMocked ? 'mock' : 'live')
+              );
+
               infSpan.setAttributes({
                 'gen_ai.system': execRes.provider,
+                'provider.name': execRes.provider,
+                'provider.execution_mode': executionMode,
+                'provider.is_mocked': isMocked,
                 'inference.device': device,
                 'tokens_in': execRes.tokensIn,
                 'tokens_out': execRes.tokensOut,
@@ -461,7 +473,19 @@ export class JobWorker {
             }
           );
 
+          const isJobMocked = Boolean(
+            result.metadata?.is_mocked ??
+              (result.metadata?.execution_mode === 'mock' ||
+                result.provider !== 'local_pytorch')
+          );
+          const jobExecutionMode = String(
+            result.metadata?.execution_mode ?? (isJobMocked ? 'mock' : 'live')
+          );
+
           jobSpan.setAttribute('gen_ai.system', result.provider);
+          jobSpan.setAttribute('provider.name', result.provider);
+          jobSpan.setAttribute('provider.execution_mode', jobExecutionMode);
+          jobSpan.setAttribute('provider.is_mocked', isJobMocked);
 
           // Persist output artifact to S3-compatible storage inside a dedicated span
           const artifactKey = `tenants/${tenantId}/outputs/${jobId}/result.json`;

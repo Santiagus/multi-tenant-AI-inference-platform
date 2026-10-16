@@ -440,6 +440,79 @@
           "refId": "B"
         }
       ]
+    },
+    {
+      "id": 9,
+      "title": "Provider Execution Mode (Mock vs Live Environment)",
+      "description": "Visualizes whether inference provider environments are executing against live remote APIs/CUDA or mocked offline environments.",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "LIVE (Cloud / CUDA)", "color": "green" },
+                "1": { "text": "MOCKED (Offline Dev)", "color": "orange" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "provider_is_mock",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Provider Routing Decisions & Cloud Spillovers",
+      "description": "Deterministic provider routing evaluations and spillover count triggered by queue backlog or SLO risk.",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "thresholdsStyle": { "mode": "dashed" }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (provider, decision_code) (rate(provider_routing_decisions_total[1m]))",
+          "legendFormat": "{{provider}} ({{decision_code}})",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (provider) (rate(provider_routing_spillover_total[1m]))",
+          "legendFormat": "Spillover: {{provider}}",
+          "refId": "B"
+        }
+      ]
     }
   ],
   "refresh": "5s",
