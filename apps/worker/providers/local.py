@@ -119,6 +119,8 @@ class LocalPyTorchAdapter(InferenceProvider):
             provider_name=self.name,
             telemetry=hw_telemetry,
             metadata={
+                "execution_mode": "live",
+                "is_mocked": False,
                 "warm_start": is_warm,
                 "model_load_ms": 0.0 if is_warm else loaded.load_duration_ms,
                 "model_footprint_mb": loaded.backend.footprint_mb,
