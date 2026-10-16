@@ -33,13 +33,13 @@ import numpy as np  # type: ignore[import-not-found]
 
 try:
     from apps.worker.contracts import InferenceRequest
-    from apps.worker.models import ModelLoader, tokenize_prompt
+    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ModelLoader, tokenize_prompt
     from apps.worker.providers.local import LocalPyTorchAdapter
     from apps.worker.telemetry import TelemetryCollector
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from apps.worker.contracts import InferenceRequest
-    from apps.worker.models import ModelLoader, tokenize_prompt
+    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ModelLoader, tokenize_prompt
     from apps.worker.providers.local import LocalPyTorchAdapter
     from apps.worker.telemetry import TelemetryCollector
 
@@ -115,9 +115,10 @@ class ScenarioMetricsRecord:
     vram_allocated_mb: float
     vram_peak_mb: float
     ram_rss_mb: float
-    # Unit Economics
+    # Unit Economics (Owned Hardware Marginal Cost vs Tenant Billable Rate)
     cost_microcents_per_request: int
-    cost_per_1m_tokens_usd: float
+    cost_per_1m_tokens_usd: float  # Owned hardware marginal electricity cost ($/1M tok)
+    tenant_list_price_per_1m_tokens_usd: float  # Tenant billable list price ($/1M tok)
     tokens_per_usd: float
     measurement_type: str  # "measured"
 
@@ -266,11 +267,18 @@ def run_scenario(
     ttft_mean = round(float(np.mean(ttfts_ms)), 3)
     decode_mean = round(max(lat_mean - ttft_mean, 0.01), 3)
 
-    # 1 microcent = $1e-6 USD. Cost per 1M tokens in USD:
+    # Owned hardware marginal electricity cost vs. Tenant billable list price:
+    # - Owned GPU (RTX 5070 Ti ~220W active @ $0.15/kWh = $0.033/hr = $0.00000917/sec)
+    # - Owned CPU (Ryzen 9 7900 ~88W active @ $0.15/kWh = $0.0132/hr = $0.00000367/sec)
+    is_cuda_dev = loader.resolve_device() == "cuda"
+    power_cost_per_sec_usd = 0.033 / 3600.0 if is_cuda_dev else 0.0132 / 3600.0
+    infra_cost_per_1m_usd = round((power_cost_per_sec_usd / max(agg_out_tps, 1e-3)) * 1_000_000.0, 4)
+
+    # Tenant billable list price (1 microcent = $1e-6 USD):
     tokens_per_req = max(prompt_tok_count + max_new_tokens, 1)
     cost_usd_per_req = cost_microcents_sample * 1e-6
-    cost_per_1m_usd = round((cost_usd_per_req / tokens_per_req) * 1_000_000.0, 4)
-    tokens_per_usd = round(1_000_000.0 / max(cost_per_1m_usd, 1e-6), 1)
+    tenant_list_per_1m_usd = round((cost_usd_per_req / tokens_per_req) * 1_000_000.0, 4)
+    tokens_per_usd = round(1_000_000.0 / max(infra_cost_per_1m_usd, 1e-6), 1)
 
     return ScenarioMetricsRecord(
         scenario_id=f"{prompt_tier}_{warm_state}_c{concurrency}",
@@ -301,7 +309,8 @@ def run_scenario(
         vram_peak_mb=round(max_vram_peak, 2),
         ram_rss_mb=telemetry.get_process_rss_mb(),
         cost_microcents_per_request=cost_microcents_sample,
-        cost_per_1m_tokens_usd=cost_per_1m_usd,
+        cost_per_1m_tokens_usd=infra_cost_per_1m_usd,
+        tenant_list_price_per_1m_tokens_usd=tenant_list_per_1m_usd,
         tokens_per_usd=tokens_per_usd,
         measurement_type="measured",
     )
@@ -415,7 +424,7 @@ def _build_chart_series_and_routing_matrix(
                     "itl_p50_ms": tier_c1.itl_p50_ms,
                     "e2e_p95_ms": tier_c1.latency_p95_ms,
                     "batch_c8_tokens_per_sec": tier_max_c.aggregate_output_tokens_per_sec,
-                    "cost_per_1m_tokens_usd": tier_c1.cost_per_1m_tokens_usd,
+                    "cost_per_1m_tokens_usd": tier_max_c.cost_per_1m_tokens_usd,
                 }
 
     reference_providers: list[dict[str, Any]] = [
@@ -497,7 +506,7 @@ def _build_chart_series_and_routing_matrix(
             "recommended_burst_fallback": "aws_bedrock (zero cold start)",
             "rationale": (
                 "Local GPU avoids network RTT and serverless cold starts, achieving lowest TTFT "
-                "and lowest unit cost ($0.12/1M tokens estimated)."
+                "and near-zero marginal electricity cost on owned hardware."
             ),
         },
         {
@@ -553,7 +562,9 @@ def run_benchmark_suite(
     file_ts_slug = ts_now.strftime("%Y-%m-%dT%H-%M-%SZ")
 
     telemetry = TelemetryCollector()
-    loader = ModelLoader(prefer_device=prefer_device)
+    # Use realistic transformer dimensions (dim=2048, layers=8) when PyTorch is installed
+    bench_registry = BENCHMARK_MODEL_REGISTRY if telemetry.is_torch_available() else None
+    loader = ModelLoader(registry=bench_registry, prefer_device=prefer_device)
     adapter = LocalPyTorchAdapter(model_loader=loader, telemetry_collector=telemetry)
 
     loaded, _ = loader.load(model_id)
@@ -679,6 +690,7 @@ def run_benchmark_suite(
             "warm_c1_itl_p50_ms": baseline_c1.itl_p50_ms,
             "peak_aggregate_tokens_per_sec": peak_throughput,
             "cost_per_1m_tokens_usd": baseline_c1.cost_per_1m_tokens_usd,
+            "tenant_list_price_per_1m_tokens_usd": baseline_c1.tenant_list_price_per_1m_tokens_usd,
             "ram_rss_mb": baseline_c1.ram_rss_mb,
             "vram_peak_mb": max((s.vram_peak_mb for s in scenarios), default=0.0),
             "measurement_mode": "measured",
@@ -690,7 +702,8 @@ def run_benchmark_suite(
             "ttft_p50_ms": "Measured 50th percentile Time-To-First-Token (prefill + first step) in milliseconds.",
             "itl_p50_ms": "Measured 50th percentile Inter-Token Latency / Time-Per-Output-Token (decode phase) in ms/token.",
             "aggregate_output_tokens_per_sec": "Measured total completion tokens generated divided by batch wall-clock duration.",
-            "cost_per_1m_tokens_usd": "Normalized unit economic cost in USD per 1,000,000 tokens.",
+            "cost_per_1m_tokens_usd": "Owned hardware marginal electricity cost in USD per 1,000,000 generated tokens ($0.15/kWh; ~220W GPU / ~88W CPU).",
+            "tenant_list_price_per_1m_tokens_usd": "Configured tenant billable list price in USD per 1,000,000 tokens.",
         },
         "measured_results": [s.to_dict() for s in scenarios],
         "chart_series": chart_series,
@@ -755,18 +768,19 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "",
             "## 3. Multi-Prompt & Concurrency Benchmark Results (`Measured`)",
             "",
-            "| Scenario | Prompt Tier | State | Conc (`c`) | Prompt Tok | Out Tok | E2E p50 (ms) | E2E p95 (ms) | E2E p99 (ms) | TTFT p50 (ms) | ITL p50 (ms/tok) | Output Throughput (tok/s) | Cost ($/1M tok) | RAM (MiB) | Mode |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| Scenario | Prompt Tier | State | Conc (`c`) | Prompt Tok | Out Tok | E2E p50 (ms) | E2E p95 (ms) | E2E p99 (ms) | TTFT p50 (ms) | ITL p50 (ms/tok) | Output Throughput (tok/s) | Marginal Power Cost ($/1M tok) | Tenant List Price ($/1M tok) | RAM (MiB) | Mode |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
     )
 
     for row in report["measured_results"]:
+        tenant_list = row.get("tenant_list_price_per_1m_tokens_usd", 5.0)
         lines.append(
             f"| `{row['scenario_id']}` | `{row['prompt_tier']}` | `{row['warm_state']}` | {row['concurrency']} "
             f"| {row['prompt_tokens']} | {row['output_tokens_target']} | {row['latency_p50_ms']:.2f} "
             f"| {row['latency_p95_ms']:.2f} | {row['latency_p99_ms']:.2f} | {row['ttft_p50_ms']:.2f} "
             f"| {row['itl_p50_ms']:.3f} | **{row['aggregate_output_tokens_per_sec']:.1f}** "
-            f"| \\${row['cost_per_1m_tokens_usd']:.2f} | {row['ram_rss_mb']:.1f} | `{row['measurement_type']}` |"
+            f"| \\${row['cost_per_1m_tokens_usd']:.4f} | \\${tenant_list:.2f} | {row['ram_rss_mb']:.1f} | `{row['measurement_type']}` |"
         )
 
     lines.extend(
@@ -807,10 +821,12 @@ def render_markdown_report(report: dict[str, Any]) -> str:
     for prov in report["reference_provider_comparison_estimated"]:
         short_p = prov["profiles_by_prompt_tier"]["short"]
         long_p = prov["profiles_by_prompt_tier"]["long"]
+        cost_val = short_p["cost_per_1m_tokens_usd"]
+        cost_str = f"\\${cost_val:.4f}" if cost_val < 0.05 else f"\\${cost_val:.2f}"
         lines.append(
             f"| `{prov['provider']}` | `{prov['hardware']}` | `{prov['precision']}` | {prov['cold_start_ms']:.1f} ms "
             f"| {short_p['e2e_p95_ms']:.2f} ms | {long_p['e2e_p95_ms']:.2f} ms "
-            f"| {short_p['batch_c8_tokens_per_sec']:.1f} tok/s | \\${short_p['cost_per_1m_tokens_usd']:.2f} | `{prov['measurement_type']}` |"
+            f"| {short_p['batch_c8_tokens_per_sec']:.1f} tok/s | {cost_str} | `{prov['measurement_type']}` |"
         )
 
     lines.extend(
@@ -908,18 +924,20 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         "",
         "## Executed Benchmark Runs (`Measured`)",
         "",
-        "| Run Date (UTC) | Run ID | Provider | Hardware / Backend | Model (`Precision`) | Prompt Tiers | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Unit Cost ($/1M tok) | Artifacts |",
+        "| Run Date (UTC) | Run ID | Provider | Hardware / Backend | Model (`Precision`) | Prompt Tiers | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Marginal Power Cost ($/1M tok) | Artifacts |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in updated_runs:
         rk = r["summary_kpis"]
         tiers_str = ", ".join(r["prompt_tiers"])
+        cost_val = rk["cost_per_1m_tokens_usd"]
+        cost_str = f"\\${cost_val:.4f}" if cost_val < 0.05 else f"\\${cost_val:.2f}"
         index_lines.append(
             f"| `{r['generated_at']}` | `{r['run_id']}` | `{r['provider']}` "
             f"| `{r['device_name']}` (`{r['backend']}`) | `{r['model_id']}` (`{r['precision']}`) "
             f"| `{tiers_str}` | {rk['warm_c1_latency_p50_ms']:.2f} | {rk['warm_c1_ttft_p50_ms']:.2f} "
             f"| {rk['warm_c1_itl_p50_ms']:.3f} | **{rk['peak_aggregate_tokens_per_sec']:.1f}** "
-            f"| \\${rk['cost_per_1m_tokens_usd']:.2f} "
+            f"| {cost_str} "
             f"| [Report]({r['report_md_path']}) · [JSON]({r['report_json_path']}) |"
         )
 
