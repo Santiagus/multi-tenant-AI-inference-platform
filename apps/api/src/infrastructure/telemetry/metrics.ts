@@ -196,6 +196,32 @@ export class MetricsRegistry {
       'aws_iam_policy_evaluations_total',
       'Total number of AWS IAM least-privilege and cost guardrail evaluations'
     );
+
+    // Multi-tenant provider routing & gross margin metrics (M08)
+    this.defineCounter(
+      'provider_routing_decisions_total',
+      'Total number of deterministic provider routing evaluations by selected provider, decision code, and preference'
+    );
+    this.defineCounter(
+      'provider_routing_spillover_total',
+      'Total number of workload spillovers from local worker to external cloud/GPU providers'
+    );
+    this.defineGauge(
+      'provider_gross_margin_ratio',
+      'Calculated projected gross margin ratio for evaluated provider dispatch'
+    );
+    this.defineGauge(
+      'provider_health_status',
+      'Current provider availability health status (1 = healthy, 0 = unhealthy)'
+    );
+    this.defineGauge(
+      'provider_is_mock',
+      'Indicator whether provider environment is running in mock mode (1 = mock, 0 = live)'
+    );
+    this.defineGauge(
+      'provider_environment_mode',
+      'Active provider environment execution mode (1 = active mode labeled by provider and mode)'
+    );
   }
 
   defineCounter(name: string, help: string): void {
