@@ -1,0 +1,41 @@
+[
+  {
+    "id": "media-photo-vlm-01",
+    "category": "photo_visual_question_answering",
+    "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "modality": "media_photo",
+    "asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+    "prompt": "Identify the motorsport discipline, racing suit sponsor colors, and facial expression in this portrait photo.",
+    "num_patches": 196
+  },
+  {
+    "id": "media-photo-clip-02",
+    "category": "photo_zero_shot_classification",
+    "model_id": "openai/clip-vit-large-patch14",
+    "modality": "media_photo",
+    "asset_uri": "tests/fixtures/media/fruits_objects.jpg",
+    "prompt": "Classify still-life fruit varieties, surface textures, and color saturation distribution across spatial image patches.",
+    "num_patches": 256
+  },
+  {
+    "id": "media-video-wan-03",
+    "category": "video_generation_and_conditioning",
+    "model_id": "Wan-AI/Wan2.1-T2V-1.3B",
+    "modality": "media_video",
+    "asset_uri": "tests/fixtures/media/sample_bunny_clip.mp4",
+    "prompt": "Synthesize smooth 24fps forest clearing camera pan with volumetric sunbeams and natural foliage motion.",
+    "num_patches": 128,
+    "denoising_steps": 4
+  },
+  {
+    "id": "media-video-cogvideo-04",
+    "category": "video_action_temporal_analysis",
+    "model_id": "THUDM/CogVideoX-2b",
+    "modality": "media_video",
+    "asset_uri": "tests/fixtures/media/sample_action_clip.mp4",
+    "prompt": "Track human subject kinematics, optical flow vectors, and temporal frame consistency across video tubelets.",
+    "num_patches": 128,
+    "denoising_steps": 6
+  }
+]
+
