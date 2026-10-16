@@ -109,10 +109,16 @@ flowchart TD
    - Inspects job routing metadata and delegates execution to the registered `InferenceProvider` instance.
    - Handles transient provider failures with retry policies, or escalates to fallback providers if configured.
 
-4. **PyTorch Local Worker (`apps/worker/providers/local.py`)**:
-   - Loads weights into host GPU VRAM (RTX 5070 Ti) or CPU RAM using Hugging Face / TorchScript / safetensors.
-   - Implements KV-caching, dynamic batching, and memory arena management.
-   - Collects per-token latency and memory consumption metrics.
+4. **PyTorch Local Worker & Inference Engine Abstraction (`apps/worker/providers/local.py`, `apps/worker/models.py`)**:
+   - Executes real float32 matrix multiplications, non-linear activations (SwiGLU, GeGLU), and KV-cached autoregressive projections across CPU and GPU hardware.
+   - **Supported Execution Engines**:
+     - `numpy`: Zero-dependency deterministic NumPy CPU fallback for lightweight CI and containers without PyTorch.
+     - `eager`: PyTorch Eager CPU/CUDA for dynamic execution and lowest latency ($10.8\text{--}15.2\text{ ms}$) on local RTX 5070 Ti GPUs.
+     - `torchscript`: Legacy JIT tracing for strict backward compatibility with existing model checkpoints.
+     - `torch-compile`: Modern PyTorch 2.x Inductor compiler with `dynamic=True` for operator fusion across variable prompt contexts.
+     - `auto-upgrade`: Content-addressed SHA-256 weight fingerprinting that transparently upgrades legacy TorchScript requests to modern compiled execution without client contract changes.
+   - **Domain-Organized Model Store (`models/`)**: Materializes 12 open-weight models across 4 domains (`text-to-text`, `text-to-image`, `media-photo`, `media-video`) backed by declarative lockfile [`models/manifest.json`](../../models/manifest.json).
+   - **Empirical Evidence**: Validated across 4 MLPerf scenarios in [`docs/benchmarks/engine-comparison.md`](../benchmarks/engine-comparison.md) and 30+ live hardware runs in [`benchmarks/results/index.md`](../../benchmarks/results/index.md).
 
 5. **Cloud Provider Adapters (`apps/worker/providers/{runpod,bedrock,sagemaker}.py`)**:
    - Marshals standard inference requests into vendor-specific payloads.

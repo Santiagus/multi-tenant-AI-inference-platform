@@ -134,5 +134,8 @@ The architecture documentation is structured into the following focused specific
 | **Observability Model** | [observability.md](observability.md) | Distributed tracing, correlation IDs, metrics taxonomy, and GPU telemetry. |
 | **Local-vs-Cloud Boundary** | [local-cloud-boundary.md](local-cloud-boundary.md) | Environment parity, mock behaviors, and hardware fallback paths. |
 | **Verification & Test Matrix** | [test-matrix.md](../testing/test-matrix.md) | Milestone verification scopes, execution modes (mocked vs measured), and test suites. |
+| **Multi-Engine Benchmarks** | [engine-comparison.md](../benchmarks/engine-comparison.md) | 5 inference engines across 4 MLPerf scenarios with transparent SHA-256 auto-upgrade. |
+| **Live Hardware Benchmark Ledger** | [benchmarks/results/index.md](../../benchmarks/results/index.md) | RTX 5070 Ti vs. Ryzen 9 7900 scaling & GPU engine comparison (Eager vs TS vs compile). |
+| **Domain Model Store** | [models/README.md](../../models/README.md) | 12 open-weight models across text, image DiT, photo ViT, and video 3D DiT domains. |
 | **Architecture Decision Records** | [docs/adr/](../adr/README.md) | Durable architectural choices and evaluated alternatives. |
 
