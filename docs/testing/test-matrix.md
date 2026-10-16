@@ -16,7 +16,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M05** | Observability & Telemetry | Local OTel Collector + Prometheus | Trace context propagation, metric counters, Grafana dashboards | **Passed** |
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | **Passed** |
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | **Passed** |
-| **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | _Planned_ |
+| **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | **Passed** |
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | _Planned_ |
 | **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | _Planned_ |
 | **M11** | Product Dashboard | React + Fastify API | Component tests, API contract integration, WebSocket feeds | _Planned_ |
@@ -121,13 +121,26 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 8. Maintenance Rules for Subsequent Milestones
+## 8. M08 Verification Matrix (Provider Routing, Deterministic Policies & Explainability)
 
-When implementing future milestones (M08–M12):
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-48** | **Provider Adapter Parity (Local, RunPod, Bedrock, SageMaker)** | Unit / Contract | Measured CUDA / Mocked Cloud | `LocalPyTorchAdapter`, `RunPodAdapter`, `BedrockAdapter`, `SageMakerAdapter`, `ProviderRegistry` | All 4 adapters implement `InferenceProvider` contracts, produce standard `InferenceResult` with token accounting, TTFT, cost microcents, and `HardwareTelemetry`. Simulates permanent, transient, and capacity errors with structured error codes. | `tests/test_provider_adapters.py`<br>`request.rest` (Cycle 11.1) |
+| **TC-49** | **Deterministic Routing Policy: Local Capacity Optimal** | Unit / Integration | Measured Local / Simulated | `evaluateProviderRouting`, `POST /v1/routing/evaluate` | Evaluates local VRAM headroom and queue depth. When queue backlog $< 10$ and VRAM fits, selects `local_pytorch` with explainability trace (`local VRAM available + queue within capacity + margin acceptable -> local GPU worker`). | `tests/test_provider_routing.py`<br>`apps/api/tests/unit/provider-routing.test.ts`<br>`apps/api/tests/integration/provider-routing-routes.test.ts`<br>`request.rest` (Cycle 11.2) |
+| **TC-50** | **SLO Risk & VRAM Overflow Spillover to External GPU** | Unit / Integration | Simulated | `evaluateProviderRouting`, `POST /v1/routing/evaluate` | Spills over to external GPU (`runpod` / `sagemaker`) when local queue backlog $\ge 10$ (SLO risk) or model VRAM exceeds local headroom, producing exact explainability: `local queue high + SLO risk + provider available + margin acceptable -> external GPU provider`. | `tests/test_provider_routing.py`<br>`apps/api/tests/unit/provider-routing.test.ts`<br>`apps/api/tests/integration/provider-routing-routes.test.ts`<br>`request.rest` (Cycle 11.3) |
+| **TC-51** | **Proprietary Frontier Model (Bedrock) & VPC Enterprise Isolation (SageMaker)** | Unit / Integration | Simulated | `evaluateProviderRouting`, `POST /v1/routing/evaluate` | Proprietary frontier models (`anthropic.claude-3-sonnet`) route exclusively to `bedrock`; workloads requiring customer VPC isolation route to `sagemaker` or `local_pytorch` (filtering out public multi-tenant cloud APIs). | `tests/test_provider_routing.py`<br>`apps/api/tests/unit/provider-routing.test.ts`<br>`apps/api/tests/integration/provider-routing-routes.test.ts`<br>`request.rest` (Cycle 11.4–11.5) |
+| **TC-52** | **Target Gross Margin Protection, Simulation Sweep & Chaos Health Toggles** | Unit / Integration | Simulated | `evaluateProviderRouting`, `POST /v1/routing/simulate`, `PATCH /v1/routing/providers/:name/health`, `GET /metrics` | Retains requests on local queue when external cloud providers cannot satisfy target gross margin (e.g. 40%). Simulates queue depth parameter sweeps across $[0, 5, 10, 15, 20]$, supports dynamic provider health toggles, and exposes `provider_routing_*` Prometheus metrics. | `tests/test_provider_routing.py`<br>`apps/api/tests/unit/provider-routing.test.ts`<br>`apps/api/tests/integration/provider-routing-routes.test.ts`<br>`request.rest` (Cycle 11.6–11.7) |
+
+---
+
+## 9. Maintenance Rules for Subsequent Milestones
+
+When implementing future milestones (M09–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
-2. **Append Milestone Rows**: Add a new sub-table (`M08 Verification Matrix`, etc.) covering that milestone's test cases.
+2. **Append Milestone Rows**: Add a new sub-table (`M09 Verification Matrix`, etc.) covering that milestone's test cases.
 3. **Strict Execution Labeling**:
    - `Mocked`: In-memory or stubbed responses.
    - `Local Emulated`: Running against local containers (Docker Compose, ElasticMQ, MinIO).
    - `Measured (Live)`: Backed by real hardware execution (e.g. RTX 5070 Ti CUDA tokens/sec or AWS cloud API calls).
 4. **CI Requirement**: All automated test cases added to the matrix must execute and pass in `make test` and `make ci`.
+

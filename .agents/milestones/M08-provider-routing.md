@@ -16,10 +16,14 @@ Route workloads between local and external inference providers using measurable 
 Routing decisions are observable and explainable, e.g.
 `local queue high + SLO risk + provider available + margin acceptable → external GPU provider`.
 
-## Out of scope
-
-ML-based routing. Deterministic policy first.
-
 ## Outcome
 
-_Pending._
+- Entry points: `python3 scripts/setup_providers.py --check`, `python3 -m apps.worker.consumer --healthcheck`, and `POST /v1/routing/evaluate`.
+- Provider adapters: Implemented `InferenceProvider` contracts in `apps/worker/providers/` (`LocalPyTorchAdapter`, `RunPodAdapter`, `BedrockAdapter`, `SageMakerAdapter`) and `ProviderRegistry`.
+- Deterministic routing engine: `evaluateProviderRouting` in `apps/api/src/domain/provider-routing.ts` and `apps/worker/routing.py` with explainability traces over VRAM, queue depth, SLO, health, tenant policy, and gross margin.
+- Telemetry & metrics: Exposed `/v1/routing/providers`, `/v1/routing/evaluate`, `/v1/routing/simulate` with OpenTelemetry spans and Prometheus counters/gauges (`provider_routing_*`).
+- Setup & automation: Documented `docs/operations/provider-setup.md` and automated diagnostic/env generator `scripts/setup_providers.py`.
+- Verification: 19 TypeScript tests (100% domain coverage), 16 Python tests across adapters and routing, verified via `make ci`.
+- Deviations from spec: None.
+- Stubs left: Multi-tenant ABAC database policies deferred to M09.
+
