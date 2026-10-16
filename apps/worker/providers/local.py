@@ -8,7 +8,7 @@ from apps.worker.contracts import (
     InferenceResult,
     UsageMetrics,
 )
-from apps.worker.models import ModelLoader, tokenize_prompt
+from apps.worker.models import ExecutionEngine, ModelLoader, tokenize_prompt
 from apps.worker.providers.base import InferenceProvider
 from apps.worker.telemetry import TelemetryCollector
 
@@ -75,7 +75,15 @@ class LocalPyTorchAdapter(InferenceProvider):
             )
 
         self._telemetry.reset_peak_memory()
-        loaded, is_warm = self._loader.load(request.model_id)
+        engine = request.parameters.get("engine", ExecutionEngine.AUTO)
+        use_torchscript = bool(request.parameters.get("use_torchscript", False))
+        allow_auto_upgrade = request.parameters.get("allow_auto_upgrade", None)
+        loaded, is_warm = self._loader.load(
+            request.model_id,
+            use_torchscript=use_torchscript,
+            engine=engine,
+            allow_auto_upgrade=allow_auto_upgrade,
+        )
 
         output_text, tokens_in, tokens_out, ttft_ms, compute_ms = loaded.backend.generate(
             prompt=request.prompt,
@@ -115,6 +123,8 @@ class LocalPyTorchAdapter(InferenceProvider):
                 "model_load_ms": 0.0 if is_warm else loaded.load_duration_ms,
                 "model_footprint_mb": loaded.backend.footprint_mb,
                 "estimated_full_weights_vram_mb": loaded.spec.estimated_vram_mb,
+                "engine_requested": loaded.engine_requested,
+                "engine_executed": loaded.engine_executed,
             },
         )
 

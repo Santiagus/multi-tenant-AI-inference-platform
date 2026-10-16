@@ -33,13 +33,13 @@ import numpy as np  # type: ignore[import-not-found]
 
 try:
     from apps.worker.contracts import InferenceRequest
-    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ModelLoader, tokenize_prompt
+    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ExecutionEngine, ModelLoader, tokenize_prompt
     from apps.worker.providers.local import LocalPyTorchAdapter
     from apps.worker.telemetry import TelemetryCollector
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from apps.worker.contracts import InferenceRequest
-    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ModelLoader, tokenize_prompt
+    from apps.worker.models import BENCHMARK_MODEL_REGISTRY, ExecutionEngine, ModelLoader, tokenize_prompt
     from apps.worker.providers.local import LocalPyTorchAdapter
     from apps.worker.telemetry import TelemetryCollector
 
@@ -145,6 +145,7 @@ def _execute_single_sync(
     prompt: str,
     max_new_tokens: int,
     idx: int,
+    engine: str = "auto",
 ) -> tuple[float, float, float, int, int, float, float, float, int]:
     """Run one inference request synchronously inside a worker thread."""
     req = InferenceRequest(
@@ -152,7 +153,7 @@ def _execute_single_sync(
         tenant_id="tenant-benchmark",
         model_id=model_id,
         prompt=prompt,
-        parameters={"max_new_tokens": max_new_tokens, "temperature": 0.7},
+        parameters={"max_new_tokens": max_new_tokens, "temperature": 0.7, "engine": engine},
     )
     t0 = time.perf_counter_ns()
     res = asyncio.run(adapter.predict(req))
@@ -184,12 +185,13 @@ def run_scenario(
     concurrency: int,
     sample_count: int,
     warm_state: str,
+    engine: str = "auto",
 ) -> ScenarioMetricsRecord:
     """Execute a benchmark scenario for a specific prompt tier, concurrency, and warm/cold state."""
     if warm_state == "cold":
         loader.clear_cache()
     else:
-        loader.load(model_id)
+        loader.load(model_id, engine=engine)
 
     latencies_ms: list[float] = []
     ttfts_ms: list[float] = []
@@ -218,7 +220,7 @@ def run_scenario(
                 v_alloc,
                 v_peak,
                 cost_mc,
-            ) = _execute_single_sync(adapter, model_id, prompt, max_new_tokens, i)
+            ) = _execute_single_sync(adapter, model_id, prompt, max_new_tokens, i, engine=engine)
             latencies_ms.append(wall_ms)
             ttfts_ms.append(ttft_ms)
             itls_ms.append(itl_ms)
@@ -232,7 +234,7 @@ def run_scenario(
     else:
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = [
-                pool.submit(_execute_single_sync, adapter, model_id, prompt, max_new_tokens, i)
+                pool.submit(_execute_single_sync, adapter, model_id, prompt, max_new_tokens, i, engine)
                 for i in range(sample_count)
             ]
             for fut in futures:
@@ -553,6 +555,7 @@ def run_benchmark_suite(
     prompt_tiers: list[str] | None = None,
     run_timestamp: datetime | None = None,
     prefer_device: str = "auto",
+    engine: str = "auto",
 ) -> dict[str, Any]:
     """Run the complete multi-prompt-tier, cold/warm, and concurrency benchmark suite."""
     levels = concurrency_levels if concurrency_levels is not None else [1, 2, 4, 8]
@@ -567,7 +570,7 @@ def run_benchmark_suite(
     loader = ModelLoader(registry=bench_registry, prefer_device=prefer_device)
     adapter = LocalPyTorchAdapter(model_loader=loader, telemetry_collector=telemetry)
 
-    loaded, _ = loader.load(model_id)
+    loaded, _ = loader.load(model_id, engine=engine)
     resolved_dev = loader.resolve_device()
     initial_hw = telemetry.capture_snapshot(
         active_backend=loaded.backend.backend_name,
@@ -595,6 +598,7 @@ def run_benchmark_suite(
         concurrency=1,
         sample_count=max(2, samples_per_level // 2),
         warm_state="cold",
+        engine=engine,
     )
     scenarios.append(cold_res)
 
@@ -614,6 +618,7 @@ def run_benchmark_suite(
                 concurrency=c_level,
                 sample_count=max(c_level, samples_per_level),
                 warm_state="warm",
+                engine=engine,
             )
             scenarios.append(warm_res)
 
@@ -656,9 +661,21 @@ def run_benchmark_suite(
             "pytorch_version": torch_version,
             "model_id": model_id,
             "precision": "fp32",
+            "execution_engine_requested": loaded.engine_requested,
+            "execution_engine_executed": loaded.engine_executed,
+            "auto_upgraded": loaded.upgraded_automatically,
             "model_spec": {
+                "modality": loaded.spec.modality,
                 "hidden_dim": loaded.spec.hidden_dim,
+                "intermediate_dim": loaded.spec.effective_intermediate_dim,
+                "ffn_expansion_ratio": loaded.spec.ffn_expansion_ratio,
                 "num_layers": loaded.spec.num_layers,
+                "num_patches": loaded.spec.num_patches,
+                "denoising_steps": loaded.spec.denoising_steps,
+                "production_hidden_dim": loaded.spec.production_hidden_dim,
+                "production_intermediate_dim": loaded.spec.production_intermediate_dim,
+                "production_layers": loaded.spec.production_layers,
+                "leaderboard_tier": loaded.spec.leaderboard_tier,
                 "vocab_size": loaded.spec.vocab_size,
                 "max_context_length": loaded.spec.max_context_length,
                 "cost_microcents_per_token": loaded.spec.cost_microcents_per_token,
@@ -746,7 +763,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         f"| **Active Tensor Backend** | `{hw['backend']}` (`precision={sw['precision']}`) | `Measured` |",
         f"| **Logical CPU Cores / CUDA** | `{hw['cpu_count_logical']}` cores · `CUDA={hw['cuda_available']}` | `Measured` |",
         f"| **Software Stack** | Python `{sw['python_version']}` · NumPy `{sw['numpy_version']}` · PyTorch `{sw['pytorch_version']}` | `Measured` |",
-        f"| **Model Identifier** | `{sw['model_id']}` (`layers={sw['model_spec']['num_layers']}`, `dim={sw['model_spec']['hidden_dim']}`) | `Measured` |",
+        f"| **Model Identifier & Modality** | `{sw['model_id']}` (`modality={sw['model_spec'].get('modality', 'text_to_text')}`, `layers={sw['model_spec']['num_layers']}`, `d_model={sw['model_spec']['hidden_dim']}`, `d_ffn={sw['model_spec'].get('intermediate_dim', sw['model_spec']['hidden_dim'])}`) | `Measured` |",
         f"| **Active Tensor Footprint** | `{sw['model_spec']['active_tensor_footprint_mb_measured']} MiB` | `Measured` |",
         "",
         "## 2. Prompt Size Tiers & Workload Matrix",
@@ -878,6 +895,7 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         "device_type": hw["device_type"],
         "device_name": hw["device_name"],
         "backend": hw["backend"],
+        "execution_engine": sw.get("execution_engine_executed", "eager"),
         "prompt_tiers": [pt["tier"] for pt in report["workload"]["prompt_tiers_evaluated"]],
         "concurrency_levels": report["workload"]["concurrency_levels"],
         "max_new_tokens": report["workload"]["max_new_tokens"],
@@ -915,6 +933,23 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         for r in reversed(updated_runs):
             f.write(json.dumps(r) + "\n")
 
+    # Group latest cuda and cpu runs per model_id for direct GPU vs CPU comparison
+    latest_by_model_dev: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in updated_runs:
+        key = (str(r.get("model_id", "")), str(r.get("device_type", "")))
+        if key not in latest_by_model_dev:
+            latest_by_model_dev[key] = r
+
+    paired_models: list[str] = []
+    for r in updated_runs:
+        mid = str(r.get("model_id", ""))
+        if (
+            mid not in paired_models
+            and (mid, "cuda") in latest_by_model_dev
+            and (mid, "cpu") in latest_by_model_dev
+        ):
+            paired_models.append(mid)
+
     # Render comparative index.md
     index_path = output_dir / "index.md"
     index_lines = [
@@ -922,11 +957,90 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         "",
         "This index tracks dated benchmark executions across hardware targets, models, prompt sizes, and provider adapters. Web dashboards (`apps/dashboard`) consume [`manifest.json`](manifest.json) directly to plot comparative latency, throughput, and Pareto cost curves.",
         "",
-        "## Executed Benchmark Runs (`Measured`)",
-        "",
-        "| Run Date (UTC) | Run ID | Provider | Hardware / Backend | Model (`Precision`) | Prompt Tiers | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Marginal Power Cost ($/1M tok) | Artifacts |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
+
+    sec_count = 1
+    if paired_models:
+        index_lines.extend(
+            [
+                f"## {sec_count}. Empirical GPU (`RTX 5070 Ti`) vs. CPU (`Ryzen 9 7900`) Comparison by Model (`Measured`)",
+                "",
+                "| Model ID | GPU p50 Latency (ms) | CPU p50 Latency (ms) | Latency Speedup | GPU Peak (tok/s) | CPU Peak (tok/s) | Throughput Speedup | GPU Power Cost ($/1M tok) | CPU Power Cost ($/1M tok) | Energy Cost Advantage |",
+                "|---|---|---|---|---|---|---|---|---|---|",
+            ]
+        )
+        sec_count += 1
+        for mid in paired_models:
+            g_run = latest_by_model_dev[(mid, "cuda")]["summary_kpis"]
+            c_run = latest_by_model_dev[(mid, "cpu")]["summary_kpis"]
+            g_lat = max(float(g_run["warm_c1_latency_p50_ms"]), 0.001)
+            c_lat = max(float(c_run["warm_c1_latency_p50_ms"]), 0.001)
+            lat_speedup = c_lat / g_lat
+            g_tps = max(float(g_run["peak_aggregate_tokens_per_sec"]), 0.01)
+            c_tps = max(float(c_run["peak_aggregate_tokens_per_sec"]), 0.01)
+            tps_speedup = g_tps / c_tps
+            g_cost = max(float(g_run["cost_per_1m_tokens_usd"]), 0.0001)
+            c_cost = max(float(c_run["cost_per_1m_tokens_usd"]), 0.0001)
+            cost_adv = c_cost / g_cost
+            index_lines.append(
+                f"| `{mid}` | **{g_lat:.2f} ms** | {c_lat:.2f} ms | **{lat_speedup:.1f}× faster** "
+                f"| **{g_tps:.1f}** | {c_tps:.1f} | **{tps_speedup:.1f}× higher** "
+                f"| **\\${g_cost:.4f}** | \\${c_cost:.4f} | **{cost_adv:.1f}× cheaper** |"
+            )
+        index_lines.append("")
+
+    # Group CUDA runs by model_id and execution engine
+    cuda_runs_by_model: dict[str, dict[str, dict[str, Any]]] = {}
+    for r in updated_runs:
+        if r.get("device_type") == "cuda":
+            mid = str(r.get("model_id", ""))
+            eng = str(r.get("execution_engine") or r.get("backend", "eager"))
+            if mid not in cuda_runs_by_model:
+                cuda_runs_by_model[mid] = {}
+            if eng not in cuda_runs_by_model[mid]:
+                cuda_runs_by_model[mid][eng] = r
+
+    multi_engine_models = [mid for mid, engs in cuda_runs_by_model.items() if len(engs) > 1]
+    if multi_engine_models:
+        index_lines.extend(
+            [
+                f"## {sec_count}. Empirical GPU Inference Engine Comparison (`RTX 5070 Ti`) (`Measured`)",
+                "",
+                "| Model ID | Execution Engine | Backend | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Peak VRAM (MB) | Speedup vs Eager | Artifacts |",
+                "|---|---|---|---|---|---|---|---|---|---|",
+            ]
+        )
+        sec_count += 1
+        for mid in multi_engine_models:
+            eng_map = cuda_runs_by_model[mid]
+            eager_run = eng_map.get("eager")
+            baseline_tps = (
+                float(eager_run["summary_kpis"]["peak_aggregate_tokens_per_sec"])
+                if eager_run
+                else 1.0
+            )
+            for eng_name, r in eng_map.items():
+                rk = r["summary_kpis"]
+                tps = float(rk["peak_aggregate_tokens_per_sec"])
+                speedup = (tps / baseline_tps) if baseline_tps > 0 else 1.0
+                speedup_str = f"**{speedup:.2f}×**" if speedup != 1.0 else "1.00× (baseline)"
+                index_lines.append(
+                    f"| `{mid}` | `{eng_name}` | `{r.get('backend', '')}` "
+                    f"| {rk['warm_c1_latency_p50_ms']:.2f} ms | {rk['warm_c1_ttft_p50_ms']:.2f} ms "
+                    f"| {rk['warm_c1_itl_p50_ms']:.3f} ms/tok | **{tps:.1f}** "
+                    f"| {rk.get('vram_peak_mb', 0.0):.1f} MB | {speedup_str} "
+                    f"| [Report]({r['report_md_path']}) · [JSON]({r['report_json_path']}) |"
+                )
+        index_lines.append("")
+
+    index_lines.extend(
+        [
+            f"## {sec_count}. Executed Benchmark Runs (`Measured`)",
+            "",
+            "| Run Date (UTC) | Run ID | Provider | Hardware / Backend | Model (`Precision`) | Prompt Tiers | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Marginal Power Cost ($/1M tok) | Artifacts |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+    )
     for r in updated_runs:
         rk = r["summary_kpis"]
         tiers_str = ", ".join(r["prompt_tiers"])
@@ -941,10 +1055,11 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
             f"| [Report]({r['report_md_path']}) · [JSON]({r['report_json_path']}) |"
         )
 
+    sec_count += 1
     index_lines.extend(
         [
             "",
-            "## Web UI & Graph Integration (`manifest.json`)",
+            f"## {sec_count}. Web UI & Graph Integration (`manifest.json`)",
             "",
             "- **Web Manifest**: [`manifest.json`](manifest.json) exposes `runs[].chart_series.concurrency_scaling_by_prompt_tier` and `runs[].chart_series.prompt_tier_latency_breakdown_c1` for direct charting.",
             "- **JSONL History**: [`history.jsonl`](history.jsonl) provides an append-only stream for CLI/DuckDB analytics.",
@@ -998,6 +1113,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Preferred execution device (auto uses CUDA if available, cpu forces CPU-only).",
     )
     parser.add_argument(
+        "--engine",
+        type=str,
+        choices=["auto", "eager", "torchscript", "torch-compile", "numpy"],
+        default="auto",
+        help="Inference execution engine backend (auto, eager, torchscript, torch-compile, numpy).",
+    )
+    parser.add_argument(
+        "--compare-engines",
+        action="store_true",
+        help="Run comparative benchmark sweep across eager, torchscript, and torch-compile on target device.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("benchmarks/results"),
@@ -1009,12 +1136,37 @@ def main(argv: list[str] | None = None) -> int:
     if not tiers:
         tiers = ["short", "medium", "long"]
 
+    if args.compare_engines:
+        engines_to_run = ["eager", "torchscript", "torch-compile"]
+        print(f"Starting comparative engine benchmark sweep for '{args.model_id}' on device '{args.device}'...")
+        completed_paths = []
+        for eng in engines_to_run:
+            print(f"\n=======================================================")
+            print(f" Running engine benchmark: {eng}")
+            print(f"=======================================================")
+            report = run_benchmark_suite(
+                model_id=args.model_id,
+                max_new_tokens=args.max_new_tokens,
+                samples_per_level=args.samples,
+                prompt_tiers=tiers,
+                prefer_device=args.device,
+                engine=eng,
+            )
+            paths = update_run_ledgers(args.output_dir, report)
+            completed_paths.append((eng, report, paths))
+            print(f"Engine '{eng}' completed (run_id={report['run_id']}).")
+
+        print("\nAll comparative engine benchmarks finished successfully!")
+        print(f"Comparison index updated at {args.output_dir / 'index.md'}.")
+        return 0
+
     report = run_benchmark_suite(
         model_id=args.model_id,
         max_new_tokens=args.max_new_tokens,
         samples_per_level=args.samples,
         prompt_tiers=tiers,
         prefer_device=args.device,
+        engine=args.engine,
     )
 
     paths = update_run_ledgers(args.output_dir, report)
