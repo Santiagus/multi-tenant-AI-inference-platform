@@ -3,6 +3,7 @@ export interface IStorageClient {
   getObject(key: string): Promise<Buffer | null>;
   getPresignedDownloadUrl(key: string, expiresInSeconds?: number): Promise<string>;
   getPresignedUploadUrl(key: string, expiresInSeconds?: number): Promise<string>;
+  getAssetUri(key: string): string;
   ensureBucket(): Promise<void>;
   isHealthy(): Promise<boolean>;
 }

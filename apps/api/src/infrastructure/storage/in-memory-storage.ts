@@ -27,6 +27,10 @@ export class InMemoryStorageClient implements IStorageClient {
     return `https://storage.mock.local/upload/${encodeURIComponent(key)}?expires=${expiresInSeconds}`;
   }
 
+  getAssetUri(key: string): string {
+    return `s3://mock-bucket/${key}`;
+  }
+
   async ensureBucket(): Promise<void> {
     // No-op for in-memory
   }

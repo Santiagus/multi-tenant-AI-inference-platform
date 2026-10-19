@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { JobService } from '../application/job-service.js';
@@ -6,24 +8,70 @@ import type { IStorageClient } from '../infrastructure/storage/storage-client.js
 import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ValidationError } from '../domain/errors.js';
 
+const SUPPORTED_UPLOAD_CONTENT_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+  'video/quicktime',
+  'application/pdf',
+  'jpeg',
+  'jpg',
+  'png',
+  'webp',
+  'mp4',
+  'quicktime',
+  'pdf',
+] as const;
+
+const UploadUrlSchema = z.object({
+  filename: z.string().min(1, 'filename is required'),
+  content_type: z
+    .string()
+    .min(1, 'content_type is required')
+    .refine(
+      (ct) => (SUPPORTED_UPLOAD_CONTENT_TYPES as readonly string[]).includes(ct.trim().toLowerCase()),
+      {
+        message: 'Unsupported content_type. Supported: jpeg, png, webp, mp4, quicktime, pdf',
+      }
+    ),
+  expires_in_seconds: z.number().int().positive().max(86400).optional().default(3600),
+});
+
 const SubmitJobSchema = z.object({
   model_id: z.string().min(1, 'model_id is required'),
   routing_preference: z
-    .enum(['auto', 'local', 'cloud', 'cost_optimized', 'low_latency'])
+    .enum([
+      'auto',
+      'mock',
+      'local/cpu',
+      'local/gpu',
+      'local',
+      'cloud',
+      'cloud/runpod',
+      'cloud/bedrock',
+      'cloud/sagemaker',
+      'runpod',
+      'bedrock',
+      'sagemaker',
+      'cost_optimized',
+      'low_latency',
+      'local_first',
+    ])
     .default('auto'),
   priority: z.number().int().min(1).max(10).default(5),
   max_retries: z.number().int().min(0).max(10).optional(),
+  parameters: z.record(z.unknown()).optional(),
   input: z
     .object({
       prompt: z.string().optional(),
+      media_asset_uri: z.string().optional(),
       parameters: z.record(z.unknown()).optional(),
     })
     .catchall(z.unknown())
     .optional(),
-  input_uri: z.string().url().optional(),
-}).refine((data) => data.input !== undefined || data.input_uri !== undefined, {
-  message: 'Either input or input_uri must be provided',
-  path: ['input'],
+  input_uri: z.string().optional(),
 });
 
 const TransitionJobSchema = z.object({
@@ -50,8 +98,18 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   const { jobService, jobWorker, storageClient } = options;
 
   // POST /v1/jobs - Submit an asynchronous inference job
-  fastify.post('/v1/jobs', async (req, reply) => {
-    const parseResult = SubmitJobSchema.safeParse(req.body);
+  fastify.post(
+    '/v1/jobs',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Submit Asynchronous Inference Job',
+        description:
+          'Enqueues an asynchronous inference job with idempotency support, bounded backoff, and S3 payload offloading.',
+      },
+    },
+    async (req, reply) => {
+      const parseResult = SubmitJobSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError(
         'Request payload validation failed',
@@ -66,6 +124,19 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     const idempotencyKey = (req.headers['idempotency-key'] as string) || null;
     const body = parseResult.data;
 
+    const mergedParameters: Record<string, unknown> = {
+      ...(body.parameters || {}),
+      ...(((body.input as any)?.parameters as Record<string, unknown>) || {}),
+    };
+
+    const resolvedInput = body.input_uri
+      ? body.input
+      : {
+          prompt: '',
+          ...(body.input || {}),
+          parameters: mergedParameters,
+        };
+
     const result = await jobService.submitJob(
       tenantId,
       {
@@ -73,7 +144,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         routingPreference: body.routing_preference as RoutingPreferenceType,
         priority: body.priority,
         maxRetries: body.max_retries,
-        input: body.input,
+        input: resolvedInput as Record<string, unknown> | undefined,
         inputUri: body.input_uri,
         correlationId,
         traceparent,
@@ -99,39 +170,116 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     });
   });
 
-  // GET /v1/jobs/dlq - List Dead-Letter Queue messages for tenant
-  fastify.get('/v1/jobs/dlq', async (req, reply) => {
-    const tenantId = (req as any).tenantId || 'tenant-default';
-    const messages = await jobService.listDlqMessages(tenantId, 10);
+  // POST /v1/jobs/upload-url - Generate Presigned S3 Media Upload URL
+  fastify.post(
+    '/v1/jobs/upload-url',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Generate Presigned S3 Media Upload URL',
+        description:
+          'Generates a presigned S3 PUT URL for tenant-isolated binary media upload (images, videos, documents).',
+      },
+    },
+    async (req, reply) => {
+      const parseResult = UploadUrlSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        throw new ValidationError(
+          'Request payload validation failed',
+          parseResult.error.flatten().fieldErrors
+        );
+      }
 
-    return reply.status(200).send({
-      messages: messages.map((m) => ({
-        message_id: m.messageId,
-        job_id: m.body.jobId,
-        tenant_id: m.body.tenantId,
-        correlation_id: m.body.correlationId ?? null,
-        traceparent: m.body.traceparent ?? null,
-        model_id: m.body.modelId,
-        error_code: m.body.errorCode,
-        failure_reason: m.body.failureReason,
-        retry_count: m.body.retryCount,
-        failed_at: m.body.failedAt,
-      })),
-    });
-  });
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const body = parseResult.data;
+      const sanitizedFilename = path.basename(body.filename);
+      const uploadId = randomUUID();
+      const storageKey = `tenants/${tenantId}/inputs/${uploadId}-${sanitizedFilename}`;
+      const expiresInSeconds = body.expires_in_seconds ?? 3600;
+
+      const uploadUrl = await storageClient.getPresignedUploadUrl(storageKey, expiresInSeconds);
+      const assetUri = typeof storageClient.getAssetUri === 'function'
+        ? storageClient.getAssetUri(storageKey)
+        : `s3://${(storageClient as any).bucket || 'platform-artifacts'}/${storageKey}`;
+
+      return reply.status(200).send({
+        upload_url: uploadUrl,
+        asset_uri: assetUri,
+        expires_in_seconds: expiresInSeconds,
+      });
+    }
+  );
+
+  // GET /v1/jobs/dlq - List Dead-Letter Queue messages for tenant
+  fastify.get(
+    '/v1/jobs/dlq',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'List Dead-Letter Queue Messages',
+        description:
+          'Retrieves messages that exhausted maximum retry attempts and were routed to the Dead-Letter Queue.',
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const messages = await jobService.listDlqMessages(tenantId, 10);
+
+      return reply.status(200).send({
+        messages: messages.map((m) => ({
+          message_id: m.messageId,
+          job_id: m.body.jobId,
+          tenant_id: m.body.tenantId,
+          correlation_id: m.body.correlationId ?? null,
+          traceparent: m.body.traceparent ?? null,
+          model_id: m.body.modelId,
+          error_code: m.body.errorCode,
+          failure_reason: m.body.failureReason,
+          retry_count: m.body.retryCount,
+          failed_at: m.body.failedAt,
+        })),
+      });
+    }
+  );
 
   // POST /v1/worker/process-next - Deterministically process next queued job(s)
-  fastify.post('/v1/worker/process-next', async (_req, reply) => {
-    const outcomes = await jobWorker.processNextBatch(1);
-    return reply.status(200).send({
-      processed: outcomes.length,
-      outcomes,
-    });
-  });
+  fastify.post(
+    '/v1/worker/process-next',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Process Next Queued Job (Worker Trigger)',
+        description: 'Deterministically triggers execution of the next queued job from ElasticMQ / SQS.',
+      },
+    },
+    async (_req, reply) => {
+      const outcomes = await jobWorker.processNextBatch(1);
+      return reply.status(200).send({
+        processed: outcomes.length,
+        outcomes,
+      });
+    }
+  );
 
   // GET /v1/jobs/:id - Query job lifecycle state and results
-  fastify.get<{ Params: { id: string } }>('/v1/jobs/:id', async (req, reply) => {
-    const tenantId = (req as any).tenantId || 'tenant-default';
+  fastify.get<{ Params: { id: string } }>(
+    '/v1/jobs/:id',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Get Job Status & Artifacts',
+        description: 'Queries the current lifecycle state, execution metrics, and signed artifact download URLs for a job.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Job UUID' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
     const job = await jobService.getJob(tenantId, req.params.id);
     (req as any).jobId = job.id;
 
@@ -201,20 +349,54 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   });
 
   // POST /v1/jobs/:id/cancel - Cancel in-flight job
-  fastify.post<{ Params: { id: string } }>('/v1/jobs/:id/cancel', async (req, reply) => {
-    const tenantId = (req as any).tenantId || 'tenant-default';
-    const job = await jobService.cancelJob(tenantId, req.params.id);
+  fastify.post<{ Params: { id: string } }>(
+    '/v1/jobs/:id/cancel',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Cancel In-Flight Job',
+        description: 'Transitions an in-flight or queued job to CANCELLED and halts background worker processing.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Job UUID' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const job = await jobService.cancelJob(tenantId, req.params.id);
 
-    return reply.status(200).send({
-      job_id: job.id,
-      status: job.status,
-      completed_at: job.completedAt?.toISOString() ?? null,
-    });
-  });
+      return reply.status(200).send({
+        job_id: job.id,
+        status: job.status,
+        completed_at: job.completedAt?.toISOString() ?? null,
+      });
+    }
+  );
 
   // POST /v1/jobs/:id/transition - Transition job lifecycle (worker mock / development hook)
-  fastify.post<{ Params: { id: string } }>('/v1/jobs/:id/transition', async (req, reply) => {
-    const parseResult = TransitionJobSchema.safeParse(req.body);
+  fastify.post<{ Params: { id: string } }>(
+    '/v1/jobs/:id/transition',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Transition Job Lifecycle State',
+        description:
+          'Development & worker hook to explicitly transition job state with telemetry and cost recording.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Job UUID' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const parseResult = TransitionJobSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError(
         'Request payload validation failed',

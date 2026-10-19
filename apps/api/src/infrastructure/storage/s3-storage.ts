@@ -12,6 +12,7 @@ export interface S3StorageConfig {
   bucket: string;
   region: string;
   endpoint?: string;
+  publicEndpoint?: string;
   accessKeyId: string;
   secretAccessKey: string;
   forcePathStyle?: boolean;
@@ -19,19 +20,29 @@ export interface S3StorageConfig {
 
 export class S3StorageClient implements IStorageClient {
   private client: S3Client;
+  private presignClient: S3Client;
   private bucket: string;
 
   constructor(config: S3StorageConfig) {
     this.bucket = config.bucket;
+    const credentials = {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    };
     this.client = new S3Client({
       region: config.region,
       endpoint: config.endpoint,
       forcePathStyle: config.forcePathStyle ?? true,
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      credentials,
     });
+    this.presignClient = config.publicEndpoint
+      ? new S3Client({
+          region: config.region,
+          endpoint: config.publicEndpoint,
+          forcePathStyle: config.forcePathStyle ?? true,
+          credentials,
+        })
+      : this.client;
   }
 
   async putObject(key: string, data: Buffer | string, contentType = 'application/octet-stream'): Promise<string> {
@@ -73,7 +84,7 @@ export class S3StorageClient implements IStorageClient {
       Bucket: this.bucket,
       Key: key,
     });
-    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+    return getSignedUrl(this.presignClient, command, { expiresIn: expiresInSeconds });
   }
 
   async getPresignedUploadUrl(key: string, expiresInSeconds = 3600): Promise<string> {
@@ -81,7 +92,11 @@ export class S3StorageClient implements IStorageClient {
       Bucket: this.bucket,
       Key: key,
     });
-    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+    return getSignedUrl(this.presignClient, command, { expiresIn: expiresInSeconds });
+  }
+
+  getAssetUri(key: string): string {
+    return `s3://${this.bucket}/${key}`;
   }
 
   async ensureBucket(): Promise<void> {

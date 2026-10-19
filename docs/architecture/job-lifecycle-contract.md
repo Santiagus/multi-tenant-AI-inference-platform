@@ -75,7 +75,7 @@ All endpoints require authentication via Bearer token: `Authorization: Bearer <t
     },
     "routing_preference": {
       "type": "string",
-      "enum": ["auto", "local", "cloud", "cost_optimized", "low_latency"],
+      "enum": ["auto", "mock", "local/cpu", "local/gpu", "local", "cloud", "cost_optimized", "low_latency", "local_first"],
       "default": "auto"
     },
     "priority": {

@@ -74,13 +74,39 @@ export function calculateBackoffSeconds(
 
 export const RoutingPreference = {
   AUTO: 'auto',
+  MOCK: 'mock',
+  LOCAL_CPU: 'local/cpu',
+  LOCAL_GPU: 'local/gpu',
   LOCAL: 'local',
   CLOUD: 'cloud',
+  CLOUD_RUNPOD: 'cloud/runpod',
+  CLOUD_BEDROCK: 'cloud/bedrock',
+  CLOUD_SAGEMAKER: 'cloud/sagemaker',
+  RUNPOD: 'runpod',
+  BEDROCK: 'bedrock',
+  SAGEMAKER: 'sagemaker',
   COST_OPTIMIZED: 'cost_optimized',
   LOW_LATENCY: 'low_latency',
+  LOCAL_FIRST: 'local_first',
 } as const;
 
-export type RoutingPreferenceType = (typeof RoutingPreference)[keyof typeof RoutingPreference];
+export type RoutingPreferenceType =
+  | (typeof RoutingPreference)[keyof typeof RoutingPreference]
+  | 'auto'
+  | 'mock'
+  | 'local/cpu'
+  | 'local/gpu'
+  | 'local'
+  | 'cloud'
+  | 'cloud/runpod'
+  | 'cloud/bedrock'
+  | 'cloud/sagemaker'
+  | 'runpod'
+  | 'bedrock'
+  | 'sagemaker'
+  | 'cost_optimized'
+  | 'low_latency'
+  | 'local_first';
 
 export interface JobUsage {
   promptTokens: number;

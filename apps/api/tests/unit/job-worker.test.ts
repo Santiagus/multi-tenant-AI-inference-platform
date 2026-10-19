@@ -433,5 +433,129 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     const outcomes = await pyWorker.processNextBatch(1);
     assert.equal(outcomes[0].action, 'succeeded');
   });
+
+  test('RoutingInferenceExecutor dynamically dispatches to mock, local/cpu, local/gpu, and cloud', async () => {
+    const { RoutingInferenceExecutor } = await import('../../src/application/job-worker.js');
+    const routingExec = new RoutingInferenceExecutor();
+
+    // 1. Instant Mock: model_id='mock', routing_preference='auto'
+    const { job: mockJob } = await jobService.submitJob('tenant-1', {
+      modelId: 'mock',
+      routingPreference: 'auto',
+      input: { prompt: 'Instant mock test' },
+    });
+    const mockRes = await routingExec.execute(mockJob, { prompt: 'Instant mock test' }, async () => false);
+    assert.equal(mockRes.provider, 'local_cpu_worker');
+    assert.ok(mockRes.outputText.includes("model 'mock'"));
+
+    // 2. Real CPU Inference: TinyLlama, routing_preference='local/cpu'
+    const { job: cpuJob } = await jobService.submitJob('tenant-1', {
+      modelId: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+      routingPreference: 'local/cpu',
+      input: { prompt: 'Run real CPU tensor pass', parameters: { max_new_tokens: 6 } },
+    });
+    const cpuRes = await routingExec.execute(
+      cpuJob,
+      { prompt: 'Run real CPU tensor pass', parameters: { max_new_tokens: 6 } },
+      async () => false
+    );
+    assert.equal(cpuRes.provider, 'local_pytorch');
+    assert.equal(cpuRes.tokensOut, 6);
+    const cpuTelemetry = cpuRes.metadata?.telemetry as Record<string, unknown> | undefined;
+    assert.equal(cpuTelemetry?.device_type, 'cpu');
+    assert.equal(cpuTelemetry?.backend, 'pytorch_cpu');
+
+    // 3. Real GPU Inference: Llama-3-8B on RTX 5070 Ti, routing_preference='local/gpu'
+    const { job: gpuJob } = await jobService.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      routingPreference: 'local/gpu',
+      input: {
+        prompt: 'Run real GPU tensor pass',
+        parameters: { engine: 'torch-compile', max_new_tokens: 6 },
+      },
+    });
+    const gpuRes = await routingExec.execute(
+      gpuJob,
+      {
+        prompt: 'Run real GPU tensor pass',
+        parameters: { engine: 'torch-compile', max_new_tokens: 6 },
+      },
+      async () => false
+    );
+    assert.equal(gpuRes.provider, 'local_pytorch');
+    assert.equal(gpuRes.tokensOut, 6);
+    const gpuTelemetry = gpuRes.metadata?.telemetry as Record<string, unknown> | undefined;
+    assert.equal(gpuTelemetry?.device_type, 'cuda');
+    assert.ok(String(gpuTelemetry?.device_name).includes('RTX 5070 Ti'));
+    assert.equal(gpuTelemetry?.backend, 'pytorch_torch_compile_cuda');
+
+    // 4. Cloud Inference: routing_preference='cloud'
+    const { job: cloudJob } = await jobService.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      routingPreference: 'cloud',
+      input: { prompt: 'Run cloud inference', parameters: { max_new_tokens: 6 } },
+    });
+    const cloudRes = await routingExec.execute(
+      cloudJob,
+      { prompt: 'Run cloud inference', parameters: { max_new_tokens: 6 } },
+      async () => false
+    );
+    assert.equal(cloudRes.provider, 'runpod');
+
+    // 5. Cloud Inference for proprietary model (Claude)
+    const { job: claudeJob } = await jobService.submitJob('tenant-1', {
+      modelId: 'anthropic.claude-3-sonnet-20240229-v1:0',
+      routingPreference: 'cloud',
+      input: { prompt: 'Run claude cloud inference', parameters: { max_new_tokens: 6 } },
+    });
+    const claudeRes = await routingExec.execute(
+      claudeJob,
+      { prompt: 'Run claude cloud inference', parameters: { max_new_tokens: 6 } },
+      async () => false
+    );
+    assert.equal(claudeRes.provider, 'bedrock');
+  });
+
+  test('JobWorker resolves binary media assets from S3 into local cache and enriches media_metadata', async () => {
+    let receivedPayload: Record<string, unknown> | null = null;
+    const capturingExecutor: IInferenceExecutor = {
+      async execute(_job, inputPayload, _checkCancelled) {
+        receivedPayload = inputPayload;
+        return {
+          provider: 'mock',
+          output: { output_text: 'Processed media frame' },
+          durationMs: 10,
+          tokensIn: 50,
+          tokensOut: 10,
+          costMicrocents: 100,
+        };
+      },
+    };
+
+    const worker = new JobWorker(jobRepo, queueClient, storageClient, capturingExecutor);
+
+    // Store binary image in storageClient
+    const s3Key = 'tenants/tenant-media/inputs/telemetry_f1.jpg';
+    const fakeImageBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+    await storageClient.putObject(s3Key, fakeImageBuffer, 'image/jpeg');
+
+    const { job } = await jobService.submitJob('tenant-media', {
+      modelId: 'Qwen/Qwen2.5-VL-7B-Instruct',
+      input: {
+        prompt: 'Analyze telemetry image',
+        media_asset_uri: `s3://mock-bucket/${s3Key}`,
+      },
+    });
+
+    const outcomes = await worker.processNextBatch(1);
+    assert.equal(outcomes.length, 1);
+    assert.equal(outcomes[0].action, 'succeeded');
+    assert.ok(receivedPayload);
+    assert.equal((receivedPayload as any).prompt, 'Analyze telemetry image');
+    assert.ok((receivedPayload as any).media_metadata);
+    assert.equal((receivedPayload as any).media_metadata.content_type, 'image/jpeg');
+    assert.equal((receivedPayload as any).media_metadata.filename, 'telemetry_f1.jpg');
+    assert.ok((receivedPayload as any).local_cached_path);
+  });
 });
 

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -21,6 +22,17 @@ import {
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+const VENV_PYTHON = path.resolve(REPO_ROOT, '.venv/bin/python');
+
+function resolveDefaultPythonBin(): string {
+  if (process.env.PYTHON_BIN && process.env.PYTHON_BIN.trim().length > 0) {
+    return process.env.PYTHON_BIN;
+  }
+  if (fs.existsSync(VENV_PYTHON)) {
+    return VENV_PYTHON;
+  }
+  return 'python3';
+}
 
 export class InferenceExecutionError extends Error {
   public readonly code: string;
@@ -158,8 +170,8 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
   private readonly pythonBin: string;
   private readonly runner: CommandRunner;
 
-  constructor(pythonBin = 'python3', runner: CommandRunner = defaultCommandRunner) {
-    this.pythonBin = pythonBin;
+  constructor(pythonBin?: string, runner: CommandRunner = defaultCommandRunner) {
+    this.pythonBin = pythonBin ?? resolveDefaultPythonBin();
     this.runner = runner;
   }
 
@@ -183,6 +195,7 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
       job_id: job.id,
       tenant_id: job.tenantId,
       model_id: job.modelId,
+      routing_preference: job.routingPreference,
       retry_count: job.retryCount,
       correlation_id: correlationId,
       traceparent,
@@ -216,6 +229,127 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
       durationMs: Math.max(Number(parsed.duration_ms ?? 1), 1),
       metadata: (parsed.metadata as Record<string, unknown> | undefined) ?? {},
     };
+  }
+}
+
+/**
+ * Dynamic Inference Executor that routes according to job.routingPreference and model:
+ * - 'mock' or model_id === 'mock' -> DefaultLocalInferenceExecutor (instant mock, zero subprocess overhead)
+ * - 'local/cpu' -> PythonWorkerInferenceExecutor with device='cpu'
+ * - 'local/gpu' -> PythonWorkerInferenceExecutor with device='cuda'
+ * - 'cloud' -> PythonWorkerInferenceExecutor with provider dynamically selected based on model
+ * - 'local' / 'local_first' -> PythonWorkerInferenceExecutor with local_pytorch
+ * - 'auto' / other:
+ *     - If model_id is 'mock' -> DefaultLocalInferenceExecutor
+ *     - If parameters specify device or provider -> PythonWorkerInferenceExecutor
+ *     - Default fallback for unit-test suite -> DefaultLocalInferenceExecutor
+ */
+export class RoutingInferenceExecutor implements IInferenceExecutor {
+  constructor(
+    private readonly mockExecutor: IInferenceExecutor = new DefaultLocalInferenceExecutor(),
+    private readonly pythonExecutor: IInferenceExecutor = new PythonWorkerInferenceExecutor()
+  ) {}
+
+  async execute(
+    job: Job,
+    resolvedInput: Record<string, unknown>,
+    checkCancelled: () => Promise<boolean>
+  ): Promise<InferenceExecutionResult> {
+    const pref = (job.routingPreference || 'auto').toLowerCase();
+    const modelId = job.modelId.toLowerCase();
+
+    // 1. Instant Mock path
+    if (job.modelId === 'mock' || pref === 'mock' || (pref === 'auto' && job.modelId === 'mock')) {
+      return this.mockExecutor.execute(job, resolvedInput, checkCancelled);
+    }
+
+    const currentParams = (resolvedInput.parameters as Record<string, unknown>) || {};
+    const updatedParams: Record<string, unknown> = {
+      ...currentParams,
+      routing_preference: job.routingPreference,
+    };
+
+    // 2. Real CPU Inference
+    if (pref === 'local/cpu') {
+      updatedParams.device = 'cpu';
+      updatedParams.provider = 'local_pytorch';
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    // 3. Real GPU Inference (e.g. RTX 5070 Ti)
+    if (pref === 'local/gpu') {
+      updatedParams.device = 'cuda';
+      updatedParams.provider = 'local_pytorch';
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    // 4. Cloud Inference
+    if (pref === 'runpod' || pref === 'cloud/runpod') {
+      updatedParams.provider = 'runpod';
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    if (pref === 'bedrock' || pref === 'cloud/bedrock') {
+      updatedParams.provider = 'bedrock';
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    if (pref === 'sagemaker' || pref === 'cloud/sagemaker') {
+      updatedParams.provider = 'sagemaker';
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    if (pref === 'cloud') {
+      if (!updatedParams.provider) {
+        if (modelId.includes('claude') || modelId.startsWith('anthropic.') || modelId.startsWith('amazon.')) {
+          updatedParams.provider = 'bedrock';
+        } else if (updatedParams.requires_vpc || updatedParams.vpc) {
+          updatedParams.provider = 'sagemaker';
+        } else {
+          updatedParams.provider = 'runpod';
+        }
+      }
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    // 5. Explicit local/cloud overrides
+    if (pref === 'local' || pref === 'local_first' || updatedParams.device || updatedParams.provider) {
+      if (!updatedParams.provider) {
+        updatedParams.provider = 'local_pytorch';
+      }
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled
+      );
+    }
+
+    // 6. Fast mock executor fallback for unspecified 'auto' jobs
+    return this.mockExecutor.execute(job, resolvedInput, checkCancelled);
   }
 }
 
@@ -285,7 +419,7 @@ export class JobWorker {
     options: JobWorkerOptions = {}
   ) {
     this.executor =
-      executor ?? new ProfilingInferenceExecutor(new DefaultLocalInferenceExecutor());
+      executor ?? new ProfilingInferenceExecutor(new RoutingInferenceExecutor());
     this.maxRetries = options.maxRetries ?? 3;
     this.baseBackoffSeconds = options.baseBackoffSeconds ?? 2;
     this.maxBackoffSeconds = options.maxBackoffSeconds ?? 60;
@@ -650,11 +784,39 @@ export class JobWorker {
     }
   }
 
+  private isBinaryMediaPath(uriOrKey: string): boolean {
+    const clean = uriOrKey.split('?')[0].toLowerCase();
+    const binaryExtensions = ['.jpg', '.jpeg', '.png', '.mp4', '.pdf', '.bin', '.webp', '.mov'];
+    return binaryExtensions.some((ext) => clean.endsWith(ext));
+  }
+
+  private detectMediaContentType(filenameOrKey: string): string {
+    const ext = path.extname(filenameOrKey.split('?')[0]).toLowerCase();
+    switch (ext) {
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      case '.mp4':
+        return 'video/mp4';
+      case '.mov':
+        return 'video/quicktime';
+      case '.pdf':
+        return 'application/pdf';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
   private async resolveJobInput(job: Job): Promise<Record<string, unknown>> {
     const payload = job.inputPayload ?? {};
+    const mediaUri = typeof payload.media_asset_uri === 'string' ? payload.media_asset_uri : undefined;
     const targetUri = (payload._offloaded && typeof payload.inputUri === 'string')
       ? payload.inputUri
-      : job.inputUri;
+      : (job.inputUri || mediaUri);
 
     if (targetUri && targetUri.startsWith('s3://')) {
       const key = targetUri.replace(/^s3:\/\/[^/]+\//, '');
@@ -666,7 +828,77 @@ export class JobWorker {
           false
         );
       }
-      return JSON.parse(buffer.toString('utf-8')) as Record<string, unknown>;
+
+      // Check if binary media asset
+      if (this.isBinaryMediaPath(key) || this.isBinaryMediaPath(targetUri)) {
+        const cacheDir = path.resolve(REPO_ROOT, '.cache/media');
+        if (!fs.existsSync(cacheDir)) {
+          fs.mkdirSync(cacheDir, { recursive: true });
+        }
+        const basename = path.basename(key);
+        const localCachedPath = path.resolve(cacheDir, basename);
+        fs.writeFileSync(localCachedPath, buffer);
+
+        const contentType = this.detectMediaContentType(basename);
+        const mediaMetadata = {
+          media_asset_uri: targetUri,
+          local_path: localCachedPath,
+          size_bytes: buffer.length,
+          filename: basename,
+          content_type: contentType,
+        };
+
+        return {
+          ...payload,
+          media_asset_uri: targetUri,
+          media_metadata: mediaMetadata,
+          local_cached_path: localCachedPath,
+        };
+      }
+
+      // Non-binary S3 artifact (e.g. JSON payload)
+      const parsed = JSON.parse(buffer.toString('utf-8')) as Record<string, unknown>;
+      if (typeof parsed.media_asset_uri === 'string' && parsed.media_asset_uri.startsWith('s3://') && this.isBinaryMediaPath(parsed.media_asset_uri)) {
+        const mKey = parsed.media_asset_uri.replace(/^s3:\/\/[^/]+\//, '');
+        const mBuffer = await this.storageClient.getObject(mKey);
+        if (mBuffer) {
+          const cacheDir = path.resolve(REPO_ROOT, '.cache/media');
+          if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+          const mBasename = path.basename(mKey);
+          const mLocalPath = path.resolve(cacheDir, mBasename);
+          fs.writeFileSync(mLocalPath, mBuffer);
+          parsed.local_cached_path = mLocalPath;
+          parsed.media_metadata = {
+            media_asset_uri: parsed.media_asset_uri,
+            local_path: mLocalPath,
+            size_bytes: mBuffer.length,
+            filename: mBasename,
+            content_type: this.detectMediaContentType(mBasename),
+          };
+        }
+      }
+      return parsed;
+    }
+
+    if (typeof payload.media_asset_uri === 'string') {
+      const localCandidate = path.isAbsolute(payload.media_asset_uri)
+        ? payload.media_asset_uri
+        : path.resolve(REPO_ROOT, payload.media_asset_uri);
+      if (fs.existsSync(localCandidate)) {
+        const stat = fs.statSync(localCandidate);
+        const basename = path.basename(localCandidate);
+        return {
+          ...payload,
+          local_cached_path: localCandidate,
+          media_metadata: {
+            media_asset_uri: payload.media_asset_uri,
+            local_path: localCandidate,
+            size_bytes: stat.size,
+            filename: basename,
+            content_type: this.detectMediaContentType(basename),
+          },
+        };
+      }
     }
 
     return payload;
