@@ -12,6 +12,26 @@
 @apiKey = dev-secret-key
 
 ### ==============================================================================
+### USE CASE 0: API Documentation & OpenAPI Specification Discovery
+### Interactive Swagger UI and Machine-Readable OpenAPI 3.0 Contract
+### ==============================================================================
+
+# 0.1 Fetch Machine-Readable OpenAPI 3.0 Specification
+GET {{baseUrl}}/docs/json
+
+###
+
+# 0.2 Check Swagger UI HTML Endpoint (or open in browser: http://localhost:3000/docs)
+GET {{baseUrl}}/docs/
+
+###
+
+# 0.3 Verify Documentation Aliases Redirects (/documentation -> /docs)
+GET {{baseUrl}}/documentation
+
+###
+
+### ==============================================================================
 ### USE CASE 1: Platform Health & Dependency Verification
 ### Verify that Fastify API, PostgreSQL, MinIO (S3), and ElasticMQ (SQS) are ready
 ### ==============================================================================
@@ -101,6 +121,236 @@ Authorization: Bearer {{apiKey}}
 GET {{baseUrl}}/v1/jobs/{{happyJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
+
+### ==============================================================================
+### USE CASE 2.1: Ready Examples per routing_preference & Modality
+### Pick a ready-to-run job submission payload tailored for each routing preference
+### ==============================================================================
+
+# 2.1.1 Instant Mock (Fast architecture & queue validation, zero compute delay)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "mock",
+  "routing_preference": "auto"
+}
+
+###
+
+# 2.1.2 Real CPU Inference (TinyLlama executed on host CPU via PyTorch / NumPy)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "routing_preference": "local/cpu"
+}
+
+###
+
+# 2.1.3 Real GPU Inference (Llama-3-8B executed on local RTX 5070 Ti with torch-compile)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local/gpu",
+  "parameters": {
+    "engine": "torch-compile"
+  }
+}
+
+###
+
+# 2.1.4 Cloud GPU Burst (Evaluates best cloud option for open-weights LLMs -> RunPod Serverless)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cloud"
+}
+
+###
+
+# 2.1.5 Managed Cloud API (Evaluates best cloud option for proprietary models -> AWS Bedrock Converse)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+  "routing_preference": "cloud"
+}
+
+###
+
+# 2.1a Routing Preference: auto (Dynamic placement: Raft vs Multi-Paxos Distributed Consensus)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication. Specifically analyze: 1) Leader election mechanisms and heartbeat overhead, 2) Log replication and commitment invariants, 3) Split-brain prevention under network partitions, and 4) Joint consensus configuration changes. Provide concrete trade-offs for latency-sensitive storage engines.",
+    "parameters": {
+      "temperature": 0.7,
+      "max_new_tokens": 384
+    }
+  }
+}
+
+###
+
+# 2.1b Routing Preference: local (Pinned RTX 5070 Ti / local PyTorch worker: PostgreSQL Query Plan Optimization)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local",
+  "priority": 7,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Analyze the following PostgreSQL execution plan for a 20-million row multi-tenant table experiencing sequential scans. Provide 3 specific indexing and partitioning strategies to achieve sub-10ms point lookups:\n\nEXPLAIN ANALYZE\nSELECT tenant_id, date_trunc('hour', created_at), status, COUNT(*), SUM(cost_microcents)\nFROM jobs\nWHERE tenant_id = 'tenant-prod-42'\n  AND status IN ('SUCCEEDED', 'FAILED')\n  AND created_at >= NOW() - INTERVAL '7 days'\nGROUP BY 1, 2, 3\nORDER BY 2 DESC;",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 384
+    }
+  }
+}
+
+###
+
+# 2.1c Routing Preference: cloud (RunPod GPU / Cloud provider: AWS FinOps Audit & Anomaly Detection)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cloud",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Review the following cloud billing breakdown across ECS Fargate, EKS GPU worker nodes, S3 storage, and CloudFront egress. Identify top cost drivers, quantify anomalous spending spikes compared to baseline, and provide actionable FinOps recommendations:\n\n- ECS Fargate (API Control Plane): $420/mo (baseline $380)\n- EKS g5.2xlarge GPU Nodes: $2,840/mo (baseline $1,200 — +136% spike)\n- S3 Artifact Storage & PutObject Calls: $185/mo (baseline $90 — high small-object write frequency)\n- CloudFront CDN Egress: $310/mo (baseline $290)\n- ElasticMQ / SQS Queue Requests: $45/mo\n\nOutline remediation steps for GPU spot instance interruption tolerance, payload offloading lifecycle policies, and S3 batching.",
+    "parameters": {
+      "temperature": 0.5,
+      "max_new_tokens": 384
+    }
+  }
+}
+
+###
+
+# 2.1d Routing Preference: cost_optimized (Lowest-cost provider: Batch Support Ticket Sentiment & Priority)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cost_optimized",
+  "priority": 3,
+  "max_retries": 5,
+  "input": {
+    "prompt": "Classify the sentiment (Positive / Neutral / Negative), urgency priority (P1-Urgent / P2-Normal / P3-Low), and suggested routing team for each of the following 5 customer support tickets:\n\nTicket #101: 'Our production worker lost connectivity to SQS queue and jobs are failing silently with timeout!'\nTicket #102: 'The new CloudFront artifact download speed is noticeably faster, great work on the CDN release.'\nTicket #103: 'Can we configure invoice billing in EUR with VAT breakdown starting next fiscal quarter?'\nTicket #104: 'Getting intermittent HTTP 504 gateway timeouts on the /v1/jobs submission endpoint during peak 2 PM traffic.'\nTicket #105: 'Please update our team notification webhook URL to https://alerts.internal.corp/webhook.'\n\nFormat the result as a structured Markdown table with columns: Ticket ID, Sentiment, Priority, Team, and Action Summary.",
+    "parameters": {
+      "temperature": 0.1,
+      "max_new_tokens": 384
+    }
+  }
+}
+
+###
+
+# 2.1e Routing Preference: low_latency (Fastest response: Real-Time Resilient TypeScript Client Synthesis)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "low_latency",
+  "priority": 10,
+  "max_retries": 2,
+  "input": {
+    "prompt": "Write a production-grade TypeScript resilient HTTP client wrapper with: 1) Exponential backoff with full jitter, 2) Classification of retryable (HTTP 429, 502, 503, 504) vs non-retryable (400, 401, 403, 404) status codes, 3) W3C traceparent and correlation ID header propagation, and 4) Strict TypeScript generics for request/response typing. Use standard Fetch API without third-party dependencies.",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 512
+    }
+  }
+}
+
+###
+
+# 2.1f Image Generation Showcase (FLUX.1 Schnell: Photorealistic 8K Datacenter Text-to-Image)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "black-forest-labs/FLUX.1-schnell",
+  "routing_preference": "cloud",
+  "priority": 6,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall, glowing cyan and amber fiber-optic cables illuminated beneath transparent raised flooring, frosted glass liquid-cooling manifolds on high-density GPU server racks, volumetric atmospheric haze, architectural photography, photorealistic octane render, sharp focus.",
+    "parameters": {
+      "width": 1024,
+      "height": 1024,
+      "num_inference_steps": 4,
+      "guidance_scale": 7.5,
+      "seed": 42
+    }
+  }
+}
+
+###
+
+# 2.1g Multimodal Vision & Image Processing Showcase (Qwen2.5-VL: Architecture Inspection with S3 Input URI)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Analyze the attached architectural diagram of the multi-tenant inference platform. Identify: 1) Potential single points of failure in the job lifecycle path, 2) Data boundary isolation between tenants at S3 and SQS layers, and 3) Suggestions for caching hot model weights to reduce cold-start latency.",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 384
+    }
+  },
+  "input_uri": "s3://platform-artifacts/tenants/tenant-default/inputs/system-architecture-diagram.png"
+}
 
 
 ### ==============================================================================
@@ -909,3 +1159,115 @@ Authorization: Bearer {{apiKey}}
 {
   "healthy": false
 }
+
+###
+
+### ==============================================================================
+### USE CASE 12: Multimodal Media Ingestion & 4 Runway Inference Workloads
+### Presigned S3 Asset Offload, Vision VLM, Keyframe Diffusion, and Video Synthesis
+### ==============================================================================
+
+# 12.1 Request Presigned S3 Media Upload URL
+# @name getPresignedUploadUrl
+POST {{baseUrl}}/v1/jobs/upload-url
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "filename": "fernando_alonso_f1.jpg",
+  "content_type": "image/jpeg",
+  "expires_in_seconds": 3600
+}
+
+### Auto-captured Asset URI from 12.1
+@uploadedAssetUri = {{getPresignedUploadUrl.response.body.asset_uri}}
+
+###
+
+# 12.2 Runway Category 1: Text Prompt Reasoning (Llama-3-8B-Instruct, Local GPU INT4)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication.",
+    "parameters": {
+      "temperature": 0.7,
+      "max_new_tokens": 128
+    }
+  }
+}
+
+###
+
+# 12.3 Runway Category 2: Image VLM Analysis (Qwen2.5-VL-7B-Instruct, Vision Model INT4)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Inspect driver posture, helmet aerodynamics, front wing vortex generators, and tire degradation status.",
+    "media_asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 128
+    }
+  }
+}
+
+###
+
+# 12.4 Runway Category 3: Keyframe Diffusion (FLUX.1-schnell, 4-Step MMDiT NF4)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "black-forest-labs/FLUX.1-schnell",
+  "routing_preference": "local/gpu",
+  "priority": 6,
+  "input": {
+    "prompt": "Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall.",
+    "parameters": {
+      "num_inference_steps": 4,
+      "guidance_scale": 7.5,
+      "width": 1024,
+      "height": 1024
+    }
+  }
+}
+
+###
+
+# 12.5 Runway Category 4: Video Spatiotemporal Synthesis (Wan2.1-T2V-1.3B, 3D DiT INT4)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Wan-AI/Wan2.1-T2V-1.3B",
+  "routing_preference": "local/gpu",
+  "priority": 7,
+  "input": {
+    "prompt": "Transform reference video with fluid cinematic lighting and 60fps spatiotemporal consistency.",
+    "media_asset_uri": "tests/fixtures/media/sample_bunny_clip.mp4",
+    "parameters": {
+      "denoising_steps": 4,
+      "fps": 24
+    }
+  }
+}
+
