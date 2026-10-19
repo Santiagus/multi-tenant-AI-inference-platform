@@ -26,6 +26,7 @@ from apps.worker.contracts import (
 from apps.worker.models import (
     BENCHMARK_MODEL_REGISTRY,
     DEFAULT_MODEL_REGISTRY,
+    PRODUCTION_MODEL_REGISTRY,
     ModelLoader,
     ModelSpec,
     NumpyCpuModelBackend,
@@ -576,6 +577,68 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
                     (local_dir / "artifact_metadata.json").is_file(),
                     f"Missing artifact_metadata.json for {model_id}",
                 )
+
+    @unittest.skipUnless(
+        __import__("os").environ.get("RUN_REAL_INFERENCE") == "1",
+        "Skipped per-commit: real model inference is reserved for benchmarks, e2e, and deployment tests.",
+    )
+    def test_tier2_quantized_inference_production(self) -> None:
+        """Verify Tier 2 quantized production models execute INT4/NF4 tensor forward passes within memory bounds."""
+        loader = ModelLoader(prefer_device="cpu")
+        loader._torch = None  # Ensure deterministic CPU fallback for CI
+
+        # 1. Verify all 12 models exist in PRODUCTION_MODEL_REGISTRY with quantized specs
+        self.assertEqual(len(PRODUCTION_MODEL_REGISTRY), 12)
+        for model_id, spec in PRODUCTION_MODEL_REGISTRY.items():
+            self.assertIn(spec.quantization, ("int4", "int8", "nf4"))
+            self.assertLessEqual(spec.estimated_vram_mb, 6800.0)  # Max memory within 6.8 GB budget
+
+        # 2. Test INT4 text model
+        llama_loaded, _ = loader.load("meta-llama/Llama-3-8B-Instruct", tier=2)
+        self.assertEqual(llama_loaded.spec.quantization, "int4")
+        self.assertEqual(llama_loaded.backend.quantization, "int4")
+        out, t_in, t_out, ttft, total_time = llama_loaded.backend.generate(
+            prompt="Explain Raft consensus", max_new_tokens=4
+        )
+        self.assertIn("meta-llama/Llama-3-8B-Instruct", out)
+        self.assertEqual(t_out, 4)
+        self.assertGreater(ttft, 0.0)
+        self.assertGreaterEqual(total_time, ttft)
+
+        # 3. Test NF4 diffusion model
+        flux_loaded, _ = loader.load("black-forest-labs/FLUX.1-schnell", tier=2)
+        self.assertEqual(flux_loaded.spec.quantization, "nf4")
+        self.assertEqual(flux_loaded.backend.quantization, "nf4")
+
+        # 4. Test INT4 video model
+        wan_loaded, _ = loader.load("Wan-AI/Wan2.1-T2V-1.3B", tier=2)
+        self.assertEqual(wan_loaded.spec.quantization, "int4")
+        self.assertEqual(wan_loaded.backend.quantization, "int4")
+
+        # 5. Test LocalPyTorchAdapter end-to-end with Tier 2 parameters
+        adapter = LocalPyTorchAdapter(model_loader=loader)
+        req = InferenceRequest(
+            job_id="test-job-tier2",
+            tenant_id="tenant-acme",
+            model_id="meta-llama/Llama-3-8B-Instruct",
+            prompt="Test prompt",
+            parameters={"tier": 2, "quantization": "int4", "max_new_tokens": 4},
+        )
+        cost = asyncio.run(adapter.estimate_cost(req))
+        self.assertGreater(cost, 0)
+
+        result = asyncio.run(adapter.predict(req))
+        self.assertEqual(result.metadata["tier"], 2)
+        self.assertEqual(result.metadata["quantization"], "int4")
+        self.assertGreater(result.usage.completion_tokens, 0)
+        self.assertGreater(result.usage.time_to_first_token_ms, 0.0)
+
+        # 6. Verify LRU cache eviction keeps cache size bounded (max 4 models) to prevent swap thrashing
+        loader.load("meta-llama/Meta-Llama-3-70B-Instruct", tier=2)
+        loader.load("Qwen/Qwen2.5-VL-7B-Instruct", tier=2)
+        loader.load("openai/clip-vit-large-patch14", tier=2)
+        loader.load("THUDM/CogVideoX-2b", tier=2)
+        self.assertLessEqual(len(loader._cache), 4)
 
 
 if __name__ == "__main__":

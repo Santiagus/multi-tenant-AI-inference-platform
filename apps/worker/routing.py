@@ -8,6 +8,12 @@ from typing import Any, Mapping
 
 
 class RoutingPreference(str, enum.Enum):
+    AUTO = "auto"
+    MOCK = "mock"
+    LOCAL_CPU = "local/cpu"
+    LOCAL_GPU = "local/gpu"
+    LOCAL = "local"
+    CLOUD = "cloud"
     LOCAL_FIRST = "local_first"
     COST_OPTIMIZED = "cost_optimized"
     LATENCY_OPTIMIZED = "latency_optimized"

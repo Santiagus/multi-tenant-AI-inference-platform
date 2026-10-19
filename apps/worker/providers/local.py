@@ -38,7 +38,11 @@ class LocalPyTorchAdapter(InferenceProvider):
             return False
 
     async def estimate_cost(self, request: InferenceRequest) -> int:
-        spec = self._loader.resolve_spec(request.model_id)
+        tier = int(request.parameters.get("tier", 1))
+        quantization = request.parameters.get("quantization")
+        if request.parameters.get("quantized") or quantization:
+            tier = 2
+        spec = self._loader.resolve_spec(request.model_id, tier=tier, quantization=quantization)
         prompt_tokens = len(tokenize_prompt(request.prompt, spec.vocab_size))
         max_new_tokens = int(request.parameters.get("max_new_tokens", 32))
         projected_tokens = prompt_tokens + max(1, min(max_new_tokens, 512))
@@ -75,14 +79,30 @@ class LocalPyTorchAdapter(InferenceProvider):
             )
 
         self._telemetry.reset_peak_memory()
+        device = request.parameters.get("device")
+        routing_pref = str(request.parameters.get("routing_preference", "")).lower()
+        if not device:
+            if routing_pref == "local/cpu":
+                device = "cpu"
+            elif routing_pref == "local/gpu":
+                device = "cuda"
+
         engine = request.parameters.get("engine", ExecutionEngine.AUTO)
         use_torchscript = bool(request.parameters.get("use_torchscript", False))
         allow_auto_upgrade = request.parameters.get("allow_auto_upgrade", None)
+        tier = int(request.parameters.get("tier", 1))
+        quantization = request.parameters.get("quantization")
+        if request.parameters.get("quantized") or quantization:
+            tier = 2
+
         loaded, is_warm = self._loader.load(
             request.model_id,
             use_torchscript=use_torchscript,
             engine=engine,
             allow_auto_upgrade=allow_auto_upgrade,
+            device=device,
+            tier=tier,
+            quantization=quantization,
         )
 
         output_text, tokens_in, tokens_out, ttft_ms, compute_ms = loaded.backend.generate(
@@ -91,9 +111,11 @@ class LocalPyTorchAdapter(InferenceProvider):
             temperature=temperature,
         )
 
+        is_cpu_backend = loaded.backend.backend_name.endswith("_cpu") or loaded.backend.backend_name == "numpy_cpu_fallback"
         hw_telemetry = self._telemetry.capture_snapshot(
             active_backend=loaded.backend.backend_name,
             model_footprint_mb=loaded.backend.footprint_mb,
+            force_cpu=is_cpu_backend,
         )
 
         total_tokens = tokens_in + tokens_out
@@ -127,6 +149,8 @@ class LocalPyTorchAdapter(InferenceProvider):
                 "estimated_full_weights_vram_mb": loaded.spec.estimated_vram_mb,
                 "engine_requested": loaded.engine_requested,
                 "engine_executed": loaded.engine_executed,
+                "quantization": loaded.spec.quantization,
+                "tier": 2 if (loaded.spec.quantization != "none" or tier == 2) else 1,
             },
         )
 
