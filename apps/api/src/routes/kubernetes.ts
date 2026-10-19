@@ -52,11 +52,21 @@ export const kubernetesRoutes: FastifyPluginAsync<KubernetesRoutesOptions> = asy
   const { queueClient, metrics, kueueController } = options;
 
   // GET /v1/k8s/autoscaling/status - Evaluate KEDA queue-depth scaling and Kueue quota state
-  fastify.get('/v1/k8s/autoscaling/status', async (req, reply) => {
-    const parsed = AutoscalingQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
-      throw new ValidationError('Invalid autoscaling query parameters', parsed.error.flatten());
-    }
+  fastify.get(
+    '/v1/k8s/autoscaling/status',
+    {
+      schema: {
+        tags: ['Kubernetes'],
+        summary: 'Evaluate KEDA Autoscaling & Kueue Status',
+        description:
+          'Evaluates KEDA queue-depth scaling decisions (0 -> N -> 0) and Kueue cluster queue GPU quota status.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = AutoscalingQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid autoscaling query parameters', parsed.error.flatten());
+      }
 
     const liveQueueDepth = await queueClient.getQueueDepth!();
     const queueDepth = parsed.data.queue_depth ?? liveQueueDepth;
@@ -105,70 +115,97 @@ export const kubernetesRoutes: FastifyPluginAsync<KubernetesRoutesOptions> = asy
   });
 
   // POST /v1/k8s/kueue/workloads - Validate via Kyverno policies and submit GPU/batch workload to Kueue
-  fastify.post('/v1/k8s/kueue/workloads', async (req, reply) => {
-    const parsed = SubmitKueueWorkloadSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw new ValidationError('Invalid Kueue workload submission payload', parsed.error.flatten());
-    }
+  fastify.post(
+    '/v1/k8s/kueue/workloads',
+    {
+      schema: {
+        tags: ['Kubernetes'],
+        summary: 'Submit Batch Workload to Kueue',
+        description:
+          'Validates workload security constraints via Kyverno policies and submits to Kueue for GPU quota admission or cohort borrowing.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = SubmitKueueWorkloadSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid Kueue workload submission payload', parsed.error.flatten());
+      }
 
-    const tenantId = (req as unknown as { tenantId: string }).tenantId;
-    const body = parsed.data;
+      const tenantId = (req as unknown as { tenantId: string }).tenantId;
+      const body = parsed.data;
 
-    try {
-      const { workload, kyvernoResult } = kueueController.submitWorkload({
-        workloadId: body.workload_id,
-        tenantId,
-        localQueueName: body.local_queue_name,
-        priorityClass: body.priority_class,
-        gpuCount: body.gpu_count,
-        cpuMillicores: body.cpu_millicores,
-        memoryMb: body.memory_mb,
-        allowCohortBorrowing: body.allow_cohort_borrowing,
-        securityContext: body.security_context
-          ? {
-              runAsNonRoot: body.security_context.run_as_non_root,
-              allowPrivilegeEscalation: body.security_context.allow_privilege_escalation,
-              droppedCapabilities: body.security_context.dropped_capabilities,
-            }
-          : undefined,
-      });
-
-      metrics.incCounter('kyverno_policy_evaluations_total', { result: 'pass' });
-      if (workload.status === 'ADMITTED') {
-        metrics.incCounter('kueue_admitted_workloads_total', {
-          cluster_queue: workload.clusterQueueName,
-          priority_class: workload.priorityClass,
-          tenant_id: workload.tenantId,
+      try {
+        const { workload, kyvernoResult } = kueueController.submitWorkload({
+          workloadId: body.workload_id,
+          tenantId,
+          localQueueName: body.local_queue_name,
+          priorityClass: body.priority_class,
+          gpuCount: body.gpu_count,
+          cpuMillicores: body.cpu_millicores,
+          memoryMb: body.memory_mb,
+          allowCohortBorrowing: body.allow_cohort_borrowing,
+          securityContext: body.security_context
+            ? {
+                runAsNonRoot: body.security_context.run_as_non_root,
+                allowPrivilegeEscalation: body.security_context.allow_privilege_escalation,
+                droppedCapabilities: body.security_context.dropped_capabilities,
+              }
+            : undefined,
         });
-      }
 
-      const clusterStatus = kueueController.getClusterStatus();
-      metrics.setGauge(
-        'kueue_cluster_queue_gpu_quota_used',
-        { cluster_queue: clusterStatus.clusterQueueName },
-        clusterStatus.usedGpuQuota
-      );
-      metrics.setGauge(
-        'kueue_pending_workloads',
-        { cluster_queue: clusterStatus.clusterQueueName },
-        clusterStatus.pendingCount
-      );
+        metrics.incCounter('kyverno_policy_evaluations_total', { result: 'pass' });
+        if (workload.status === 'ADMITTED') {
+          metrics.incCounter('kueue_admitted_workloads_total', {
+            cluster_queue: workload.clusterQueueName,
+            priority_class: workload.priorityClass,
+            tenant_id: workload.tenantId,
+          });
+        }
 
-      return reply.status(201).send({
-        workload,
-        kyverno: kyvernoResult,
-        cluster_queue: clusterStatus,
-      });
-    } catch (err) {
-      if (err instanceof ValidationError && err.code === 'KYVERNO_POLICY_VIOLATION') {
-        metrics.incCounter('kyverno_policy_evaluations_total', { result: 'fail' });
+        const clusterStatus = kueueController.getClusterStatus();
+        metrics.setGauge(
+          'kueue_cluster_queue_gpu_quota_used',
+          { cluster_queue: clusterStatus.clusterQueueName },
+          clusterStatus.usedGpuQuota
+        );
+        metrics.setGauge(
+          'kueue_pending_workloads',
+          { cluster_queue: clusterStatus.clusterQueueName },
+          clusterStatus.pendingCount
+        );
+
+        return reply.status(201).send({
+          workload,
+          kyverno: kyvernoResult,
+          cluster_queue: clusterStatus,
+        });
+      } catch (err) {
+        if (err instanceof ValidationError && err.code === 'KYVERNO_POLICY_VIOLATION') {
+          metrics.incCounter('kyverno_policy_evaluations_total', { result: 'fail' });
+        }
+        throw err;
       }
-      throw err;
     }
-  });
+  );
 
   // POST /v1/k8s/kueue/workloads/:id/release - Complete/release GPU workload and admit queued workloads
-  fastify.post<{ Params: { id: string } }>('/v1/k8s/kueue/workloads/:id/release', async (req, reply) => {
+  fastify.post<{ Params: { id: string } }>(
+    '/v1/k8s/kueue/workloads/:id/release',
+    {
+      schema: {
+        tags: ['Kubernetes'],
+        summary: 'Release Kueue Workload & Reclaim GPU Quota',
+        description: 'Releases GPU quota allocated to a completed workload and awakens pending queued workloads.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Workload identifier' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
     const { released, newlyAdmitted } = kueueController.releaseWorkload(req.params.id);
     for (const admitted of newlyAdmitted) {
       metrics.incCounter('kueue_admitted_workloads_total', {
