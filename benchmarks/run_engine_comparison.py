@@ -33,7 +33,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np  # type: ignore[import-not-found]
-import torch
+try:
+    import torch  # type: ignore[import-not-found]
+except Exception:
+    torch = None  # type: ignore[assignment]
 
 from apps.worker.flyte_workflow import inspect_local_media_asset
 from apps.worker.models import (
@@ -160,7 +163,7 @@ def run_single_engine_scenario(
 
     # Warmup pass to eliminate initial compilation / JIT trace overhead
     _ = loaded.backend.generate(prompt="Warmup ping", max_new_tokens=2)
-    if device == "cuda" and torch.cuda.is_available():
+    if device == "cuda" and torch is not None and torch.cuda.is_available():
         torch.cuda.synchronize()
 
     ttft_samples: list[float] = []
@@ -175,7 +178,7 @@ def run_single_engine_scenario(
             prompt=prompt,
             max_new_tokens=target_new_tokens,
         )
-        if device == "cuda" and torch.cuda.is_available():
+        if device == "cuda" and torch is not None and torch.cuda.is_available():
             torch.cuda.synchronize()
         wall_ms = (time.perf_counter_ns() - t0) / 1_000_000
         ttft_samples.append(ttft_ms)
@@ -306,7 +309,7 @@ def execute_matrix_benchmark() -> dict[str, Any]:
 
                 # 2. Run on GPU (RTX 5070 Ti) if supported
                 gpu_metrics: dict[str, Any] | None = None
-                if cfg["target"] == "both" and torch.cuda.is_available():
+                if cfg["target"] == "both" and torch is not None and torch.cuda.is_available():
                     gpu_metrics = run_single_engine_scenario(
                         loader=gpu_loader,
                         model_id=model_id,

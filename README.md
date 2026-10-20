@@ -165,7 +165,9 @@ This project is built using disciplined agentic pair-programming governed by:
 
 - **Make**: Standard build automation tool
 - **Node.js 22+ & pnpm 12+**: Fastify control plane API runtime and workspace package manager
-- **Python 3.11+**: Base runtime for inference worker, validation scripts, and tests (`numpy`, `psutil`, `pyyaml`)
+- **Python 3.11+**: Inference worker, validation scripts, and automated test suites
+  - **Core / CI Tier** (`apps/worker`): Pure CPU baseline (`numpy`, `psutil`, `pyyaml`). Runs on any workstation without GPU hardware or PyTorch.
+  - **Hardware Acceleration Tier** (`apps/worker[gpu]`): Installed automatically via `make init` (or `pip install -e 'apps/worker[gpu]'`). Adds PyTorch (`torch>=2.1.0`) for CUDA GPU acceleration, TorchScript, and `torch.compile`.
 - **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ, OTel Collector, Prometheus, Grafana)
 - **Gitleaks**: Fast credential detection tool ([Installation guide](https://github.com/gitleaks/gitleaks))
 
@@ -243,6 +245,20 @@ This project is built using disciplined agentic pair-programming governed by:
      make validate-k8s
      ```
 
+6. **Reproducible Benchmarks & Provider Diagnostics**:
+   - Run the automated multi-engine category benchmark sweep across NumPy, PyTorch Eager, TorchScript, and `torch.compile`:
+     ```bash
+     make benchmark-engines
+     ```
+   - Run the concurrency, prompt-tier sweep, and Pareto cost curve harness:
+     ```bash
+     make benchmark-inference
+     ```
+   - Check local hardware detection and provider adapter readiness:
+     ```bash
+     make check-providers
+     ```
+
 ### Local Validation Gate
 
 Run the full local CI gate before submitting pull requests or committing code:
@@ -254,14 +270,17 @@ make ci
 
 Individual validation targets:
 ```bash
-make init                   # Initialize local Python .venv, pnpm, and workspace dependencies
+make init                   # Initialize local Python .venv, pnpm, and workspace dependencies (with GPU extras)
 make format-check           # Check line endings, trailing whitespace, and EOF newlines
 make lint                   # Check Python, JSON, and Mermaid diagram syntax
 make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
 make test                   # Run Python and TypeScript unit & integration test suites
 make validate-k8s           # Render Helm chart profiles and validate KEDA, Kueue, and Kyverno policies
-make validate-terraform     # Validate Terraform modules, least-privilege IAM, cost guardrails & ephemeral plan
+make validate-terraform     # Validate AWS Terraform modules, IAM policies, and cost guardrails
 make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
+make benchmark-engines      # Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)
+make benchmark-inference    # Run concurrency and prompt-tier inference benchmark
+make check-providers        # Run provider and hardware acceleration diagnostics
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)
 make install-hooks          # Configure local Git repository to run pre-commit hook
