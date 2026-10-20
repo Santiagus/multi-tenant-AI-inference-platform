@@ -4,7 +4,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help init format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform sync-models benchmark-engines benchmark-inference check-providers
+.PHONY: all help init format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers
 
 all: ci
 
@@ -25,6 +25,7 @@ help:
 	@echo "  make simulate-observability - Run live workload simulator to populate Grafana & Prometheus"
 	@echo "  make benchmark-engines      - Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)"
 	@echo "  make benchmark-inference    - Run concurrency and prompt-tier inference benchmark"
+	@echo "  make benchmark-production-reality - Run dynamic shape churn and cold scaling production test"
 	@echo "  make check-providers        - Run provider and hardware acceleration diagnostics"
 	@echo "  make install-hooks          - Configure local Git repository to run pre-commit hook"
 
@@ -83,6 +84,10 @@ benchmark-engines:
 benchmark-inference:
 	@echo "==> Running concurrency and prompt-tier inference benchmark..."
 	@$(PYTHON) benchmarks/run_inference_benchmark.py
+
+benchmark-production-reality:
+	@echo "==> Running production reality dynamic shape churn and cold scaling test..."
+	@$(PYTHON) benchmarks/run_production_reality_test.py
 
 check-providers:
 	@echo "==> Checking provider and hardware diagnostics..."

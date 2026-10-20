@@ -254,6 +254,10 @@ This project is built using disciplined agentic pair-programming governed by:
      ```bash
      make benchmark-inference
      ```
+   - Run the dynamic shape churn and cold scaling production reality test:
+     ```bash
+     make benchmark-production-reality
+     ```
    - Check local hardware detection and provider adapter readiness:
      ```bash
      make check-providers
@@ -280,6 +284,7 @@ make validate-terraform     # Validate AWS Terraform modules, IAM policies, and 
 make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
 make benchmark-engines      # Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)
 make benchmark-inference    # Run concurrency and prompt-tier inference benchmark
+make benchmark-production-reality # Run dynamic shape churn and cold scaling production test
 make check-providers        # Run provider and hardware acceleration diagnostics
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)
