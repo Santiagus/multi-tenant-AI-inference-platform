@@ -4,7 +4,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help init format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers
+.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers
 
 all: ci
 
@@ -13,6 +13,7 @@ help:
 	@echo "  make init                   - Initialize local .venv, pnpm, and workspace dependencies"
 	@echo "  make sync-models            - Materialize all 12 domain-organized models in models/ and update manifest.json"
 	@echo "  make ci                     - Run complete local CI gate (format, lint, types, tests, scan, handoff)"
+	@echo "  make format                 - Automatically format Python code and organize imports (Ruff)"
 	@echo "  make format-check           - Check line endings, whitespace, and formatting standards"
 	@echo "  make lint                   - Run syntax and code quality checks (Python, JSON, Mermaid)"
 	@echo "  make validate-mermaid       - Validate Mermaid diagram syntax in Markdown documentation"
@@ -31,6 +32,11 @@ help:
 
 init:
 	@bash scripts/init_env.sh
+
+format:
+	@echo "==> Formatting code and organizing imports (Ruff)..."
+	@$(PYTHON) -m ruff format .
+	@$(PYTHON) -m ruff check --fix .
 
 sync-models:
 	@echo "==> Synchronizing domain-organized local AI model store (models/)..."
