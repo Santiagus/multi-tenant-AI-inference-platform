@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import platform
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np  # type: ignore[import-not-found]
+
 try:
     import torch  # type: ignore[import-not-found]
 except Exception:
@@ -148,9 +149,7 @@ def run_production_reality_for_engine(
 
     total_tokens_gen = sum(tokens_generated_list)
     total_steady_time_s = sum(steady_latencies) / 1000.0
-    effective_churn_tps = round(
-        sum(tokens_generated_list[1:]) / max(total_steady_time_s, 0.001), 1
-    )
+    effective_churn_tps = round(sum(tokens_generated_list[1:]) / max(total_steady_time_s, 0.001), 1)
 
     return {
         "engine_label": engine_name,
@@ -198,14 +197,18 @@ def execute_production_reality_benchmark() -> dict[str, Any]:
     results_by_model: dict[str, list[dict[str, Any]]] = {}
 
     print("=========================================================================================")
-    print(f"  Production Reality Inference Benchmark: Dynamic Shape Churn & Cold Scaling")
-    print(f"  Target Device: {device.upper()} | Non-uniform stream: {len(PRODUCTION_PROMPT_STREAM)} sequential requests")
+    print("  Production Reality Inference Benchmark: Dynamic Shape Churn & Cold Scaling")
+    print(
+        f"  Target Device: {device.upper()} | Non-uniform stream: {len(PRODUCTION_PROMPT_STREAM)} sequential requests"
+    )
     print("=========================================================================================")
 
     for mid in target_models:
         print(f"\nEvaluating Model: {mid}")
         print("-----------------------------------------------------------------------------------------")
-        print(f"{'Execution Engine':26} | {'Req 1 Cold (ms)':15} | {'Steady Avg (ms)':15} | {'TTFT p50 (ms)':13} | {'TTFT p99 (ms)':13} | {'Churn tok/s':11}")
+        print(
+            f"{'Execution Engine':26} | {'Req 1 Cold (ms)':15} | {'Steady Avg (ms)':15} | {'TTFT p50 (ms)':13} | {'TTFT p99 (ms)':13} | {'Churn tok/s':11}"
+        )
         print("-----------------------------------------------------------------------------------------")
 
         model_results: list[dict[str, Any]] = []
@@ -250,4 +253,3 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run Production Reality Benchmark")
     parser.parse_args()
     execute_production_reality_benchmark()
-

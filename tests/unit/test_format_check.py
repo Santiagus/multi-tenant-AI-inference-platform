@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.format_check import check_file_formatting
 
@@ -38,4 +38,3 @@ class TestFormatCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

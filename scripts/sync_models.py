@@ -23,10 +23,10 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
-from typing import Any
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 
@@ -192,15 +192,9 @@ def materialize_model_directory(
         "lm_head": rng.standard_normal((d_model, active_spec.vocab_size), dtype=np.float32) / scale_model,
     }
     for layer_idx in range(active_spec.num_layers):
-        tensors[f"layer_{layer_idx}_attn"] = (
-            rng.standard_normal((d_model, d_model), dtype=np.float32) / scale_model
-        )
-        tensors[f"layer_{layer_idx}_ffn_up"] = (
-            rng.standard_normal((d_model, d_ffn), dtype=np.float32) / scale_model
-        )
-        tensors[f"layer_{layer_idx}_ffn_down"] = (
-            rng.standard_normal((d_ffn, d_model), dtype=np.float32) / scale_ffn
-        )
+        tensors[f"layer_{layer_idx}_attn"] = rng.standard_normal((d_model, d_model), dtype=np.float32) / scale_model
+        tensors[f"layer_{layer_idx}_ffn_up"] = rng.standard_normal((d_model, d_ffn), dtype=np.float32) / scale_model
+        tensors[f"layer_{layer_idx}_ffn_down"] = rng.standard_normal((d_ffn, d_model), dtype=np.float32) / scale_ffn
 
     weights_path = model_dir / "weights.npz"
     savez_fn: Any = np.savez

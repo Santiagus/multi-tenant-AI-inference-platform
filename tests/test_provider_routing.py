@@ -38,7 +38,10 @@ class TestDeterministicProviderRouter(unittest.TestCase):
         )
         decision = self.router.evaluate(workload, capacity)
         self.assertEqual(decision.selected_provider, "local_pytorch")
-        self.assertEqual(decision.decisionCode if hasattr(decision, "decisionCode") else decision.decision_code, "LOCAL_CAPACITY_OPTIMAL")
+        self.assertEqual(
+            decision.decisionCode if hasattr(decision, "decisionCode") else decision.decision_code,
+            "LOCAL_CAPACITY_OPTIMAL",
+        )
         self.assertIn("local VRAM available", decision.explanation)
         self.assertFalse(decision.slo_risk_detected)
         self.assertFalse(decision.local_queue_saturated)
@@ -64,9 +67,7 @@ class TestDeterministicProviderRouter(unittest.TestCase):
         )
         economics = EconomicsConstraints(target_gross_margin=0.40)
 
-        decision = self.router.evaluate(
-            workload, capacity, slo, tenant_policy, economics
-        )
+        decision = self.router.evaluate(workload, capacity, slo, tenant_policy, economics)
 
         self.assertEqual(decision.selected_provider, "runpod")
         self.assertEqual(decision.decision_code, "SLO_RISK_SPILLOVER_EXTERNAL_GPU")
@@ -138,9 +139,7 @@ class TestDeterministicProviderRouter(unittest.TestCase):
             target_gross_margin=0.60,
             allow_margin_degradation_for_slo=False,
         )
-        decision = self.router.evaluate(
-            workload, capacity, tenant_policy=tenant_policy, economics=economics
-        )
+        decision = self.router.evaluate(workload, capacity, tenant_policy=tenant_policy, economics=economics)
         self.assertEqual(decision.selected_provider, "local_pytorch")
         self.assertEqual(decision.decision_code, "LOCAL_QUEUE_RETAIN_MARGIN_PROTECTION")
         self.assertIn("retain on local queue", decision.explanation)
@@ -191,4 +190,3 @@ class TestDeterministicProviderRouter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

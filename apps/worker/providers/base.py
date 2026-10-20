@@ -26,4 +26,3 @@ class InferenceProvider(ABC):
     @abstractmethod
     async def estimate_cost(self, request: InferenceRequest) -> int:
         """Return projected cost in microcents (1/10,000 cent) before dispatch."""
-

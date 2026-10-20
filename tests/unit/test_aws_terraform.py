@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 import subprocess
-from typing import Any
 import unittest
+from pathlib import Path
+from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 
@@ -223,10 +223,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
                 "eks-cluster",
             )
         }
-        envs_map = {
-            name: parse_terraform_directory(self.envs_dir / name)
-            for name in ("ephemeral", "production")
-        }
+        envs_map = {name: parse_terraform_directory(self.envs_dir / name) for name in ("ephemeral", "production")}
         self.assertEqual(validate_cost_guardrails_and_environments(modules_map, envs_map), [])
 
         bad_envs = copy.deepcopy(envs_map)
@@ -244,9 +241,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual(default_plan["cost_estimation"]["hourly_fixed_usd"], 0.0)
         self.assertTrue(default_plan["cost_estimation"]["within_budget_guardrail"])
 
-        eks_plan = generate_plan_summary(
-            "ephemeral", enable_eks=True, enable_gpu_node_group=True
-        )
+        eks_plan = generate_plan_summary("ephemeral", enable_eks=True, enable_gpu_node_group=True)
         self.assertEqual(eks_plan["resource_count"], 21)
         self.assertEqual(eks_plan["cost_estimation"]["hourly_fixed_usd"], 0.133)
 
@@ -315,7 +310,9 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertGreater(out1["asset_inspection"]["byte_size"], 100)
         self.assertEqual(out1["backend_name"], "pytorch_torchscript_cpu")
         self.assertFalse(out1["flyte_stage1_cache_hit"])
-        self.assertIn("cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/result.json", out1["cloudfront_artifact_url"])
+        self.assertIn(
+            "cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/result.json", out1["cloudfront_artifact_url"]
+        )
         self.assertIn("cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/output.mp4", out1["cloudfront_media_url"])
         self.assertEqual(out1["usage"]["frames_generated"], 96)
         self.assertGreater(out1["usage"]["total_tokens"], 96 * 16)

@@ -19,8 +19,8 @@ import argparse
 import asyncio
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -250,4 +250,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -9,11 +9,11 @@ where heterogeneous stages declare distinct CPU and GPU container resource profi
 
 from __future__ import annotations
 
+import hashlib
+import struct
 from collections.abc import Callable
 from dataclasses import dataclass, field
-import hashlib
 from pathlib import Path
-import struct
 from typing import Any, TypeVar
 
 from apps.worker.models import ModelLoader, tokenize_prompt
@@ -35,9 +35,7 @@ def parse_jpeg_dimensions(raw: bytes) -> tuple[int | None, int | None]:
             idx += 2
             continue
         length = struct.unpack(">H", raw[idx + 2 : idx + 4])[0]
-        if marker in (
-            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF
-        ):
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
             height, width = struct.unpack(">HH", raw[idx + 5 : idx + 9])
             return width, height
         idx += 2 + length
@@ -414,7 +412,6 @@ def multi_stage_inference_workflow(
     )
     gpu_out = run_torchscript_gpu_inference(preprocessed=prep, loader=loader)
     return package_s3_cloudfront_artifact(inference_result=gpu_out)
-
 
 
 def get_flyte_pipeline_task_specs() -> list[FlyteTaskSpec]:

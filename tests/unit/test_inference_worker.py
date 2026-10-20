@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import redirect_stdout
 import io
 import json
-from pathlib import Path
 import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-import unittest
 
 import numpy as np  # type: ignore[import-not-found]
 
@@ -38,9 +38,11 @@ from apps.worker.providers.local import LocalPyTorchAdapter
 from apps.worker.telemetry import TelemetryCollector
 from benchmarks.run_inference_benchmark import (
     compute_percentile,
-    main as benchmark_main,
     render_markdown_report,
     run_benchmark_suite,
+)
+from benchmarks.run_inference_benchmark import (
+    main as benchmark_main,
 )
 
 
@@ -466,9 +468,7 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
                 self.assertTrue((out_dir / run_entry["report_json_path"]).is_file())
                 self.assertTrue((out_dir / run_entry["report_md_path"]).is_file())
 
-            history_lines = [
-                line for line in history_file.read_text(encoding="utf-8").splitlines() if line.strip()
-            ]
+            history_lines = [line for line in history_file.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(len(history_lines), 2)
 
             md_text = render_markdown_report(report)
@@ -529,14 +529,10 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
         # 3. Execute Text-to-Image and Media (Photo & Video) fixtures across NumPy and PyTorch backends
         repo_root = Path(__file__).resolve().parents[2]
         t2i_fixtures = json.loads(
-            (repo_root / "tests" / "fixtures" / "text" / "prompts_text_to_image.json").read_text(
-                encoding="utf-8"
-            )
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_text_to_image.json").read_text(encoding="utf-8")
         )
         media_fixtures = json.loads(
-            (repo_root / "tests" / "fixtures" / "text" / "prompts_media_inference.json").read_text(
-                encoding="utf-8"
-            )
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_media_inference.json").read_text(encoding="utf-8")
         )
 
         fake_torch = _FakeTorchModule(cuda_available=True)
@@ -549,9 +545,7 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
             prompt = item["prompt"]
             for loader in (numpy_loader, pytorch_loader):
                 loaded, _ = loader.load(model_id)
-                out_text, tok_in, tok_out, ttft_ms, total_ms = loaded.backend.generate(
-                    prompt=prompt, max_new_tokens=6
-                )
+                out_text, tok_in, tok_out, ttft_ms, total_ms = loaded.backend.generate(prompt=prompt, max_new_tokens=6)
                 self.assertIn(f"[{model_id}]", out_text)
                 self.assertGreater(tok_in, 0)
                 self.assertEqual(tok_out, 6)
@@ -643,5 +637,3 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

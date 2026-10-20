@@ -10,8 +10,8 @@ Validates the full bimodal workload execution lifecycle across every fixture:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from apps.worker.flyte_workflow import (
     clear_flyte_task_cache,
@@ -63,7 +63,9 @@ class TestTwoPathArchitecture(unittest.TestCase):
         }
 
         # Ensure all fixtures on disk match the expected catalog
-        disk_files = {p.name: p for p in self.media_dir.glob("*") if p.is_file() and p.suffix in (".jpg", ".png", ".mp4")}
+        disk_files = {
+            p.name: p for p in self.media_dir.glob("*") if p.is_file() and p.suffix in (".jpg", ".png", ".mp4")
+        }
         self.assertEqual(set(disk_files.keys()), set(expected_fixtures.keys()))
 
         for filename, expected in expected_fixtures.items():

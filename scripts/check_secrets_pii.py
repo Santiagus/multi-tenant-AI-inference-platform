@@ -8,11 +8,11 @@ private keys, and sensitive PII patterns across tracked source files.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 # High-risk credential and PII regex patterns
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -156,4 +156,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

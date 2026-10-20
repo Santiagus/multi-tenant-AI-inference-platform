@@ -27,9 +27,7 @@ class SageMakerAdapter(InferenceProvider):
         mock_mode: bool | None = None,
         healthy: bool = True,
     ) -> None:
-        self._endpoint_name = endpoint_name or os.environ.get(
-            "SAGEMAKER_ENDPOINT_NAME", "sagemaker-llama3-endpoint"
-        )
+        self._endpoint_name = endpoint_name or os.environ.get("SAGEMAKER_ENDPOINT_NAME", "sagemaker-llama3-endpoint")
         self._aws_region = aws_region or os.environ.get("AWS_REGION", "us-east-1")
         has_aws_creds = bool(
             os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
@@ -122,10 +120,7 @@ class SageMakerAdapter(InferenceProvider):
         cost_microcents = total_tokens * 20
         tokens_per_sec = round((tokens_out / max(mock_compute_ms, 0.001)) * 1000.0, 2)
 
-        output_text = (
-            f"AWS SageMaker [ml.g5.2xlarge]: Inference result for model '{request.model_id}': "
-            f"{prompt[:100]}"
-        )
+        output_text = f"AWS SageMaker [ml.g5.2xlarge]: Inference result for model '{request.model_id}': {prompt[:100]}"
 
         telemetry = HardwareTelemetry(
             device_type="cuda",

@@ -115,10 +115,7 @@ class BedrockAdapter(InferenceProvider):
         cost_microcents = (prompt_tokens * 15) + (tokens_out * 75)
         tokens_per_sec = round((tokens_out / max(mock_compute_ms, 0.001)) * 1000.0, 2)
 
-        output_text = (
-            f"AWS Bedrock [Converse API]: Generated response for model '{request.model_id}': "
-            f"{prompt[:100]}"
-        )
+        output_text = f"AWS Bedrock [Converse API]: Generated response for model '{request.model_id}': {prompt[:100]}"
 
         telemetry = HardwareTelemetry(
             device_type="cloud_managed",

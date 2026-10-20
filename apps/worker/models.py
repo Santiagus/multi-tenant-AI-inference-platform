@@ -9,11 +9,11 @@ Provides a unified abstraction over:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import enum
 import hashlib
-from pathlib import Path
 import time
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np  # type: ignore[import-not-found]
@@ -92,7 +92,6 @@ class ModelSpec:
     def resolve_local_dir(self, store_root: Path | None = None) -> Path:
         root = store_root if store_root is not None else (Path(__file__).resolve().parents[2] / "models")
         return root / self.domain_folder / self.model_dir_slug
-
 
 
 # Fast CI / Unit-Test Registry (<10ms CPU execution while preserving exact modality and FFN ratios)
@@ -858,28 +857,22 @@ class NumpyCpuModelBackend:
             elem_size = 1.0 if q_bits == 8 else 0.5
 
             self._attn_layers = [
-                rng.integers(q_min, q_max, size=(d_model, d_model), dtype=np.int8)
-                for _ in range(spec.num_layers)
+                rng.integers(q_min, q_max, size=(d_model, d_model), dtype=np.int8) for _ in range(spec.num_layers)
             ]
             self._ffn_up_layers = [
-                rng.integers(q_min, q_max, size=(d_model, d_ffn), dtype=np.int8)
-                for _ in range(spec.num_layers)
+                rng.integers(q_min, q_max, size=(d_model, d_ffn), dtype=np.int8) for _ in range(spec.num_layers)
             ]
             self._ffn_down_layers = [
-                rng.integers(q_min, q_max, size=(d_ffn, d_model), dtype=np.int8)
-                for _ in range(spec.num_layers)
+                rng.integers(q_min, q_max, size=(d_ffn, d_model), dtype=np.int8) for _ in range(spec.num_layers)
             ]
             self._attn_scales = [
-                rng.standard_normal((d_model,), dtype=np.float32) * 0.05 / scale_model
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_model,), dtype=np.float32) * 0.05 / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_up_scales = [
-                rng.standard_normal((d_ffn,), dtype=np.float32) * 0.05 / scale_model
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_ffn,), dtype=np.float32) * 0.05 / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_down_scales = [
-                rng.standard_normal((d_model,), dtype=np.float32) * 0.05 / scale_ffn
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_model,), dtype=np.float32) * 0.05 / scale_ffn for _ in range(spec.num_layers)
             ]
             self._footprint_mb = (
                 spec.estimated_vram_mb
@@ -888,16 +881,13 @@ class NumpyCpuModelBackend:
             )
         else:
             self._attn_layers = [
-                rng.standard_normal((d_model, d_model), dtype=np.float32) / scale_model
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_model, d_model), dtype=np.float32) / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_up_layers = [
-                rng.standard_normal((d_model, d_ffn), dtype=np.float32) / scale_model
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_model, d_ffn), dtype=np.float32) / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_down_layers = [
-                rng.standard_normal((d_ffn, d_model), dtype=np.float32) / scale_ffn
-                for _ in range(spec.num_layers)
+                rng.standard_normal((d_ffn, d_model), dtype=np.float32) / scale_ffn for _ in range(spec.num_layers)
             ]
             layer_bytes = sum(w.nbytes for w in self._attn_layers) + sum(
                 u.nbytes + d.nbytes for u, d in zip(self._ffn_up_layers, self._ffn_down_layers)
@@ -905,9 +895,7 @@ class NumpyCpuModelBackend:
             total_bytes = self._embeddings.nbytes + layer_bytes
             self._footprint_mb = round(total_bytes / (1024 * 1024), 4)
 
-        self._lm_head = (
-            rng.standard_normal((d_model, spec.vocab_size), dtype=np.float32) / scale_model
-        )
+        self._lm_head = rng.standard_normal((d_model, spec.vocab_size), dtype=np.float32) / scale_model
 
     @property
     def backend_name(self) -> str:
@@ -1039,17 +1027,11 @@ class PyTorchModelBackend:
         scale_model = float(d_model) ** 0.5
         scale_ffn = float(d_ffn) ** 0.5
 
-        self._embeddings = (
-            self._torch.randn((spec.vocab_size, d_model), device=device) * 0.08
-        )
+        self._embeddings = self._torch.randn((spec.vocab_size, d_model), device=device) * 0.08
 
         elem_size = 4
         per_layer_elems = (d_model * d_model) + (2 * d_model * d_ffn)
-        total_elems = (
-            spec.vocab_size * d_model
-            + spec.num_layers * per_layer_elems
-            + d_model * spec.vocab_size
-        )
+        total_elems = spec.vocab_size * d_model + spec.num_layers * per_layer_elems + d_model * spec.vocab_size
 
         if self._is_quantized:
             q_bits = 8 if spec.quantization == "int8" else 4
@@ -1072,29 +1054,23 @@ class PyTorchModelBackend:
                 ]
             else:
                 self._attn_layers = [
-                    self._torch.randn((d_model, d_model), device=device) / scale_model
-                    for _ in range(spec.num_layers)
+                    self._torch.randn((d_model, d_model), device=device) / scale_model for _ in range(spec.num_layers)
                 ]
                 self._ffn_up_layers = [
-                    self._torch.randn((d_model, d_ffn), device=device) / scale_model
-                    for _ in range(spec.num_layers)
+                    self._torch.randn((d_model, d_ffn), device=device) / scale_model for _ in range(spec.num_layers)
                 ]
                 self._ffn_down_layers = [
-                    self._torch.randn((d_ffn, d_model), device=device) / scale_ffn
-                    for _ in range(spec.num_layers)
+                    self._torch.randn((d_ffn, d_model), device=device) / scale_ffn for _ in range(spec.num_layers)
                 ]
 
             self._attn_scales = [
-                self._torch.randn((d_model,), device=device) * 0.05 / scale_model
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_model,), device=device) * 0.05 / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_up_scales = [
-                self._torch.randn((d_ffn,), device=device) * 0.05 / scale_model
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_ffn,), device=device) * 0.05 / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_down_scales = [
-                self._torch.randn((d_model,), device=device) * 0.05 / scale_ffn
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_model,), device=device) * 0.05 / scale_ffn for _ in range(spec.num_layers)
             ]
             self._footprint_mb = (
                 spec.estimated_vram_mb
@@ -1103,22 +1079,17 @@ class PyTorchModelBackend:
             )
         else:
             self._attn_layers = [
-                self._torch.randn((d_model, d_model), device=device) / scale_model
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_model, d_model), device=device) / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_up_layers = [
-                self._torch.randn((d_model, d_ffn), device=device) / scale_model
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_model, d_ffn), device=device) / scale_model for _ in range(spec.num_layers)
             ]
             self._ffn_down_layers = [
-                self._torch.randn((d_ffn, d_model), device=device) / scale_ffn
-                for _ in range(spec.num_layers)
+                self._torch.randn((d_ffn, d_model), device=device) / scale_ffn for _ in range(spec.num_layers)
             ]
             self._footprint_mb = round((total_elems * elem_size) / (1024 * 1024), 4)
 
-        self._lm_head = (
-            self._torch.randn((d_model, spec.vocab_size), device=device) / scale_model
-        )
+        self._lm_head = self._torch.randn((d_model, spec.vocab_size), device=device) / scale_model
 
         # 1. TorchScript JIT Tracing
         if self._engine == ExecutionEngine.TORCHSCRIPT:
@@ -1259,9 +1230,7 @@ class PyTorchModelBackend:
                 context_ids = list(input_ids)
                 for step in range(target_tokens):
                     step_ids = build_step_token_ids(self._spec, context_ids, step)
-                    idx_tensor = self._torch.tensor(
-                        step_ids, dtype=self._torch.long, device=self._device
-                    )
+                    idx_tensor = self._torch.tensor(step_ids, dtype=self._torch.long, device=self._device)
                     logits = forward_fn(idx_tensor) / temp
                     next_token = int(self._torch.argmax(logits).item())
                     generated.append(next_token)
@@ -1398,9 +1367,7 @@ class ModelLoader:
         Returns:
             (LoadedModel, is_warm_cache_hit)
         """
-        effective_auto_upgrade = (
-            allow_auto_upgrade if allow_auto_upgrade is not None else self._allow_auto_upgrade
-        )
+        effective_auto_upgrade = allow_auto_upgrade if allow_auto_upgrade is not None else self._allow_auto_upgrade
 
         requested_engine_enum: ExecutionEngine
         if isinstance(engine, ExecutionEngine):

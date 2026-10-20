@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import NamedTuple
 
 IGNORE_DIRS = {
@@ -159,7 +159,7 @@ def validate_flowchart_line(line: str, line_no: int) -> list[str]:
     outside_quotes = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', line)
 
     # Disallow naked ' -> ' (allowing '-->', '-.->', '==>')
-    if re.search(r'(?<![-.=])\s*->\s*(?!>)', outside_quotes):
+    if re.search(r"(?<![-.=])\s*->\s*(?!>)", outside_quotes):
         issues.append(
             f"Line {line_no}: Invalid arrow '->' in '{stripped}'; Mermaid flowcharts require '-->' or '==>' or '-.->'"
         )
@@ -219,9 +219,7 @@ def validate_mermaid_block(block: MermaidBlock) -> list[str]:
     diagram_type = header_parts[0].lower()
 
     if diagram_type not in VALID_DIAGRAM_TYPES:
-        issues.append(
-            f"{file_path}:{header_line_no}: Unknown or unsupported Mermaid diagram type '{header_parts[0]}'"
-        )
+        issues.append(f"{file_path}:{header_line_no}: Unknown or unsupported Mermaid diagram type '{header_parts[0]}'")
         return issues
 
     # Validate flowchart/graph specific rules
@@ -235,7 +233,7 @@ def validate_mermaid_block(block: MermaidBlock) -> list[str]:
                 )
 
         subgraph_depth = 0
-        for line_no, line in non_empty[header_idx + 1:]:
+        for line_no, line in non_empty[header_idx + 1 :]:
             stripped = line.strip()
             if stripped.startswith("subgraph"):
                 subgraph_depth += 1
@@ -297,10 +295,7 @@ def validate_mermaid_in_repo(repo_root: Path) -> tuple[int, list[str]]:
     all_issues: list[str] = []
     total_blocks = 0
 
-    md_files = [
-        p for p in repo_root.rglob("*.md")
-        if not any(d in p.parts for d in IGNORE_DIRS)
-    ]
+    md_files = [p for p in repo_root.rglob("*.md") if not any(d in p.parts for d in IGNORE_DIRS)]
 
     all_blocks: list[MermaidBlock] = []
     for md_file in md_files:
@@ -348,4 +343,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

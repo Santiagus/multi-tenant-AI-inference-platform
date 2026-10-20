@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import platform
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +33,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np  # type: ignore[import-not-found]
+
 try:
     import torch  # type: ignore[import-not-found]
 except Exception:
@@ -197,11 +198,7 @@ def run_single_engine_scenario(
     p95_ttft_ms = round(sorted_ttft[int(len(sorted_ttft) * 0.95)], 3)
     mean_latency_ms = round(sum(latency_samples) / len(latency_samples), 3)
     mean_tpot_ms = round(sum(tpot_samples) / len(tpot_samples), 3)
-    tokens_per_sec = (
-        round(tokens_generated / (mean_latency_ms / 1000.0), 1)
-        if mean_latency_ms > 0
-        else 0.0
-    )
+    tokens_per_sec = round(tokens_generated / (mean_latency_ms / 1000.0), 1) if mean_latency_ms > 0 else 0.0
 
     cost_microcents = (prompt_tokens + tokens_generated) * loaded.spec.cost_microcents_per_token
     cost_usd_per_1m_tokens = round((loaded.spec.cost_microcents_per_token * 1_000_000) / 100_000_000, 4)
@@ -281,9 +278,9 @@ def execute_matrix_benchmark() -> dict[str, Any]:
     gpu_loader = ModelLoader(torch_module=torch, prefer_device="cuda", tier="benchmark")
 
     for model_id in all_models:
-        print(f"\n=======================================================")
+        print("\n=======================================================")
         print(f"Benchmarking Reference Model: {model_id}")
-        print(f"=======================================================")
+        print("=======================================================")
 
         for s_key, s_data in scenarios.items():
             print(f"  Scenario: {s_data['short_name']}")
@@ -323,25 +320,29 @@ def execute_matrix_benchmark() -> dict[str, Any]:
                     gpu_metrics["engine_label"] = label
                     gpu_metrics["device_name"] = "NVIDIA GeForce RTX 5070 Ti"
 
-                results_by_model[model_id].append({
-                    "scenario_key": s_key,
-                    "scenario_name": s_data["name"],
-                    "scenario_short_name": s_data["short_name"],
-                    "engine_label": label,
-                    "engine_requested": engine_name,
-                    "auto_upgrade": auto_upgrade,
-                    "input_tokens": cpu_metrics["prompt_tokens"],
-                    "output_tokens": cpu_metrics["generated_tokens"],
-                    "cpu_result": cpu_metrics,
-                    "gpu_result": gpu_metrics,
-                })
+                results_by_model[model_id].append(
+                    {
+                        "scenario_key": s_key,
+                        "scenario_name": s_data["name"],
+                        "scenario_short_name": s_data["short_name"],
+                        "engine_label": label,
+                        "engine_requested": engine_name,
+                        "auto_upgrade": auto_upgrade,
+                        "input_tokens": cpu_metrics["prompt_tokens"],
+                        "output_tokens": cpu_metrics["generated_tokens"],
+                        "cpu_result": cpu_metrics,
+                        "gpu_result": gpu_metrics,
+                    }
+                )
 
                 gpu_str = (
                     f"GPU TTFT={gpu_metrics['ttft_p50_ms']}ms, {gpu_metrics['tokens_per_sec']} tok/s"
                     if gpu_metrics
                     else "GPU: N/A"
                 )
-                print(f"    [{label}] CPU TTFT={cpu_metrics['ttft_p50_ms']}ms, {cpu_metrics['tokens_per_sec']} tok/s | {gpu_str}")
+                print(
+                    f"    [{label}] CPU TTFT={cpu_metrics['ttft_p50_ms']}ms, {cpu_metrics['tokens_per_sec']} tok/s | {gpu_str}"
+                )
 
     return {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -360,4 +361,3 @@ if __name__ == "__main__":
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(json.dumps(matrix, indent=2) + "\n", encoding="utf-8")
     print(f"\nBenchmark completed successfully! Wrote results to {out_file}.")
-

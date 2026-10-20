@@ -8,11 +8,11 @@ defined in .editorconfig. Also invokes ruff/prettier if available.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 IGNORE_DIRS = {
     ".git",
@@ -80,7 +80,9 @@ def check_file_formatting(path: Path) -> list[str]:
             abs_pattern = re.compile(r"(?:file://)?/(?:home|Users)/[a-zA-Z0-9_-]+")
             for line_no, text_line in enumerate(text.splitlines(), start=1):
                 if abs_pattern.search(text_line):
-                    issues.append(f"{path}:{line_no}: Machine-specific absolute path detected (use repo-relative paths)")
+                    issues.append(
+                        f"{path}:{line_no}: Machine-specific absolute path detected (use repo-relative paths)"
+                    )
         except UnicodeDecodeError:
             pass
 
@@ -133,4 +135,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

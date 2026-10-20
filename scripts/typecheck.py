@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import ast
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 IGNORE_DIRS = {
     ".git",
@@ -120,4 +120,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

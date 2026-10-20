@@ -22,9 +22,7 @@ class LocalPyTorchAdapter(InferenceProvider):
         telemetry_collector: TelemetryCollector | None = None,
     ) -> None:
         self._loader = model_loader if model_loader is not None else ModelLoader()
-        self._telemetry = (
-            telemetry_collector if telemetry_collector is not None else TelemetryCollector()
-        )
+        self._telemetry = telemetry_collector if telemetry_collector is not None else TelemetryCollector()
 
     @property
     def name(self) -> str:
@@ -111,7 +109,9 @@ class LocalPyTorchAdapter(InferenceProvider):
             temperature=temperature,
         )
 
-        is_cpu_backend = loaded.backend.backend_name.endswith("_cpu") or loaded.backend.backend_name == "numpy_cpu_fallback"
+        is_cpu_backend = (
+            loaded.backend.backend_name.endswith("_cpu") or loaded.backend.backend_name == "numpy_cpu_fallback"
+        )
         hw_telemetry = self._telemetry.capture_snapshot(
             active_backend=loaded.backend.backend_name,
             model_footprint_mb=loaded.backend.footprint_mb,
@@ -153,4 +153,3 @@ class LocalPyTorchAdapter(InferenceProvider):
                 "tier": 2 if (loaded.spec.quantization != "none" or tier == 2) else 1,
             },
         )
-

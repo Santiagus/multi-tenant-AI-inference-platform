@@ -9,8 +9,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 from apps.worker.artifacts import ArtifactHandler
@@ -58,9 +58,7 @@ class WorkerRuntime:
         try:
             request = InferenceRequest.from_dict(payload)
             routing_pref = str(
-                payload.get("routing_preference")
-                or request.parameters.get("routing_preference")
-                or ""
+                payload.get("routing_preference") or request.parameters.get("routing_preference") or ""
             ).lower()
             if routing_pref:
                 request.parameters.setdefault("routing_preference", routing_pref)
@@ -87,9 +85,7 @@ class WorkerRuntime:
 
             result = await provider.predict(request)
             mode = str(
-                result.metadata.get(
-                    "execution_mode", "live" if result.provider_name == "local_pytorch" else "mock"
-                )
+                result.metadata.get("execution_mode", "live" if result.provider_name == "local_pytorch" else "mock")
             )
             is_mocked = bool(result.metadata.get("is_mocked", mode == "mock"))
             sys.stderr.write(

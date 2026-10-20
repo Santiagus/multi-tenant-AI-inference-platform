@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import py_compile
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 try:
     from scripts.validate_mermaid import validate_mermaid_in_repo
@@ -121,4 +121,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

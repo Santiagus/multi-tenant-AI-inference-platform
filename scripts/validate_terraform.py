@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 REQUIRED_MODULES = (
@@ -143,7 +143,7 @@ def extract_hcl_blocks(text: str) -> list[dict[str, Any]]:
     cleaned = strip_hcl_comments(text)
     blocks: list[dict[str, Any]] = []
     header_pattern = re.compile(
-        r'^\s*(terraform|provider|variable|resource|module|output|locals)'
+        r"^\s*(terraform|provider|variable|resource|module|output|locals)"
         r'(?:\s+"([^"]+)")?(?:\s+"([^"]+)")?\s*\{',
         re.MULTILINE,
     )
@@ -229,7 +229,9 @@ def validate_module_structure(module_name: str, parsed: dict[str, Any]) -> list[
     else:
         tf_body = tf_blocks[0]["body"]
         if "required_version" not in tf_body or "required_providers" not in tf_body:
-            errors.append(f"[module:{module_name}] `terraform` block must declare `required_version` and `required_providers`.")
+            errors.append(
+                f"[module:{module_name}] `terraform` block must declare `required_version` and `required_providers`."
+            )
 
     variables = [b for b in blocks if b["type"] == "variable"]
     for var_block in variables:
@@ -270,22 +272,24 @@ def validate_security_and_iam_policies(modules_map: dict[str, dict[str, Any]]) -
         if "aws_s3_bucket_server_side_encryption_configuration" not in s3_text:
             errors.append("[security:s3-artifacts] Missing S3 server-side encryption configuration.")
         if "aws_s3_bucket_lifecycle_configuration" not in s3_text:
-            errors.append("[security:s3-artifacts] Missing S3 lifecycle expiration configuration for ephemeral cost control.")
+            errors.append(
+                "[security:s3-artifacts] Missing S3 lifecycle expiration configuration for ephemeral cost control."
+            )
         if "aws_cloudfront_origin_access_control" not in s3_text or "aws_cloudfront_distribution" not in s3_text:
             errors.append("[security:s3-artifacts] Missing CloudFront OAC and edge CDN distribution.")
 
     # 2. SQS Security & Redrive invariants
     sqs_mod = modules_map.get("sqs-async-queue")
     if sqs_mod:
-        sqs_blocks = [
-            b for b in sqs_mod["blocks"] if b["type"] == "resource" and b["label_1"] == "aws_sqs_queue"
-        ]
+        sqs_blocks = [b for b in sqs_mod["blocks"] if b["type"] == "resource" and b["label_1"] == "aws_sqs_queue"]
         if len(sqs_blocks) < 2:
             errors.append("[security:sqs-async-queue] Expected both `main` and `dlq` aws_sqs_queue resources.")
         for sqs_block in sqs_blocks:
             q_label = sqs_block["label_2"]
             if "sqs_managed_sse_enabled" not in sqs_block["body"] or "true" not in sqs_block["body"]:
-                errors.append(f"[security:sqs-async-queue] Queue '{q_label}' must enable `sqs_managed_sse_enabled = true`.")
+                errors.append(
+                    f"[security:sqs-async-queue] Queue '{q_label}' must enable `sqs_managed_sse_enabled = true`."
+                )
         if "deadLetterTargetArn" not in sqs_mod["text"] or "maxReceiveCount" not in sqs_mod["text"]:
             errors.append("[security:sqs-async-queue] Primary SQS queue must configure DLQ `redrive_policy`.")
 
@@ -293,9 +297,13 @@ def validate_security_and_iam_policies(modules_map: dict[str, dict[str, Any]]) -
     ecs_mod = modules_map.get("ecs-fargate-api")
     if ecs_mod:
         ecs_text = ecs_mod["text"]
-        if "aws_ecs_cluster" not in ecs_text or "aws_ecs_task_definition" not in ecs_text or "aws_ecs_service" not in ecs_text:
+        if (
+            "aws_ecs_cluster" not in ecs_text
+            or "aws_ecs_task_definition" not in ecs_text
+            or "aws_ecs_service" not in ecs_text
+        ):
             errors.append("[security:ecs-fargate-api] Missing ECS Fargate cluster, task definition, or service.")
-        if 'assign_public_ip = false' not in ecs_text:
+        if "assign_public_ip = false" not in ecs_text:
             errors.append("[security:ecs-fargate-api] ECS Fargate service must set `assign_public_ip = false`.")
 
     kin_mod = modules_map.get("kinesis-event-stream")
@@ -304,18 +312,26 @@ def validate_security_and_iam_policies(modules_map: dict[str, dict[str, Any]]) -
         if 'encryption_type  = "KMS"' not in kin_text:
             errors.append('[security:kinesis-event-stream] Kinesis stream must enforce `encryption_type = "KMS"`.')
         if "aws_lambda_function" not in kin_text or "aws_lambda_event_source_mapping" not in kin_text:
-            errors.append("[security:kinesis-event-stream] Missing AWS Lambda metering consumer or event source mapping.")
+            errors.append(
+                "[security:kinesis-event-stream] Missing AWS Lambda metering consumer or event source mapping."
+            )
 
     # 4. IAM Least-Privilege & OIDC Federation invariants
     iam_mod = modules_map.get("iam-least-privilege")
     if iam_mod:
         iam_text = iam_mod["text"]
         if "aws_iam_access_key" in iam_text:
-            errors.append("[security:iam-least-privilege] Static `aws_iam_access_key` resources are prohibited; use OIDC/IRSA.")
+            errors.append(
+                "[security:iam-least-privilege] Static `aws_iam_access_key` resources are prohibited; use OIDC/IRSA."
+            )
         if "https://token.actions.githubusercontent.com" not in iam_text:
-            errors.append("[security:iam-least-privilege] Missing GitHub Actions OIDC provider URL (`https://token.actions.githubusercontent.com`).")
+            errors.append(
+                "[security:iam-least-privilege] Missing GitHub Actions OIDC provider URL (`https://token.actions.githubusercontent.com`)."
+            )
         if "sts:AssumeRoleWithWebIdentity" not in iam_text:
-            errors.append("[security:iam-least-privilege] IAM roles must use short-lived `sts:AssumeRoleWithWebIdentity`.")
+            errors.append(
+                "[security:iam-least-privilege] IAM roles must use short-lived `sts:AssumeRoleWithWebIdentity`."
+            )
 
         for wildcard in PROHIBITED_IAM_WILDCARDS:
             if wildcard in iam_text:
@@ -344,7 +360,9 @@ def validate_cost_guardrails_and_environments(
         if "aws_budgets_budget" not in cost_text:
             errors.append("[cost:cost-guardrails] Missing `aws_budgets_budget` resource.")
         if "FORECASTED" not in cost_text or "ACTUAL" not in cost_text:
-            errors.append("[cost:cost-guardrails] Budget must alert on both `FORECASTED` (80%) and `ACTUAL` (100%) thresholds.")
+            errors.append(
+                "[cost:cost-guardrails] Budget must alert on both `FORECASTED` (80%) and `ACTUAL` (100%) thresholds."
+            )
 
     eks_mod = modules_map.get("eks-cluster")
     if eks_mod:
@@ -358,16 +376,16 @@ def validate_cost_guardrails_and_environments(
         else:
             gpu_body = eks_blocks[0]["body"]
             if "desired_size = 0" not in gpu_body:
-                errors.append("[cost:eks-cluster] GPU node group must set `desired_size = 0` to prevent idle GPU spend.")
+                errors.append(
+                    "[cost:eks-cluster] GPU node group must set `desired_size = 0` to prevent idle GPU spend."
+                )
 
     # Ephemeral environment checks
     ephemeral = envs_map.get("ephemeral")
     if ephemeral:
         errors.extend(ephemeral["fmt_errors"])
         eph_text = ephemeral["text"]
-        var_blocks = {
-            b["label_1"]: b["body"] for b in ephemeral["blocks"] if b["type"] == "variable"
-        }
+        var_blocks = {b["label_1"]: b["body"] for b in ephemeral["blocks"] if b["type"] == "variable"}
         enable_eks_body = var_blocks.get("enable_eks", "")
         if "default     = false" not in enable_eks_body:
             errors.append(
@@ -375,9 +393,7 @@ def validate_cost_guardrails_and_environments(
             )
         enable_gpu_body = var_blocks.get("enable_gpu_node_group", "")
         if "default     = false" not in enable_gpu_body:
-            errors.append(
-                "[cost:ephemeral] `enable_gpu_node_group` must default to `false` in ephemeral environment."
-            )
+            errors.append("[cost:ephemeral] `enable_gpu_node_group` must default to `false` in ephemeral environment.")
         if "force_destroy            = true" not in eph_text:
             errors.append(
                 "[cost:ephemeral] Ephemeral S3 artifact bucket must set `force_destroy = true` for clean teardown."
@@ -395,7 +411,9 @@ def validate_cost_guardrails_and_environments(
         if "force_destroy            = false" not in prod_text:
             errors.append("[cost:production] Production S3 artifact bucket must set `force_destroy = false`.")
         if "gpu_min_nodes         = 0" not in prod_text:
-            errors.append("[cost:production] Production GPU node group must keep `gpu_min_nodes = 0` (scale-to-zero when idle).")
+            errors.append(
+                "[cost:production] Production GPU node group must keep `gpu_min_nodes = 0` (scale-to-zero when idle)."
+            )
 
     return errors
 
@@ -571,14 +589,10 @@ def generate_plan_summary(
                 }
             )
 
-    total_hourly_usd = round(
-        sum(float(r["estimated_fixed_hourly_usd"]) for r in planned_resources), 4
-    )
+    total_hourly_usd = round(sum(float(r["estimated_fixed_hourly_usd"]) for r in planned_resources), 4)
     budget_limit_usd = 25.0 if is_ephemeral else 250.0
     ttl_hours = 4 if is_ephemeral else 0
-    estimated_run_cost_usd = round(
-        total_hourly_usd * (ttl_hours if ttl_hours > 0 else 730), 2
-    )
+    estimated_run_cost_usd = round(total_hourly_usd * (ttl_hours if ttl_hours > 0 else 730), 2)
 
     return {
         "environment": environment,

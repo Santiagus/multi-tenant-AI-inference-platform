@@ -17,16 +17,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
@@ -48,9 +48,7 @@ PROMPT_TIERS: dict[str, dict[str, Any]] = {
     "short": {
         "tier": "short",
         "description": "Short interactive prompt (~15-30 tokens) - decode-latency sensitive",
-        "prompt": (
-            "Explain Raft consensus leader election in distributed AI inference clusters."
-        ),
+        "prompt": ("Explain Raft consensus leader election in distributed AI inference clusters."),
     },
     "medium": {
         "tier": "medium",
@@ -375,9 +373,7 @@ def _build_chart_series_and_routing_matrix(
         "model_id": model_id,
         "precision": "fp32" if is_cuda_measured else "awq_int4",
         "vram_footprint_gb": (
-            round(max((s.vram_peak_mb for s in scenarios), default=0.0) / 1024.0, 4)
-            if is_cuda_measured
-            else 6.4
+            round(max((s.vram_peak_mb for s in scenarios), default=0.0) / 1024.0, 4) if is_cuda_measured else 6.4
         ),
         "cold_start_ms": round(cold_start_ms, 2) if (is_cuda_measured and cold_start_ms is not None) else 450.0,
         "profiles_by_prompt_tier": {
@@ -689,9 +685,7 @@ def run_benchmark_suite(
                     "tier": k,
                     "description": PROMPT_TIERS[k]["description"],
                     "prompt_chars": len(str(PROMPT_TIERS[k]["prompt"])),
-                    "prompt_tokens": len(
-                        tokenize_prompt(str(PROMPT_TIERS[k]["prompt"]), loaded.spec.vocab_size)
-                    ),
+                    "prompt_tokens": len(tokenize_prompt(str(PROMPT_TIERS[k]["prompt"]), loaded.spec.vocab_size)),
                 }
                 for k in tiers_to_run
             ],
@@ -820,8 +814,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         )
 
     has_measured_gpu = any(
-        p.get("measurement_type") == "measured"
-        for p in report["reference_provider_comparison_estimated"]
+        p.get("measurement_type") == "measured" for p in report["reference_provider_comparison_estimated"]
     )
     sec5_mode = "`Measured` Local GPU + `Estimated` Cloud" if has_measured_gpu else "`Estimated`"
 
@@ -912,9 +905,7 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         try:
             loaded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if isinstance(loaded_manifest, dict) and isinstance(loaded_manifest.get("runs"), list):
-                existing_runs = [
-                    r for r in loaded_manifest["runs"] if r.get("run_id") != report["run_id"]
-                ]
+                existing_runs = [r for r in loaded_manifest["runs"] if r.get("run_id") != report["run_id"]]
         except Exception:
             existing_runs = []
 
@@ -943,11 +934,7 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
     paired_models: list[str] = []
     for r in updated_runs:
         mid = str(r.get("model_id", ""))
-        if (
-            mid not in paired_models
-            and (mid, "cuda") in latest_by_model_dev
-            and (mid, "cpu") in latest_by_model_dev
-        ):
+        if mid not in paired_models and (mid, "cuda") in latest_by_model_dev and (mid, "cpu") in latest_by_model_dev:
             paired_models.append(mid)
 
     # Render comparative index.md
@@ -1014,11 +1001,7 @@ def update_run_ledgers(output_dir: Path, report: dict[str, Any]) -> dict[str, Pa
         for mid in multi_engine_models:
             eng_map = cuda_runs_by_model[mid]
             eager_run = eng_map.get("eager")
-            baseline_tps = (
-                float(eager_run["summary_kpis"]["peak_aggregate_tokens_per_sec"])
-                if eager_run
-                else 1.0
-            )
+            baseline_tps = float(eager_run["summary_kpis"]["peak_aggregate_tokens_per_sec"]) if eager_run else 1.0
             for eng_name, r in eng_map.items():
                 rk = r["summary_kpis"]
                 tps = float(rk["peak_aggregate_tokens_per_sec"])
@@ -1141,9 +1124,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Starting comparative engine benchmark sweep for '{args.model_id}' on device '{args.device}'...")
         completed_paths = []
         for eng in engines_to_run:
-            print(f"\n=======================================================")
+            print("\n=======================================================")
             print(f" Running engine benchmark: {eng}")
-            print(f"=======================================================")
+            print("=======================================================")
             report = run_benchmark_suite(
                 model_id=args.model_id,
                 max_new_tokens=args.max_new_tokens,

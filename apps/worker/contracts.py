@@ -127,4 +127,3 @@ class InferenceResult:
             "telemetry": self.telemetry.to_dict(),
             "metadata": self.metadata,
         }
-
