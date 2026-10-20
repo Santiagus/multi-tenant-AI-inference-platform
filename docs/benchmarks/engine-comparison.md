@@ -33,6 +33,7 @@ We evaluated execution engines across canonical reference models covering all 4 
 * **Multimodal Preprocessing Overhead**: Binary media inspection (JPEG/MP4 header verification, dimension parsing, SHA-256 digest) completes in sub-millisecond time (`~0.015 - 0.244 ms`), confirming that CPU preprocessing decouples cleanly from GPU tensor dispatch.
 * **Zero-Breaking Backwards Compatibility**: Callers specifying legacy TorchScript (`use_torchscript=True` or `engine="torchscript"`) execute deterministically across all categories.
 * **Transparent Auto-Upgrade via SHA-256 Fingerprinting**: When `allow_auto_upgrade=True` is configured, requests for legacy TorchScript models are dynamically inspected against their cryptographic **content SHA-256 digest** and upgraded to modern `torch.compile` with zero client contract changes.
+* **Are There Cases Where Legacy (TorchScript) is the Better Option?**: While legacy TorchScript suffers severe performance degradation under dynamic multi-tenant prompt churn, Section 5.4 outlines the three production domains where TorchScript remains superior or mandatory: standalone C++ (`libtorch`) binaries with zero Python footprint, invariant fixed-shape sensor/camera pipelines, and existing enterprise Triton/TorchServe model repositories.
 
 ```mermaid
 flowchart TD
@@ -502,7 +503,7 @@ Unlike static benchmarks with pre-warmup and identical prompts, this harness exe
 
 ---
 
-### 5.4 When is TorchScript (Legacy) the Superior Option?
+### 5.4 Are There Cases Where Legacy (TorchScript) is the Better Option?
 
 While TorchScript is deprecated for modern dynamic LLM/VLM serving, there are three legitimate production scenarios where TorchScript remains the superior or mandatory choice:
 

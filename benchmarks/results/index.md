@@ -22,7 +22,9 @@ This index tracks dated benchmark executions across hardware targets, models, pr
 ## 2. Empirical GPU Inference Engine Comparison (`RTX 5070 Ti`) (`Measured`)
 
 > [!NOTE]
-> **Precision & Engine Mechanics**: All comparative engine runs execute unquantized FP32 weights ([`weights.npz`](../../models/README.md)) across identical mathematical operations (attention, SwiGLU FFN, layer norm). See detailed multi-engine report in [`docs/benchmarks/engine-comparison.md`](../../docs/benchmarks/engine-comparison.md).
+> **Precision & Engine Mechanics**: All comparative engine runs execute unquantized FP32 weights ([`weights.npz`](../../models/README.md)) across identical mathematical operations (attention, SwiGLU FFN, layer norm).
+> * For full empirical findings, category breakdowns, and dynamic shape benchmarks, see [`docs/benchmarks/engine-comparison.md`](../../docs/benchmarks/engine-comparison.md).
+> * To explore specific architectural tradeoffs, see [Are There Cases Where Legacy (TorchScript) is the Better Option?](../../docs/benchmarks/engine-comparison.md#54-are-there-cases-where-legacy-torchscript-is-the-better-option) and [Free-Threaded Python (No-GIL / PEP 703)](../../docs/benchmarks/engine-comparison.md#55-free-threaded-python-no-gil--pep-703-current-role--recommendation).
 
 | Model ID | Execution Engine | Backend | Warm c=1 p50 (ms) | Warm c=1 TTFT (ms) | Warm c=1 ITL (ms/tok) | Peak Throughput (tok/s) | Peak VRAM (MB) | Speedup vs Eager | Artifacts |
 |---|---|---|---|---|---|---|---|---|---|
