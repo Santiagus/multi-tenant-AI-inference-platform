@@ -201,7 +201,7 @@ def run_single_engine_scenario(
     tokens_per_sec = round(tokens_generated / (mean_latency_ms / 1000.0), 1) if mean_latency_ms > 0 else 0.0
 
     cost_microcents = (prompt_tokens + tokens_generated) * loaded.spec.cost_microcents_per_token
-    cost_usd_per_1m_tokens = round((loaded.spec.cost_microcents_per_token * 1_000_000) / 100_000_000, 4)
+    usd_per_1m = round((loaded.spec.cost_microcents_per_token * 1_000_000) / 100_000_000, 4)
 
     return {
         "model_id": model_id,
@@ -226,7 +226,7 @@ def run_single_engine_scenario(
         "mean_latency_ms": mean_latency_ms,
         "tokens_per_sec": tokens_per_sec,
         "cost_microcents_job": cost_microcents,
-        "cost_usd_per_1m_tokens": cost_usd_per_1m_tokens,
+        "cost_usd_per_1m_tokens": usd_per_1m,
     }
 
 

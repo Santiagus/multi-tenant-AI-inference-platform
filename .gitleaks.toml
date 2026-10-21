@@ -7,8 +7,21 @@ useDefault = true
 [allowlist]
 description = "Global allowlist"
 paths = [
-  '''^\.git/''',
-  '''^\.vscode/''',
-  '''^\.terraform/''',
+  '''(?i)[/\\]\.git[/\\]''',
+  '''(?i)[/\\]\.vscode[/\\]''',
+  '''(?i)[/\\]\.terraform[/\\]''',
+  '''(?i)[/\\]\.venv[/\\]''',
+  '''(?i)[/\\]node_modules[/\\]''',
+  '''(?i)[/\\]\.pnpm-store[/\\]''',
+  '''(?i)[/\\]\.cache[/\\]''',
+  '''(?i)[/\\]data[/\\]''',
+  '''(?i)[/\\]dist[/\\]''',
+  '''(?i)[/\\]build[/\\]''',
+  '''(?i)[/\\]benchmarks[/\\]results[/\\]''',
 ]
-
+stopwords = [
+  "cost_usd_per_1m_tokens",
+]
+regexes = [
+  '''cost_usd_per_1m_tokens''',
+]
