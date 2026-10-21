@@ -244,15 +244,22 @@ class LocalPyTorchAdapter(InferenceProvider):
         prod_text_pipe = None
         clip_pipe = None
         reasoning_content: str | None = None
+        no_grad_ctx: Any = None
         if use_prod_weights and loaded.spec.modality == "text_to_text":
             prod_text_pipe = self._get_production_transformers_pipeline(request.model_id, str(device or "cpu"))
         elif use_prod_weights and loaded.spec.modality == "media_photo" and "clip" in request.model_id.lower():
             clip_pipe = self._get_clip_pipeline(request.model_id, str(device or "cpu"))
 
         if prod_text_pipe is not None:
+            import contextlib
             import time
 
-            import torch  # type: ignore[import-not-found]
+            try:
+                import torch  # type: ignore[import-not-found]
+
+                no_grad_ctx = torch.no_grad()
+            except Exception:
+                no_grad_ctx = contextlib.nullcontext()
 
             tokenizer, hf_model = prod_text_pipe
             t0 = time.perf_counter()
@@ -325,7 +332,7 @@ class LocalPyTorchAdapter(InferenceProvider):
             except Exception:
                 streamer = None
 
-            with torch.no_grad():
+            with no_grad_ctx:
                 gen_kwargs: dict[str, Any] = {
                     "max_new_tokens": effective_max_tokens,
                     "temperature": max(temperature, 0.01),
@@ -357,10 +364,22 @@ class LocalPyTorchAdapter(InferenceProvider):
                 }
             )
         elif clip_pipe is not None:
+            import contextlib
             import time
 
-            import torch  # type: ignore[import-not-found]
-            from PIL import Image  # type: ignore[import-not-found]
+            try:
+                import torch  # type: ignore[import-not-found]
+
+                is_cuda = bool(str(device).startswith("cuda") and torch.cuda.is_available())
+                no_grad_ctx = torch.no_grad()
+            except Exception:
+                is_cuda = False
+                no_grad_ctx = contextlib.nullcontext()
+
+            try:
+                from PIL import Image  # type: ignore[import-not-found]
+            except Exception:
+                Image = None  # type: ignore[assignment]
 
             processor, clip_model = clip_pipe
             t0 = time.perf_counter()
@@ -375,7 +394,7 @@ class LocalPyTorchAdapter(InferenceProvider):
             if not os.path.exists(img_path) and "fernando_alonso_f1.jpg" in img_path:
                 img_path = "tests/fixtures/media/fernando_alonso_f1.jpg"
 
-            if os.path.exists(img_path):
+            if os.path.exists(img_path) and Image is not None:
                 image = Image.open(img_path).convert("RGB")
                 candidate_labels = [
                     request.prompt.strip(),
@@ -383,10 +402,9 @@ class LocalPyTorchAdapter(InferenceProvider):
                     "High-definition aerial photograph of a photovoltaic solar farm in the desert",
                 ]
                 inps = processor(text=candidate_labels, images=image, return_tensors="pt", padding=True)
-                dev = "cuda" if (str(device).startswith("cuda") and torch.cuda.is_available()) else "cpu"
-                if dev == "cuda":
+                if is_cuda:
                     inps = {k: v.to("cuda") for k, v in inps.items()}
-                with torch.no_grad():
+                with no_grad_ctx:
                     out = clip_model(**inps)
                     logits = out.logits_per_image
                     probs = logits.softmax(dim=1).squeeze().tolist()

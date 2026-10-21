@@ -375,6 +375,10 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
         self.assertEqual(res.output_text, "Here are 3 core advantages.")
         self.assertEqual(res.metadata["reasoning_content"], "Thinking about induction.")
 
+    def test_adapter_reasoning_content_separation_without_torch(self) -> None:
+        with mock.patch.dict("sys.modules", {"torch": None}):
+            self.test_adapter_reasoning_content_separation()
+
     def test_artifact_handler_and_worker_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
