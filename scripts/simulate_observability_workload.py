@@ -75,8 +75,7 @@ def run_simulation(base_url: str, rounds: int, pause_sec: float) -> int:
         status, health, _ = http_request(base_url, "GET", "/healthz")
     except Exception as exc:
         print(
-            f"ERROR: Could not reach {base_url}/healthz ({exc}). "
-            "Make sure `docker compose up -d --build` is running.",
+            f"ERROR: Could not reach {base_url}/healthz ({exc}). Make sure `docker compose up -d --build` is running.",
             file=sys.stderr,
         )
         return 1
@@ -436,4 +435,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

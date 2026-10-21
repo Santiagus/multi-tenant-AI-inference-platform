@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -58,4 +58,3 @@ class ArtifactHandler:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.build_s3_uri(request.tenant_id, request.job_id)
-

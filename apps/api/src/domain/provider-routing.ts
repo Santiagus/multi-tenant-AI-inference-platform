@@ -4,7 +4,19 @@ export type RoutingPreference =
   | 'local_first'
   | 'cost_optimized'
   | 'latency_optimized'
-  | 'tenant_pinned';
+  | 'tenant_pinned'
+  | 'auto'
+  | 'mock'
+  | 'local/cpu'
+  | 'local/gpu'
+  | 'local'
+  | 'cloud'
+  | 'cloud/runpod'
+  | 'cloud/bedrock'
+  | 'cloud/sagemaker'
+  | 'runpod'
+  | 'bedrock'
+  | 'sagemaker';
 
 export interface WorkloadRequirements {
   modelId: string;

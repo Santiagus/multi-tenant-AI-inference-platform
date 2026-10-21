@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.validate_mermaid import (
     MermaidBlock,
@@ -187,4 +187,3 @@ sequenceDiagram
 
 if __name__ == "__main__":
     unittest.main()
-

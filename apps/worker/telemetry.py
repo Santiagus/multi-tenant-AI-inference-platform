@@ -130,11 +130,7 @@ class TelemetryCollector:
     ) -> HardwareTelemetry:
         """Capture a point-in-time hardware telemetry snapshot."""
         rss_mb = self.get_process_rss_mb()
-        is_cpu_backend = (
-            force_cpu
-            or active_backend.endswith("_cpu")
-            or active_backend == "numpy_cpu_fallback"
-        )
+        is_cpu_backend = force_cpu or active_backend.endswith("_cpu") or active_backend == "numpy_cpu_fallback"
 
         if not is_cpu_backend and self.is_cuda_available() and self._torch is not None:
             device_idx = 0
@@ -170,4 +166,3 @@ class TelemetryCollector:
             ram_rss_mb=max(rss_mb, round(model_footprint_mb, 2)),
             measurement_mode="measured",
         )
-

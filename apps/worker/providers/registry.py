@@ -88,4 +88,3 @@ def get_default_registry() -> ProviderRegistry:
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = ProviderRegistry()
     return _DEFAULT_REGISTRY
-

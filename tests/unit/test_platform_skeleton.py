@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for M02 Local Platform Skeleton infrastructure."""
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 
 class TestPlatformSkeleton(unittest.TestCase):
@@ -61,5 +61,3 @@ class TestPlatformSkeleton(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

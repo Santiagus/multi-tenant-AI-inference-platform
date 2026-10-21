@@ -1,0 +1,42 @@
+# Ruff configuration for Multi-tenant AI Inference Platform
+target-version = "py311"
+line-length = 120
+
+exclude = [
+    ".git",
+    ".vscode",
+    ".cache",
+    ".venv",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".pnpm-store",
+    "node_modules",
+    "dist",
+    "build",
+]
+
+[lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+]
+ignore = [
+    "E402", # Module level import not at top of file (used for sys.path manipulation in scripts/tests)
+    "E741", # Ambiguous variable name
+    "F401", # Unused imports
+    "F841", # Local variable name assigned but never used
+]
+
+[lint.isort]
+known-first-party = ["apps", "scripts", "benchmarks"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = false
+

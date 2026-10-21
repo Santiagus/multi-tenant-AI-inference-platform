@@ -55,34 +55,55 @@ export const awsPlatformRoutes: FastifyPluginAsync<AwsPlatformRoutesOptions> = a
   const { metrics, awsController } = options;
 
   // GET /v1/cloud/aws/status - Inspect Terraform modules, cost guardrails, and active ephemeral runs
-  fastify.get('/v1/cloud/aws/status', async (_req, reply) => {
-    const status = awsController.getPlatformStatus();
-    const defaultGuardrails = evaluateAwsDeploymentGuardrails({
-      ephemeralRunId: 'default-ephemeral-preview',
-      environment: 'ephemeral',
-      enableEks: false,
-    });
+  fastify.get(
+    '/v1/cloud/aws/status',
+    {
+      schema: {
+        tags: ['AWS Cloud'],
+        summary: 'Get AWS Infrastructure Status & Cost Guardrails',
+        description:
+          'Inspects Terraform modules, least-privilege IAM policies, active ephemeral deployments, and cost guardrails.',
+      },
+    },
+    async (_req, reply) => {
+      const status = awsController.getPlatformStatus();
+      const defaultGuardrails = evaluateAwsDeploymentGuardrails({
+        ephemeralRunId: 'default-ephemeral-preview',
+        environment: 'ephemeral',
+        enableEks: false,
+      });
 
-    metrics.setGauge(
-      'aws_ephemeral_active_deployments',
-      { environment: 'ephemeral' },
-      status.activeDeploymentsCount
-    );
-    metrics.setGauge(
-      'aws_estimated_hourly_cost_usd',
-      { environment: 'ephemeral', label: 'estimated' },
-      status.activeHourlyCostUsd
-    );
+      metrics.setGauge(
+        'aws_ephemeral_active_deployments',
+        { environment: 'ephemeral' },
+        status.activeDeploymentsCount
+      );
+      metrics.setGauge(
+        'aws_estimated_hourly_cost_usd',
+        { environment: 'ephemeral', label: 'estimated' },
+        status.activeHourlyCostUsd
+      );
 
-    return reply.status(200).send({
-      status,
-      default_ephemeral_guardrails: defaultGuardrails,
-    });
-  });
+      return reply.status(200).send({
+        status,
+        default_ephemeral_guardrails: defaultGuardrails,
+      });
+    }
+  );
 
   // POST /v1/cloud/aws/ephemeral/deploy - Validate least-privilege IAM & budget guardrails and provision ephemeral stack
-  fastify.post('/v1/cloud/aws/ephemeral/deploy', async (req, reply) => {
-    const parsed = DeployEphemeralSchema.safeParse(req.body);
+  fastify.post(
+    '/v1/cloud/aws/ephemeral/deploy',
+    {
+      schema: {
+        tags: ['AWS Cloud'],
+        summary: 'Deploy Ephemeral Cloud Stack',
+        description:
+          'Validates budget guardrails and least-privilege IAM policies, provisioning an ephemeral serverless AWS stack with auto-destroy schedule.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = DeployEphemeralSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new ValidationError(
         'Invalid AWS ephemeral deployment request payload',
@@ -147,6 +168,21 @@ export const awsPlatformRoutes: FastifyPluginAsync<AwsPlatformRoutesOptions> = a
   // POST /v1/cloud/aws/ephemeral/:runId/destroy - Destroy ephemeral cloud deployment and verify 0 surviving resources
   fastify.post<{ Params: { runId: string } }>(
     '/v1/cloud/aws/ephemeral/:runId/destroy',
+    {
+      schema: {
+        tags: ['AWS Cloud'],
+        summary: 'Destroy Ephemeral Stack',
+        description:
+          'Tears down all ephemeral cloud resources for a given runId and verifies zero surviving resources.',
+        params: {
+          type: 'object',
+          properties: {
+            runId: { type: 'string', description: 'Ephemeral deployment run ID' },
+          },
+          required: ['runId'],
+        },
+      },
+    },
     async (req, reply) => {
       const destroyed = awsController.destroyEphemeralStack(req.params.runId);
 
@@ -176,8 +212,18 @@ export const awsPlatformRoutes: FastifyPluginAsync<AwsPlatformRoutesOptions> = a
   );
 
   // POST /v1/cloud/aws/workflows/execute - Execute a workload across either Path A (SQS+KEDA) or Path B (Flyte+Kueue+Kyverno DAG)
-  fastify.post('/v1/cloud/aws/workflows/execute', async (req, reply) => {
-    const parsed = ExecuteTwoPathWorkflowSchema.safeParse(req.body);
+  fastify.post(
+    '/v1/cloud/aws/workflows/execute',
+    {
+      schema: {
+        tags: ['AWS Cloud'],
+        summary: 'Execute Multi-Tenant Workload Path',
+        description:
+          'Executes Path A (SQS+KEDA single-hop) or Path B (Flyte+Kueue multi-stage DAG) with strict tenant boundary isolation.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = ExecuteTwoPathWorkflowSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new ValidationError(
         'Invalid Two-Path workflow execution request payload',

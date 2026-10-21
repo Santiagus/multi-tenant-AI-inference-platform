@@ -11,9 +11,9 @@ Validates milestone protocol adherence as defined in AGENTS.md:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 
 def parse_milestone_statuses(readme_path: Path) -> dict[str, str]:
@@ -159,11 +159,11 @@ def run_checks(
     checked_count = 0
 
     for milestone_id, status in statuses.items():
-        candidates = list(milestones_dir.glob(f"{milestone_id}-*.md")) + list(
-            milestones_dir.glob(f"{milestone_id}.md")
-        )
+        candidates = list(milestones_dir.glob(f"{milestone_id}-*.md")) + list(milestones_dir.glob(f"{milestone_id}.md"))
         if not candidates:
-            all_errors.append(f"[{milestone_id}] No milestone file matching '{milestone_id}*.md' found in {milestones_dir}.")
+            all_errors.append(
+                f"[{milestone_id}] No milestone file matching '{milestone_id}*.md' found in {milestones_dir}."
+            )
             continue
 
         milestone_file = candidates[0]
@@ -212,5 +212,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

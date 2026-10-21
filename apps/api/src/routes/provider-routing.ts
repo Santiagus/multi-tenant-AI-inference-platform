@@ -47,7 +47,24 @@ const TenantPolicySchema = z
     tenant_id: z.string().default('tenant-default'),
     tenant_tier: z.enum(['free', 'standard', 'pro', 'enterprise']).default('standard'),
     routing_preference: z
-      .enum(['local_first', 'cost_optimized', 'latency_optimized', 'tenant_pinned'])
+      .enum([
+        'local_first',
+        'cost_optimized',
+        'latency_optimized',
+        'tenant_pinned',
+        'auto',
+        'mock',
+        'local/cpu',
+        'local/gpu',
+        'local',
+        'cloud',
+        'cloud/runpod',
+        'cloud/bedrock',
+        'cloud/sagemaker',
+        'runpod',
+        'bedrock',
+        'sagemaker',
+      ])
       .default('local_first'),
     pinned_provider: z.string().optional(),
     allowed_providers: z.array(z.string()).default([
@@ -95,43 +112,81 @@ export const providerRoutingRoutes: FastifyPluginAsync<ProviderRoutingRoutesOpti
   const { metrics, routerController, tracer = defaultTracer } = options;
 
   // GET /v1/routing/providers - Provider catalog, health, and latency stats
-  fastify.get('/v1/routing/providers', async (req, reply) => {
-    const catalog = routerController.getProviderCatalog();
-    for (const [name, prof] of Object.entries(catalog)) {
-      metrics.setGauge('provider_health_status', { provider: name }, prof.healthy ? 1 : 0);
-      const isMock = Boolean(prof.mockMode);
-      metrics.setGauge('provider_is_mock', { provider: name }, isMock ? 1 : 0);
-      metrics.setGauge('provider_environment_mode', { provider: name, mode: 'mock' }, isMock ? 1 : 0);
-      metrics.setGauge('provider_environment_mode', { provider: name, mode: 'live' }, isMock ? 0 : 1);
+  fastify.get(
+    '/v1/routing/providers',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'List Available Inference Providers',
+        description:
+          'Returns catalog of available inference providers (local PyTorch, RunPod, Bedrock, SageMaker) with health and pricing.',
+      },
+    },
+    async (req, reply) => {
+      const catalog = routerController.getProviderCatalog();
+      for (const [name, prof] of Object.entries(catalog)) {
+        metrics.setGauge('provider_health_status', { provider: name }, prof.healthy ? 1 : 0);
+        const isMock = Boolean(prof.mockMode);
+        metrics.setGauge('provider_is_mock', { provider: name }, isMock ? 1 : 0);
+        metrics.setGauge('provider_environment_mode', { provider: name, mode: 'mock' }, isMock ? 1 : 0);
+        metrics.setGauge('provider_environment_mode', { provider: name, mode: 'live' }, isMock ? 0 : 1);
+      }
+      return reply.send({
+        ok: true,
+        count: Object.keys(catalog).length,
+        providers: catalog,
+      });
     }
-    return reply.send({
-      ok: true,
-      count: Object.keys(catalog).length,
-      providers: catalog,
-    });
-  });
+  );
 
   // PATCH /v1/routing/providers/:name/health - Update provider health for failover/chaos testing
-  fastify.patch('/v1/routing/providers/:name/health', async (req, reply) => {
-    const { name } = req.params as { name: string };
-    const parsed = SetProviderHealthSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw new ValidationError('Invalid health update body', parsed.error.flatten());
+  fastify.patch(
+    '/v1/routing/providers/:name/health',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'Toggle Provider Health Status',
+        description: 'Updates provider health (healthy/unhealthy) for failover routing and chaos testing.',
+        params: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Provider name identifier' },
+          },
+          required: ['name'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const { name } = req.params as { name: string };
+      const parsed = SetProviderHealthSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid health update body', parsed.error.flatten());
+      }
+
+      routerController.setProviderHealth(name, parsed.data.healthy);
+      metrics.setGauge('provider_health_status', { provider: name }, parsed.data.healthy ? 1 : 0);
+
+      return reply.send({
+        ok: true,
+        provider: name,
+        healthy: parsed.data.healthy,
+      });
     }
-
-    routerController.setProviderHealth(name, parsed.data.healthy);
-    metrics.setGauge('provider_health_status', { provider: name }, parsed.data.healthy ? 1 : 0);
-
-    return reply.send({
-      ok: true,
-      provider: name,
-      healthy: parsed.data.healthy,
-    });
-  });
+  );
 
   // POST /v1/routing/evaluate - Deterministic routing policy evaluation with explainability
-  fastify.post('/v1/routing/evaluate', async (req, reply) => {
-    const parsed = EvaluateRoutingBodySchema.safeParse(req.body);
+  fastify.post(
+    '/v1/routing/evaluate',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'Evaluate Routing Decision with Policy Engine',
+        description:
+          'Evaluates dynamic policy rules (SLO, VRAM, margin, VPC) to select optimal provider with full explainability ledger.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = EvaluateRoutingBodySchema.safeParse(req.body);
     if (!parsed.success) {
       throw new ValidationError('Invalid routing evaluation request', parsed.error.flatten());
     }
@@ -243,8 +298,18 @@ export const providerRoutingRoutes: FastifyPluginAsync<ProviderRoutingRoutesOpti
   });
 
   // POST /v1/routing/simulate - Queue depth parameter sweep simulation
-  fastify.post('/v1/routing/simulate', async (req, reply) => {
-    const parsed = SimulateSweepSchema.safeParse(req.body);
+  fastify.post(
+    '/v1/routing/simulate',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'Simulate Queue Depth Spillover Sweep',
+        description:
+          'Simulates increasing local queue depths to determine the precise threshold where spillover to external GPU providers occurs.',
+      },
+    },
+    async (req, reply) => {
+      const parsed = SimulateSweepSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new ValidationError('Invalid simulation request', parsed.error.flatten());
     }

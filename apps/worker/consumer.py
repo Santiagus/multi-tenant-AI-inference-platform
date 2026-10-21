@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
+import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from apps.worker.artifacts import ArtifactHandler
@@ -18,6 +19,17 @@ from apps.worker.contracts import InferenceError, InferenceRequest
 from apps.worker.providers.base import InferenceProvider
 from apps.worker.providers.local import LocalPyTorchAdapter
 from apps.worker.providers.registry import ProviderRegistry, get_default_registry
+
+
+def resolve_cloud_provider(model_id: str, parameters: dict[str, Any]) -> str:
+    """Evaluate optimal cloud provider based on model architecture, modality, and isolation."""
+    mid = model_id.lower()
+    if "claude" in mid or mid.startswith("anthropic.") or mid.startswith("amazon."):
+        return "bedrock"
+    if parameters.get("requires_vpc") or parameters.get("vpc"):
+        return "sagemaker"
+    # For open-weights LLMs and diffusion models, dispatch to external GPU (RunPod)
+    return "runpod"
 
 
 class WorkerRuntime:
@@ -46,20 +58,44 @@ class WorkerRuntime:
         """Execute a single inference job payload and return structured response envelope."""
         try:
             request = InferenceRequest.from_dict(payload)
-            # Support provider override via payload or parameters
+            routing_pref = str(
+                payload.get("routing_preference") or request.parameters.get("routing_preference") or ""
+            ).lower()
+            if routing_pref:
+                request.parameters.setdefault("routing_preference", routing_pref)
+            if routing_pref == "local/cpu":
+                request.parameters.setdefault("device", "cpu")
+            elif routing_pref == "local/gpu":
+                request.parameters.setdefault("device", "cuda")
+
+            # Support provider override via payload or parameters or routing_preference
             requested_provider = payload.get("provider") or request.parameters.get("provider")
+            if not requested_provider:
+                if routing_pref in ("runpod", "cloud/runpod"):
+                    requested_provider = "runpod"
+                elif routing_pref in ("bedrock", "cloud/bedrock"):
+                    requested_provider = "bedrock"
+                elif routing_pref in ("sagemaker", "cloud/sagemaker"):
+                    requested_provider = "sagemaker"
+                elif routing_pref == "cloud":
+                    requested_provider = resolve_cloud_provider(request.model_id, request.parameters)
+                elif routing_pref in ("local/cpu", "local/gpu", "local", "local_first"):
+                    requested_provider = "local_pytorch"
+
             provider = self.resolve_provider(str(requested_provider) if requested_provider else None)
 
             result = await provider.predict(request)
             mode = str(
-                result.metadata.get(
-                    "execution_mode", "live" if result.provider_name == "local_pytorch" else "mock"
-                )
+                result.metadata.get("execution_mode", "live" if result.provider_name == "local_pytorch" else "mock")
             )
             is_mocked = bool(result.metadata.get("is_mocked", mode == "mock"))
-            sys.stderr.write(
-                f"[PROVIDER_EXECUTION] job_id={request.job_id} provider={result.provider_name} mode={mode} is_mocked={is_mocked}\n"
-            )
+            if (
+                os.environ.get("ENABLE_JOB_PROGRESS", "").lower() in ("1", "true", "yes")
+                or os.environ.get("LOG_LEVEL", "").lower() == "debug"
+            ):
+                sys.stderr.write(
+                    f"[PROVIDER_EXECUTION] job_id={request.job_id} provider={result.provider_name} mode={mode} is_mocked={is_mocked}\n"
+                )
             artifact_uri = self._artifacts.write_local_artifact(request, result)
 
             return {

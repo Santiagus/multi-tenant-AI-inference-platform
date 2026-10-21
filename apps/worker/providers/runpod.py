@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any
 import urllib.error
 import urllib.request
+from typing import Any
 
 from apps.worker.contracts import (
     HardwareTelemetry,
@@ -33,7 +33,9 @@ class RunPodAdapter(InferenceProvider):
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
         self._endpoint_id = endpoint_id or os.environ.get("RUNPOD_ENDPOINT_ID", "runpod-llama3-serverless")
         self._mock_mode = (
-            mock_mode if mock_mode is not None else (not bool(self._api_key) or os.environ.get("RUNPOD_MOCK", "1") == "1")
+            mock_mode
+            if mock_mode is not None
+            else (not bool(self._api_key) or os.environ.get("RUNPOD_MOCK", "1") == "1")
         )
         self._healthy = healthy
         self._base_url = base_url.rstrip("/")
@@ -124,8 +126,7 @@ class RunPodAdapter(InferenceProvider):
         tokens_per_sec = round((tokens_out / max(mock_compute_ms, 0.001)) * 1000.0, 2)
 
         output_text = (
-            f"RunPod Serverless [A100-80GB]: Completed execution for model '{request.model_id}': "
-            f"{prompt[:100]}"
+            f"RunPod Serverless [A100-80GB]: Completed execution for model '{request.model_id}': {prompt[:100]}"
         )
 
         telemetry = HardwareTelemetry(
@@ -263,4 +264,3 @@ class RunPodAdapter(InferenceProvider):
                 "is_mocked": False,
             },
         )
-

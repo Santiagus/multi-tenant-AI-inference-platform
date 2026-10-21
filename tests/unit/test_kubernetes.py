@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 import unittest
+from pathlib import Path
+
 import yaml  # type: ignore[import-untyped]
 
 from scripts.validate_kubernetes import (
@@ -101,12 +102,8 @@ class TestKubernetesHelmAndPolicies(unittest.TestCase):
         bad_job = copy.deepcopy(valid_job)
         bad_job["spec"]["suspend"] = False
         bad_job["metadata"]["labels"].pop("platform.ai/tenant", None)
-        bad_job["spec"]["template"]["spec"]["containers"][0]["securityContext"][
-            "allowPrivilegeEscalation"
-        ] = True
-        bad_job["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"].pop(
-            "memory", None
-        )
+        bad_job["spec"]["template"]["spec"]["containers"][0]["securityContext"]["allowPrivilegeEscalation"] = True
+        bad_job["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"].pop("memory", None)
 
         violations = validate_manifest_against_kyverno(bad_job)
         self.assertGreaterEqual(len(violations), 4)
@@ -122,9 +119,7 @@ class TestKubernetesHelmAndPolicies(unittest.TestCase):
         self.assertIn("batch-gpu-realtime-high-3", kueue_sim["admitted_after_first_release"])
 
         kind_cfg = yaml.safe_load(
-            (self.repo_root / "deploy" / "kubernetes" / "kind-cluster.yaml").read_text(
-                encoding="utf-8"
-            )
+            (self.repo_root / "deploy" / "kubernetes" / "kind-cluster.yaml").read_text(encoding="utf-8")
         )
         self.assertEqual(kind_cfg["kind"], "Cluster")
         self.assertEqual(len(kind_cfg["nodes"]), 3)
@@ -156,9 +151,7 @@ class TestKubernetesHelmAndPolicies(unittest.TestCase):
                 "dashed",
             )
 
-        all_exprs = " ".join(
-            t.get("expr", "") for p in dash["panels"] for t in p.get("targets", [])
-        )
+        all_exprs = " ".join(t.get("expr", "") for p in dash["panels"] for t in p.get("targets", []))
         required_metrics = [
             'up{job="control-plane-api"}',
             "keda_scaler_desired_replicas",

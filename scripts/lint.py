@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import py_compile
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 try:
     from scripts.validate_mermaid import validate_mermaid_in_repo
@@ -35,13 +35,15 @@ IGNORE_DIRS = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
+    "data",
+    ".minio.sys",
 }
 
 
 def check_python_files(repo_root: Path) -> list[str]:
     """Compile Python files to detect syntax errors."""
     issues: list[str] = []
-    py_files = [p for p in repo_root.rglob("*.py") if not any(d in p.parts for d in IGNORE_DIRS)]
+    py_files = [p for p in repo_root.rglob("*.py") if p.is_file() and not any(d in p.parts for d in IGNORE_DIRS)]
     for py_file in py_files:
         try:
             py_compile.compile(str(py_file), doraise=True)
@@ -53,7 +55,7 @@ def check_python_files(repo_root: Path) -> list[str]:
 def check_json_files(repo_root: Path) -> list[str]:
     """Validate JSON file syntax."""
     issues: list[str] = []
-    json_files = [p for p in repo_root.rglob("*.json") if not any(d in p.parts for d in IGNORE_DIRS)]
+    json_files = [p for p in repo_root.rglob("*.json") if p.is_file() and not any(d in p.parts for d in IGNORE_DIRS)]
     for j_file in json_files:
         try:
             json.loads(j_file.read_text(encoding="utf-8"))
@@ -121,4 +123,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

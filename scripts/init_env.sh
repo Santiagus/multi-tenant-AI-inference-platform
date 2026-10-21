@@ -85,7 +85,7 @@ _init_platform_env() {
     # 4. Install Python worker (including PyTorch GPU support) and validation dependencies into .venv
     echo "==> Installing Python worker and validation dependencies into .venv..."
     "${venv_dir}/bin/python" -m pip install --upgrade pip --quiet || return 1
-    "${venv_dir}/bin/pip" install --quiet -e "${repo_root}/apps/worker[gpu]" mypy pytest || return 1
+    "${venv_dir}/bin/pip" install --quiet -e "${repo_root}/apps/worker[gpu]" mypy pytest ruff || return 1
 
     # 5. Install and build Node.js workspace dependencies via pnpm (using repo-local store)
     if [[ -x "${venv_dir}/bin/pnpm" && -f "${repo_root}/package.json" ]]; then

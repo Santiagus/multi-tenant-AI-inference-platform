@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from apps.worker.artifacts import ArtifactHandler
 from apps.worker.consumer import WorkerRuntime
@@ -51,14 +51,7 @@ class TestObservabilityWorkerAndDashboards(unittest.TestCase):
                 "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
-            artifact_path = (
-                Path(tmp_dir)
-                / "tenants"
-                / "tenant-obs"
-                / "outputs"
-                / "job-m05-trace-001"
-                / "result.json"
-            )
+            artifact_path = Path(tmp_dir) / "tenants" / "tenant-obs" / "outputs" / "job-m05-trace-001" / "result.json"
             self.assertTrue(artifact_path.is_file())
             artifact_json = json.loads(artifact_path.read_text(encoding="utf-8"))
             self.assertEqual(artifact_json["correlation_id"], "corr-py-worker-999")
@@ -73,14 +66,7 @@ class TestObservabilityWorkerAndDashboards(unittest.TestCase):
         prom_cfg = obs_dir / "prometheus.yml"
         ds_cfg = obs_dir / "grafana" / "provisioning" / "datasources" / "datasource.yml"
         dash_provider = obs_dir / "grafana" / "provisioning" / "dashboards" / "dashboard.yml"
-        dash_json_path = (
-            obs_dir
-            / "grafana"
-            / "provisioning"
-            / "dashboards"
-            / "json"
-            / "inference-operations.json"
-        )
+        dash_json_path = obs_dir / "grafana" / "provisioning" / "dashboards" / "json" / "inference-operations.json"
 
         self.assertTrue(otel_cfg.is_file(), "otel-collector-config.yml must exist")
         self.assertTrue(prom_cfg.is_file(), "prometheus.yml must exist")
@@ -131,4 +117,3 @@ class TestObservabilityWorkerAndDashboards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

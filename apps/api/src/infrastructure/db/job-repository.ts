@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabasePool } from './pool.js';
 import {
   type Job,
+  type JobProgress,
   type JobStatusType,
   type NewJobInput,
   type RoutingPreferenceType,
@@ -12,6 +13,8 @@ import {
 export interface UpdateJobOptions {
   status?: JobStatusType;
   expectedCurrentStatuses?: JobStatusType[];
+  progress?: JobProgress | null;
+  progressPct?: number | null;
   outputPayload?: Record<string, unknown> | null;
   outputUri?: string | null;
   errorCode?: string | null;
@@ -45,6 +48,8 @@ interface JobRow {
   routing_preference: string;
   priority: number;
   status: string;
+  progress?: JobProgress | null;
+  progress_pct?: number | null;
   input_payload: Record<string, unknown> | null;
   input_uri: string | null;
   output_payload: Record<string, unknown> | null;
@@ -76,6 +81,8 @@ function mapRowToJob(row: JobRow): Job {
     routingPreference: (row.routing_preference as RoutingPreferenceType) || RoutingPreference.AUTO,
     priority: row.priority,
     status: (row.status as JobStatusType) || JobStatus.QUEUED,
+    progress: (row.progress as JobProgress) ?? null,
+    progressPct: row.progress_pct !== undefined && row.progress_pct !== null ? Number(row.progress_pct) : null,
     inputPayload: row.input_payload,
     inputUri: row.input_uri,
     outputPayload: row.output_payload,
@@ -164,6 +171,14 @@ export class PostgresJobRepository implements IJobRepository {
     if (updates.status !== undefined) {
       setClauses.push(`status = $${paramIndex++}`);
       values.push(updates.status);
+    }
+    if (updates.progress !== undefined) {
+      setClauses.push(`progress = $${paramIndex++}`);
+      values.push(updates.progress ? JSON.stringify(updates.progress) : null);
+    }
+    if (updates.progressPct !== undefined) {
+      setClauses.push(`progress_pct = $${paramIndex++}`);
+      values.push(updates.progressPct);
     }
     if (updates.outputPayload !== undefined) {
       setClauses.push(`output_payload = $${paramIndex++}`);
@@ -271,6 +286,8 @@ export class InMemoryJobRepository implements IJobRepository {
       routingPreference: input.routingPreference ?? RoutingPreference.AUTO,
       priority: input.priority ?? 5,
       status: JobStatus.QUEUED,
+      progress: null,
+      progressPct: 0,
       inputPayload: input.inputPayload ?? null,
       inputUri: input.inputUri ?? null,
       outputPayload: null,
@@ -321,6 +338,8 @@ export class InMemoryJobRepository implements IJobRepository {
     }
 
     if (updates.status !== undefined) job.status = updates.status;
+    if (updates.progress !== undefined) job.progress = updates.progress;
+    if (updates.progressPct !== undefined) job.progressPct = updates.progressPct;
     if (updates.outputPayload !== undefined) job.outputPayload = updates.outputPayload;
     if (updates.outputUri !== undefined) job.outputUri = updates.outputUri;
     if (updates.errorCode !== undefined) job.errorCode = updates.errorCode;

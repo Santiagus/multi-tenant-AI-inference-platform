@@ -12,10 +12,11 @@ from __future__ import annotations
 import copy
 import json
 import math
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 from typing import Any
+
 import yaml  # type: ignore[import-untyped]
 
 
@@ -151,9 +152,7 @@ def render_template_text(template_text: str, context: dict[str, Any]) -> str:
                 if isinstance(target_map, dict):
                     for k, v in target_map.items():
                         for b_line in block_lines:
-                            rendered_b = b_line.replace("{{ $key }}", str(k)).replace(
-                                '{{ $val | quote }}', f'"{v}"'
-                            )
+                            rendered_b = b_line.replace("{{ $key }}", str(k)).replace("{{ $val | quote }}", f'"{v}"')
                             output_lines.append(rendered_b)
             elif range_list_match:
                 target_list = resolve_path(context, range_list_match.group(1)) or []
@@ -163,9 +162,7 @@ def render_template_text(template_text: str, context: dict[str, Any]) -> str:
                             for b_line in block_lines:
                                 rendered_b = b_line
                                 for item_k, item_v in item.items():
-                                    rendered_b = rendered_b.replace(
-                                        f"{{{{ .{item_k} | quote }}}}", f'"{item_v}"'
-                                    )
+                                    rendered_b = rendered_b.replace(f"{{{{ .{item_k} | quote }}}}", f'"{item_v}"')
                                 output_lines.append(rendered_b)
             continue
 
@@ -227,9 +224,7 @@ def validate_manifest_against_kyverno(doc: dict[str, Any]) -> list[str]:
     if not labels.get("platform.ai/tenant"):
         violations.append(f"{kind}/{name}: missing required label 'platform.ai/tenant'")
     if labels.get("app.kubernetes.io/part-of") != "multi-tenant-ai-inference-platform":
-        violations.append(
-            f"{kind}/{name}: missing or invalid 'app.kubernetes.io/part-of' label"
-        )
+        violations.append(f"{kind}/{name}: missing or invalid 'app.kubernetes.io/part-of' label")
 
     # 2. Job Kueue admission requirements
     spec = doc.get("spec", {})
@@ -255,9 +250,7 @@ def validate_manifest_against_kyverno(doc: dict[str, Any]) -> list[str]:
         if c_sec.get("runAsNonRoot") is not True:
             violations.append(f"{kind}/{name} ({c_name}): container runAsNonRoot must be true")
         if c_sec.get("allowPrivilegeEscalation") is not False:
-            violations.append(
-                f"{kind}/{name} ({c_name}): container allowPrivilegeEscalation must be false"
-            )
+            violations.append(f"{kind}/{name} ({c_name}): container allowPrivilegeEscalation must be false")
         dropped = c_sec.get("capabilities", {}).get("drop", [])
         if "ALL" not in dropped:
             violations.append(f"{kind}/{name} ({c_name}): container must drop ALL capabilities")
@@ -266,13 +259,9 @@ def validate_manifest_against_kyverno(doc: dict[str, Any]) -> list[str]:
         requests = resources.get("requests", {})
         limits = resources.get("limits", {})
         if not requests.get("cpu") or not requests.get("memory"):
-            violations.append(
-                f"{kind}/{name} ({c_name}): container must declare cpu and memory requests"
-            )
+            violations.append(f"{kind}/{name} ({c_name}): container must declare cpu and memory requests")
         if not limits.get("cpu") or not limits.get("memory"):
-            violations.append(
-                f"{kind}/{name} ({c_name}): container must declare cpu and memory limits"
-            )
+            violations.append(f"{kind}/{name} ({c_name}): container must declare cpu and memory limits")
 
     return violations
 
@@ -306,9 +295,7 @@ def simulate_keda_and_kueue() -> dict[str, Any]:
         else:
             desired = min(max_replicas, max(1, math.ceil(backlog / target_per_replica)))
             action = (
-                "scale_up"
-                if desired > current_replicas
-                else ("scale_down" if desired < current_replicas else "steady")
+                "scale_up" if desired > current_replicas else ("scale_down" if desired < current_replicas else "steady")
             )
         keda_timeline.append(
             {

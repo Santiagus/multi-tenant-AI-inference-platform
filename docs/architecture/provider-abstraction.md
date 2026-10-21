@@ -45,6 +45,7 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator, Optional
 from pydantic import BaseModel
 
+
 class InferenceRequest(BaseModel):
     job_id: str
     tenant_id: str
@@ -54,6 +55,7 @@ class InferenceRequest(BaseModel):
     stream: bool = False
     timeout_seconds: float = 300.0
 
+
 class UsageMetrics(BaseModel):
     prompt_tokens: int
     completion_tokens: int
@@ -61,12 +63,14 @@ class UsageMetrics(BaseModel):
     compute_duration_ms: float
     estimated_cost_microcents: int
 
+
 class InferenceResult(BaseModel):
     output_text: str
     finish_reason: str
     usage: UsageMetrics
     provider_name: str
     raw_provider_response: Optional[dict] = None
+
 
 class InferenceProvider(ABC):
     @property

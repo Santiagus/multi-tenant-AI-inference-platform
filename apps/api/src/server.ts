@@ -39,6 +39,7 @@ async function main() {
     bucket: config.S3_BUCKET,
     region: config.S3_REGION,
     endpoint: config.S3_ENDPOINT,
+    publicEndpoint: config.S3_PUBLIC_ENDPOINT,
     accessKeyId: config.S3_ACCESS_KEY_ID,
     secretAccessKey: config.S3_SECRET_ACCESS_KEY,
     forcePathStyle: config.S3_FORCE_PATH_STYLE,

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 import enum
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 
 class RoutingPreference(str, enum.Enum):
+    AUTO = "auto"
+    MOCK = "mock"
+    LOCAL_CPU = "local/cpu"
+    LOCAL_GPU = "local/gpu"
+    LOCAL = "local"
+    CLOUD = "cloud"
     LOCAL_FIRST = "local_first"
     COST_OPTIMIZED = "cost_optimized"
     LATENCY_OPTIMIZED = "latency_optimized"
@@ -184,9 +190,7 @@ class DeterministicProviderRouter:
                 tenant_rejected.append({"provider": name, "reason": "tenant_unauthorized_provider"})
                 continue
             if tenant_policy.pinned_provider and name != tenant_policy.pinned_provider:
-                tenant_rejected.append(
-                    {"provider": name, "reason": f"pinned_to_{tenant_policy.pinned_provider}"}
-                )
+                tenant_rejected.append({"provider": name, "reason": f"pinned_to_{tenant_policy.pinned_provider}"})
                 continue
             if effective_proprietary and name != "bedrock":
                 tenant_rejected.append({"provider": name, "reason": "proprietary_model_requires_bedrock"})
@@ -204,8 +208,7 @@ class DeterministicProviderRouter:
 
         local_headroom_mb = max(0.0, capacity.local_vram_total_mb - capacity.local_vram_allocated_mb)
         vram_exceeded = (
-            workload.estimated_vram_mb > local_headroom_mb
-            or workload.estimated_vram_mb > capacity.local_vram_total_mb
+            workload.estimated_vram_mb > local_headroom_mb or workload.estimated_vram_mb > capacity.local_vram_total_mb
         )
 
         effective_concurrency = max(1, capacity.worker_concurrency)
@@ -270,11 +273,7 @@ class DeterministicProviderRouter:
             prof = profiles[name]
             cost = total_tokens * prof.cost_microcents_per_token
             candidate_costs[name] = cost
-            margin = (
-                round((projected_revenue - cost) / max(projected_revenue, 1), 4)
-                if projected_revenue > 0
-                else 0.0
-            )
+            margin = round((projected_revenue - cost) / max(projected_revenue, 1), 4) if projected_revenue > 0 else 0.0
             candidate_margins[name] = margin
 
             if cost > tenant_policy.max_cost_microcents:
@@ -367,11 +366,7 @@ class DeterministicProviderRouter:
 
                     margin = candidate_margins.get(selected, 0.0)
                     decision_code = "SLO_RISK_SPILLOVER_EXTERNAL_GPU"
-                    reason_clause = (
-                        "local VRAM exceeded"
-                        if vram_exceeded
-                        else "local queue high"
-                    )
+                    reason_clause = "local VRAM exceeded" if vram_exceeded else "local queue high"
                     explanation = (
                         f"{reason_clause} + SLO risk + provider available + margin acceptable "
                         f"-> external GPU provider ({selected})"
@@ -402,7 +397,9 @@ class DeterministicProviderRouter:
         elif preference == RoutingPreference.LATENCY_OPTIMIZED:
             pool = econ_passed if econ_passed else health_passed
             if pool:
-                selected = min(pool, key=lambda p: profiles.get(p, DEFAULT_PROVIDER_PROFILES["local_pytorch"]).latency_p95_ms)
+                selected = min(
+                    pool, key=lambda p: profiles.get(p, DEFAULT_PROVIDER_PROFILES["local_pytorch"]).latency_p95_ms
+                )
                 decision_code = "LATENCY_OPTIMIZED_SELECTION"
                 explanation = (
                     f"latency optimized preference -> selected lowest P95 latency provider '{selected}' "
@@ -430,4 +427,3 @@ class DeterministicProviderRouter:
             slo_risk_detected=slo_risk_detected,
             local_queue_saturated=local_queue_saturated,
         )
-

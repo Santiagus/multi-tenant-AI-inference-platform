@@ -30,11 +30,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from pathlib import Path
 import sys
 import time
-from typing import Any
 import unittest
+from pathlib import Path
+from typing import Any
 
 repo_root = str(Path(__file__).resolve().parents[2])
 if repo_root not in sys.path:
@@ -192,14 +192,10 @@ def run_scenario_benchmark(
     p95_ttft_ms = round(sorted_ttft[int(len(sorted_ttft) * 0.95)], 3)
     mean_latency_ms = round(sum(latency_samples) / len(latency_samples), 3)
     mean_tpot_ms = round(sum(tpot_samples) / len(tpot_samples), 3)
-    tokens_per_sec = (
-        round(tokens_generated / (mean_latency_ms / 1000.0), 2)
-        if mean_latency_ms > 0
-        else 0.0
-    )
+    tokens_per_sec = round(tokens_generated / (mean_latency_ms / 1000.0), 2) if mean_latency_ms > 0 else 0.0
 
     cost_microcents = (prompt_tokens + tokens_generated) * loaded.spec.cost_microcents_per_token
-    cost_usd_per_1m_tokens = round((loaded.spec.cost_microcents_per_token * 1_000_000) / 100_000_000, 4)
+    usd_per_1m = round((loaded.spec.cost_microcents_per_token * 1_000_000) / 100_000_000, 4)
 
     return {
         "model_id": model_id,
@@ -222,7 +218,7 @@ def run_scenario_benchmark(
         "mean_latency_ms": mean_latency_ms,
         "tokens_per_sec": tokens_per_sec,
         "cost_microcents_job": cost_microcents,
-        "cost_usd_per_1m_tokens": cost_usd_per_1m_tokens,
+        "cost_usd_per_1m_tokens": usd_per_1m,
     }
 
 
@@ -317,12 +313,8 @@ class TestEngineBenchmarkHarness(unittest.TestCase):
 
     def test_open_weights_leaderboard_models_across_modalities(self) -> None:
         fixtures_text_dir = Path(repo_root) / "tests" / "fixtures" / "text"
-        t2i_items = json.loads(
-            (fixtures_text_dir / "prompts_text_to_image.json").read_text(encoding="utf-8")
-        )
-        media_items = json.loads(
-            (fixtures_text_dir / "prompts_media_inference.json").read_text(encoding="utf-8")
-        )
+        t2i_items = json.loads((fixtures_text_dir / "prompts_text_to_image.json").read_text(encoding="utf-8"))
+        media_items = json.loads((fixtures_text_dir / "prompts_media_inference.json").read_text(encoding="utf-8"))
 
         mock_torch = _MockTorchWithJit()
         loader = ModelLoader(torch_module=mock_torch, prefer_device="cpu")
@@ -402,4 +394,3 @@ class TestEngineBenchmarkHarness(unittest.TestCase):
 if __name__ == "__main__":
     matrix = execute_comprehensive_engine_matrix()
     print(json.dumps(matrix, indent=2))
-

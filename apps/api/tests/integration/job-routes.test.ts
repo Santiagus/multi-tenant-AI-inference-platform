@@ -143,6 +143,8 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(queryRes1.statusCode, 200);
     const initialJob = JSON.parse(queryRes1.body);
     assert.equal(initialJob.status, 'QUEUED');
+    assert.equal(initialJob.progress_pct, 0);
+    assert.equal(initialJob.progress.phase, 'queued');
 
     // 3. Worker transitions to PROCESSING
     const procRes = await app.inject({
@@ -190,6 +192,8 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(finalRes.statusCode, 200);
     const finalJob = JSON.parse(finalRes.body);
     assert.equal(finalJob.status, 'SUCCEEDED');
+    assert.equal(finalJob.progress_pct, 100);
+    assert.equal(finalJob.progress.phase, 'completed');
     assert.equal(finalJob.provider, 'local_pytorch');
     assert.equal(finalJob.duration_ms, 1240);
     assert.equal(finalJob.usage.prompt_tokens, 12);
@@ -309,6 +313,249 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(dlqBody.messages.length, 1);
     assert.equal(dlqBody.messages[0].job_id, badJobId);
     assert.equal(dlqBody.messages[0].error_code, 'INVALID_MODEL_PARAMETERS');
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs accepts instant mock, real CPU, real GPU, and cloud routing preferences', async () => {
+    const { app, jobRepo } = createTestApp();
+
+    // 1. Instant Mock: POST /v1/jobs -d '{"model_id": "mock", "routing_preference": "auto"}'
+    const mockRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-test' },
+      payload: {
+        model_id: 'mock',
+        routing_preference: 'auto',
+      },
+    });
+    assert.equal(mockRes.statusCode, 202);
+    const mockJobId = JSON.parse(mockRes.body).job_id;
+    const mockJob = await jobRepo.findById('tenant-test', mockJobId);
+    assert.equal(mockJob?.modelId, 'mock');
+    assert.equal(mockJob?.routingPreference, 'auto');
+
+    // 2. Real CPU Inference: POST /v1/jobs -d '{"model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0", "routing_preference": "local/cpu"}'
+    const cpuRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-test' },
+      payload: {
+        model_id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+        routing_preference: 'local/cpu',
+      },
+    });
+    assert.equal(cpuRes.statusCode, 202);
+    const cpuJobId = JSON.parse(cpuRes.body).job_id;
+    const cpuJob = await jobRepo.findById('tenant-test', cpuJobId);
+    assert.equal(cpuJob?.modelId, 'TinyLlama/TinyLlama-1.1B-Chat-v1.0');
+    assert.equal(cpuJob?.routingPreference, 'local/cpu');
+
+    // 3. Real GPU Inference: POST /v1/jobs -d '{"model_id": "meta-llama/Llama-3-8B-Instruct", "routing_preference": "local/gpu", "parameters": {"engine": "torch-compile"}}'
+    const gpuRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-test' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        routing_preference: 'local/gpu',
+        parameters: { engine: 'torch-compile' },
+      },
+    });
+    assert.equal(gpuRes.statusCode, 202);
+    const gpuJobId = JSON.parse(gpuRes.body).job_id;
+    const gpuJob = await jobRepo.findById('tenant-test', gpuJobId);
+    assert.equal(gpuJob?.modelId, 'meta-llama/Llama-3-8B-Instruct');
+    assert.equal(gpuJob?.routingPreference, 'local/gpu');
+    assert.equal((gpuJob?.inputPayload?.parameters as any)?.engine, 'torch-compile');
+
+    // 4. Cloud Inference: POST /v1/jobs -d '{"model_id": "meta-llama/Llama-3-8B-Instruct", "routing_preference": "cloud"}'
+    const cloudRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-test' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        routing_preference: 'cloud',
+      },
+    });
+    assert.equal(cloudRes.statusCode, 202);
+    const cloudJobId = JSON.parse(cloudRes.body).job_id;
+    const cloudJob = await jobRepo.findById('tenant-test', cloudJobId);
+    assert.equal(cloudJob?.routingPreference, 'cloud');
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs/upload-url generates presigned S3 upload URL with tenant isolation', async () => {
+    const { app } = createTestApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs/upload-url',
+      headers: {
+        'x-tenant-id': 'tenant-acme',
+      },
+      payload: {
+        filename: 'telemetry_photo.png',
+        content_type: 'image/png',
+        expires_in_seconds: 1800,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.ok(body.upload_url);
+    assert.ok(body.asset_uri);
+    assert.equal(body.expires_in_seconds, 1800);
+    assert.ok(decodeURIComponent(body.upload_url).includes('tenants/tenant-acme/inputs/'));
+    assert.ok(decodeURIComponent(body.upload_url).includes('telemetry_photo.png'));
+    assert.ok(body.asset_uri.startsWith('s3://'));
+    assert.ok(body.asset_uri.includes('tenants/tenant-acme/inputs/'));
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs/upload-url rejects unsupported content types and missing filenames', async () => {
+    const { app } = createTestApp();
+
+    // 1. Missing filename
+    const missingNameRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs/upload-url',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        content_type: 'image/jpeg',
+      },
+    });
+    assert.equal(missingNameRes.statusCode, 400);
+
+    // 2. Unsupported mime type
+    const badTypeRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs/upload-url',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        filename: 'exploit.exe',
+        content_type: 'application/x-msdownload',
+      },
+    });
+    assert.equal(badTypeRes.statusCode, 400);
+    const body = JSON.parse(badTypeRes.body);
+    assert.equal(body.code, 'VALIDATION_FAILED');
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs accepts jobs with media_asset_uri and multimodal inputs', async () => {
+    const { app, queueClient } = createTestApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'Qwen/Qwen2.5-VL-7B-Instruct',
+        routing_preference: 'local/gpu',
+        input: {
+          prompt: 'Identify the vehicle in this frame',
+          media_asset_uri: 's3://platform-artifacts/tenants/tenant-acme/inputs/sample_car.jpg',
+        },
+      },
+    });
+
+    assert.equal(response.statusCode, 202);
+    const body = JSON.parse(response.body);
+    assert.ok(body.job_id);
+    assert.equal(body.model_id, 'Qwen/Qwen2.5-VL-7B-Instruct');
+    assert.equal(queueClient.getQueueLength(), 1);
+
+    await app.close();
+  });
+
+  test('Image generation model returns both result.json and output.png artifacts upon completion', async () => {
+    const { app } = createTestApp();
+
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'black-forest-labs/FLUX.1-schnell',
+        routing_preference: 'mock',
+        input: {
+          prompt: 'Cinematic wide-angle photograph of an AI server room',
+        },
+      },
+    });
+    assert.equal(postRes.statusCode, 202);
+    const { job_id } = JSON.parse(postRes.body);
+
+    const procRes = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+    });
+    assert.equal(procRes.statusCode, 200);
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const jobData = JSON.parse(getRes.body);
+
+    assert.equal(jobData.status, 'SUCCEEDED');
+    assert.ok(jobData.artifacts && jobData.artifacts.length === 2);
+    assert.equal(jobData.artifacts[0].name, 'output_artifact');
+    assert.ok(jobData.artifacts[0].download_url.includes('result.json'));
+    assert.equal(jobData.artifacts[1].name, 'output_image');
+    assert.ok(jobData.artifacts[1].download_url.includes('output.png'));
+
+    await app.close();
+  });
+
+  test('Video generation model returns result.json, output.mp4, and output_poster artifacts upon completion', async () => {
+    const { app } = createTestApp();
+
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'Wan-AI/Wan2.1-T2V-1.3B',
+        routing_preference: 'mock',
+        input: {
+          prompt: 'Cinematic drone flythrough of a datacenter',
+        },
+      },
+    });
+    assert.equal(postRes.statusCode, 202);
+    const { job_id } = JSON.parse(postRes.body);
+
+    const procRes = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+    });
+    assert.equal(procRes.statusCode, 200);
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const jobData = JSON.parse(getRes.body);
+
+    assert.equal(jobData.status, 'SUCCEEDED');
+    assert.ok(jobData.artifacts && jobData.artifacts.length === 3);
+    assert.equal(jobData.artifacts[0].name, 'output_artifact');
+    assert.ok(jobData.artifacts[0].download_url.includes('result.json'));
+    assert.equal(jobData.artifacts[1].name, 'output_video');
+    assert.ok(jobData.artifacts[1].download_url.includes('output.mp4'));
+    assert.equal(jobData.artifacts[2].name, 'output_poster');
+    assert.ok(jobData.artifacts[2].download_url.includes('poster.png'));
 
     await app.close();
   });

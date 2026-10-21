@@ -71,13 +71,30 @@ This repository is organized as an incremental monorepo:
 ├── .agents/                 # AI agent operating rules, skills, and milestone specs
 │   ├── milestones/          # Sequential milestones (M00 to M12)
 │   └── skills/              # Specialized domain instructions (OTel, PyTorch, K8s, etc.)
-├── apps/                    # Control plane API, inference worker, dashboard (M02+)
-├── packages/                # Shared contracts, types, and provider adapters (M02+)
-├── infrastructure/          # Terraform modules & AWS configuration (M07+)
-├── deploy/                  # Docker Compose, Helm charts, and Argo CD manifests (M02, M06, M10)
-├── benchmarks/              # Reproducible performance harnesses (M04, M12)
-├── tests/                   # End-to-end and tenant isolation test suites (M02+)
-├── docs/                    # Architecture diagrams and Architecture Decision Records (ADRs) (M01+)
+├── apps/                    # Application services
+│   ├── api/                 # Fastify TypeScript control plane (AuthN/Z, jobs, cost)
+│   └── worker/              # Python PyTorch inference worker, provider adapters & Flyte DAG
+├── packages/                # Shared workspace libraries and contracts (placeholder for M11+)
+├── models/                  # Domain-organized open-weight model store & lockfile manifest
+│   ├── manifest.json        # Curated model declarations & content-addressed hashes
+│   ├── text-to-text/        # LLM reasoning & chat weights (Llama 3, Qwen 2.5, DeepSeek, etc.)
+│   ├── text-to-image/       # Image generation weights (FLUX.1-schnell, SD 3.5)
+│   ├── media-photo/         # Vision-language weights (Qwen2.5-VL, CLIP)
+│   └── media-video/         # Video diffusion weights (Wan2.1, CogVideoX)
+├── benchmarks/              # Reproducible inference harnesses & empirical results ledger
+├── deploy/                  # Deployment & container configurations
+│   ├── compose/             # Backing services config (ElasticMQ)
+│   ├── helm/                # Kubernetes Helm chart (inference-platform)
+│   ├── kubernetes/          # Local Kind cluster definitions
+│   └── observability/       # OTel Collector, Prometheus config & Grafana dashboards
+├── infrastructure/          # Cloud infrastructure as code
+│   └── terraform/           # AWS modules (VPC, ECS, SQS, S3, IAM, cost guardrails) & envs
+├── scripts/                 # Development, CI gate, and validation automation scripts
+├── tests/                   # End-to-end, provider adapter, and unit test suites
+├── docs/                    # Architecture blueprints, ADRs (0001–0012), benchmarks & operations
+├── docker-compose.yml       # Local multi-service platform runtime
+├── Makefile                 # Developer build, test, lint, and verification targets
+├── request.rest             # REST API scratchpad with end-to-end Use Case Cycles
 ├── AGENTS.md                # Top-level operating manual for automated pair-programming
 ├── LICENSE                  # Apache 2.0 License
 └── README.md
@@ -148,7 +165,9 @@ This project is built using disciplined agentic pair-programming governed by:
 
 - **Make**: Standard build automation tool
 - **Node.js 22+ & pnpm 12+**: Fastify control plane API runtime and workspace package manager
-- **Python 3.11+**: Base runtime for inference worker, validation scripts, and tests (`numpy`, `psutil`, `pyyaml`)
+- **Python 3.11+**: Inference worker, validation scripts, and automated test suites
+  - **Core / CI Tier** (`apps/worker`): Pure CPU baseline (`numpy`, `psutil`, `pyyaml`). Runs on any workstation without GPU hardware or PyTorch.
+  - **Hardware Acceleration Tier** (`apps/worker[gpu]`): Installed automatically via `make init` (or `pip install -e 'apps/worker[gpu]'`). Adds PyTorch (`torch>=2.1.0`) for CUDA GPU acceleration, TorchScript, and `torch.compile`.
 - **Docker & Docker Compose**: Local platform runtime (PostgreSQL 16, MinIO, ElasticMQ, OTel Collector, Prometheus, Grafana)
 - **Gitleaks**: Fast credential detection tool ([Installation guide](https://github.com/gitleaks/gitleaks))
 
@@ -167,6 +186,38 @@ This project is built using disciplined agentic pair-programming governed by:
    # Verify all services are healthy
    docker compose ps
    ```
+
+   #### Local Services & Endpoints Reference
+
+   | Service | Local URL / Endpoint | Type / Interface | Credentials / Notes |
+   |---|---|---|---|
+   | **Fastify API** | [http://localhost:3000](http://localhost:3000) ([`/healthz`](http://localhost:3000/healthz), [`/readyz`](http://localhost:3000/readyz)) | REST API | Control plane (`/v1/jobs`) |
+   | **API Swagger UI** | [http://localhost:3000/docs](http://localhost:3000/docs) ([`/docs/json`](http://localhost:3000/docs/json)) | Web UI | OpenAPI 3.0 interactive documentation |
+   | **Grafana** | [http://localhost:3001](http://localhost:3001) | Web UI | `admin` / `admin` (anonymous enabled) |
+   | **Prometheus** | [http://localhost:9090](http://localhost:9090) | Web UI | Metrics scraper & target graph |
+   | **MinIO Console** | [http://localhost:9001](http://localhost:9001) | Web UI | `minioadmin` / `minioadmin` |
+   | **MinIO S3 API** | [http://localhost:9000](http://localhost:9000) | S3 API | `minioadmin` / `minioadmin` |
+   | **ElasticMQ** | [http://localhost:9324](http://localhost:9324) | SQS API | SQS-compatible job queue |
+   | **PostgreSQL** | `localhost:5432` | Database | `postgres` / `postgres` (DB: `platform`) |
+   | **OTel Collector** | [http://localhost:4318](http://localhost:4318) (HTTP) · `localhost:4317` (gRPC) · [http://localhost:8889](http://localhost:8889) (Metrics) | Collector | OpenTelemetry ingest & export |
+
+   #### Control Plane API Reference & Interactive Documentation
+
+   The Fastify control plane API exposes live OpenAPI (Swagger) documentation and machine-readable schemas:
+   - **Interactive Swagger UI**: [http://localhost:3000/docs](http://localhost:3000/docs) (also aliased at [`/swagger`](http://localhost:3000/swagger) and [`/documentation`](http://localhost:3000/documentation))
+   - **OpenAPI 3.0 JSON Specification**: [http://localhost:3000/docs/json](http://localhost:3000/docs/json)
+   - **Developer REST Scratchpad**: [`request.rest`](request.rest) with pre-configured, sequential Use Case Cycles
+
+   | Domain | Method & Endpoint | Purpose |
+   |---|---|---|
+   | **Documentation** | `GET /docs`<br/>`GET /docs/json` | Interactive Swagger UI and machine-readable OpenAPI 3.0 specification |
+   | **Health** | `GET /healthz`<br/>`GET /readyz` | Liveness and dependency readiness probes (PostgreSQL, MinIO, SQS) |
+   | **Metrics** | `GET /metrics` | Prometheus metrics export |
+   | **Jobs** | `POST /v1/jobs`<br/>`GET /v1/jobs/:id`<br/>`POST /v1/jobs/:id/cancel`<br/>`GET /v1/jobs/dlq`<br/>`POST /v1/worker/process-next` | Asynchronous job submission, polling, cancellation, and DLQ handling |
+   | **Observability** | `GET /v1/jobs/:id/trace`<br/>`GET /v1/observability/correlations/:correlationId` | W3C distributed trace retrieval and correlation ID lookup |
+   | **Provider Routing** | `GET /v1/routing/providers`<br/>`POST /v1/routing/evaluate`<br/>`POST /v1/routing/simulate` | Dynamic provider policy routing (local vs. cloud GPU) |
+   | **Kubernetes** | `GET /v1/k8s/autoscaling/status`<br/>`POST /v1/k8s/kueue/workloads`<br/>`POST /v1/k8s/kueue/workloads/:id/release` | KEDA queue metrics & Kueue batch admission hooks |
+   | **AWS Cloud** | `GET /v1/cloud/aws/status`<br/>`POST /v1/cloud/aws/ephemeral/deploy`<br/>`POST /v1/cloud/aws/ephemeral/:runId/destroy`<br/>`POST /v1/cloud/aws/workflows/execute` | Cloud deployment status, ephemeral runs, and workflow triggers |
 
 3. **Option B: Local development loop (API on host with hot-reload)**:
    ```bash
@@ -194,6 +245,24 @@ This project is built using disciplined agentic pair-programming governed by:
      make validate-k8s
      ```
 
+6. **Reproducible Benchmarks & Provider Diagnostics**:
+   - Run the automated multi-engine category benchmark sweep across NumPy, PyTorch Eager, TorchScript, and `torch.compile`:
+     ```bash
+     make benchmark-engines
+     ```
+   - Run the concurrency, prompt-tier sweep, and Pareto cost curve harness:
+     ```bash
+     make benchmark-inference
+     ```
+   - Run the dynamic shape churn and cold scaling production reality test:
+     ```bash
+     make benchmark-production-reality
+     ```
+   - Check local hardware detection and provider adapter readiness:
+     ```bash
+     make check-providers
+     ```
+
 ### Local Validation Gate
 
 Run the full local CI gate before submitting pull requests or committing code:
@@ -205,14 +274,18 @@ make ci
 
 Individual validation targets:
 ```bash
-make init                   # Initialize local Python .venv, pnpm, and workspace dependencies
+make init                   # Initialize local Python .venv, pnpm, and workspace dependencies (with GPU extras)
 make format-check           # Check line endings, trailing whitespace, and EOF newlines
 make lint                   # Check Python, JSON, and Mermaid diagram syntax
 make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
 make test                   # Run Python and TypeScript unit & integration test suites
 make validate-k8s           # Render Helm chart profiles and validate KEDA, Kueue, and Kyverno policies
-make validate-terraform     # Validate Terraform modules, least-privilege IAM, cost guardrails & ephemeral plan
+make validate-terraform     # Validate AWS Terraform modules, IAM policies, and cost guardrails
 make simulate-observability # Run live workload simulator to populate Prometheus & Grafana
+make benchmark-engines      # Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)
+make benchmark-inference    # Run concurrency and prompt-tier inference benchmark
+make benchmark-production-reality # Run dynamic shape churn and cold scaling production test
+make check-providers        # Run provider and hardware acceleration diagnostics
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)
 make install-hooks          # Configure local Git repository to run pre-commit hook

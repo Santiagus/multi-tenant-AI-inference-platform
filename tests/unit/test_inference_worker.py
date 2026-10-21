@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import redirect_stdout
 import io
 import json
-from pathlib import Path
 import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-import unittest
+from unittest import mock
 
 import numpy as np  # type: ignore[import-not-found]
 
@@ -26,6 +27,7 @@ from apps.worker.contracts import (
 from apps.worker.models import (
     BENCHMARK_MODEL_REGISTRY,
     DEFAULT_MODEL_REGISTRY,
+    PRODUCTION_MODEL_REGISTRY,
     ModelLoader,
     ModelSpec,
     NumpyCpuModelBackend,
@@ -37,9 +39,11 @@ from apps.worker.providers.local import LocalPyTorchAdapter
 from apps.worker.telemetry import TelemetryCollector
 from benchmarks.run_inference_benchmark import (
     compute_percentile,
-    main as benchmark_main,
     render_markdown_report,
     run_benchmark_suite,
+)
+from benchmarks.run_inference_benchmark import (
+    main as benchmark_main,
 )
 
 
@@ -335,6 +339,46 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
             )
         self.assertEqual(bad_tok_ctx.exception.code, "INVALID_MODEL_PARAMETERS")
 
+    def test_adapter_reasoning_content_separation(self) -> None:
+        adapter = LocalPyTorchAdapter()
+        mock_tokenizer = mock.MagicMock()
+        mock_tokenizer.eos_token_id = 0
+        mock_tokenizer.apply_chat_template = None
+
+        mock_inputs = mock.MagicMock()
+        mock_inputs.input_ids = np.zeros((1, 5))
+        mock_inputs.to.return_value = mock_inputs
+        mock_tokenizer.return_value = mock_inputs
+
+        mock_tokenizer.decode.return_value = (
+            "<think>\nThinking about induction.\n</think>\n\nHere are 3 core advantages."
+        )
+
+        mock_model = mock.MagicMock()
+        mock_model.device = "cpu"
+        mock_model.config.max_position_embeddings = 2048
+        mock_model.generate.return_value = np.zeros((1, 15))
+
+        adapter._transformers_pipes["test/reasoning-model"] = (mock_tokenizer, mock_model)
+
+        res = asyncio.run(
+            adapter.predict(
+                InferenceRequest(
+                    job_id="reasoning-1",
+                    tenant_id="t1",
+                    model_id="test/reasoning-model",
+                    prompt="Summarize advantages",
+                    parameters={"use_production_weights": True, "tier": 2, "max_new_tokens": 100},
+                )
+            )
+        )
+        self.assertEqual(res.output_text, "Here are 3 core advantages.")
+        self.assertEqual(res.metadata["reasoning_content"], "Thinking about induction.")
+
+    def test_adapter_reasoning_content_separation_without_torch(self) -> None:
+        with mock.patch.dict("sys.modules", {"torch": None}):
+            self.test_adapter_reasoning_content_separation()
+
     def test_artifact_handler_and_worker_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -465,9 +509,7 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
                 self.assertTrue((out_dir / run_entry["report_json_path"]).is_file())
                 self.assertTrue((out_dir / run_entry["report_md_path"]).is_file())
 
-            history_lines = [
-                line for line in history_file.read_text(encoding="utf-8").splitlines() if line.strip()
-            ]
+            history_lines = [line for line in history_file.read_text(encoding="utf-8").splitlines() if line.strip()]
             self.assertEqual(len(history_lines), 2)
 
             md_text = render_markdown_report(report)
@@ -528,14 +570,10 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
         # 3. Execute Text-to-Image and Media (Photo & Video) fixtures across NumPy and PyTorch backends
         repo_root = Path(__file__).resolve().parents[2]
         t2i_fixtures = json.loads(
-            (repo_root / "tests" / "fixtures" / "text" / "prompts_text_to_image.json").read_text(
-                encoding="utf-8"
-            )
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_text_to_image.json").read_text(encoding="utf-8")
         )
         media_fixtures = json.loads(
-            (repo_root / "tests" / "fixtures" / "text" / "prompts_media_inference.json").read_text(
-                encoding="utf-8"
-            )
+            (repo_root / "tests" / "fixtures" / "text" / "prompts_media_inference.json").read_text(encoding="utf-8")
         )
 
         fake_torch = _FakeTorchModule(cuda_available=True)
@@ -548,9 +586,7 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
             prompt = item["prompt"]
             for loader in (numpy_loader, pytorch_loader):
                 loaded, _ = loader.load(model_id)
-                out_text, tok_in, tok_out, ttft_ms, total_ms = loaded.backend.generate(
-                    prompt=prompt, max_new_tokens=6
-                )
+                out_text, tok_in, tok_out, ttft_ms, total_ms = loaded.backend.generate(prompt=prompt, max_new_tokens=6)
                 self.assertIn(f"[{model_id}]", out_text)
                 self.assertGreater(tok_in, 0)
                 self.assertEqual(tok_out, 6)
@@ -577,8 +613,68 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
                     f"Missing artifact_metadata.json for {model_id}",
                 )
 
+    @unittest.skipUnless(
+        __import__("os").environ.get("RUN_REAL_INFERENCE") == "1",
+        "Skipped per-commit: real model inference is reserved for benchmarks, e2e, and deployment tests.",
+    )
+    def test_tier2_quantized_inference_production(self) -> None:
+        """Verify Tier 2 quantized production models execute INT4/NF4 tensor forward passes within memory bounds."""
+        loader = ModelLoader(prefer_device="cpu")
+        loader._torch = None  # Ensure deterministic CPU fallback for CI
+
+        # 1. Verify all 12 models exist in PRODUCTION_MODEL_REGISTRY with quantized specs
+        self.assertEqual(len(PRODUCTION_MODEL_REGISTRY), 12)
+        for model_id, spec in PRODUCTION_MODEL_REGISTRY.items():
+            self.assertIn(spec.quantization, ("int4", "int8", "nf4"))
+            self.assertLessEqual(spec.estimated_vram_mb, 6800.0)  # Max memory within 6.8 GB budget
+
+        # 2. Test INT4 text model
+        llama_loaded, _ = loader.load("meta-llama/Llama-3-8B-Instruct", tier=2)
+        self.assertEqual(llama_loaded.spec.quantization, "int4")
+        self.assertEqual(llama_loaded.backend.quantization, "int4")
+        out, t_in, t_out, ttft, total_time = llama_loaded.backend.generate(
+            prompt="Explain Raft consensus", max_new_tokens=4
+        )
+        self.assertIn("meta-llama/Llama-3-8B-Instruct", out)
+        self.assertEqual(t_out, 4)
+        self.assertGreater(ttft, 0.0)
+        self.assertGreaterEqual(total_time, ttft)
+
+        # 3. Test NF4 diffusion model
+        flux_loaded, _ = loader.load("black-forest-labs/FLUX.1-schnell", tier=2)
+        self.assertEqual(flux_loaded.spec.quantization, "nf4")
+        self.assertEqual(flux_loaded.backend.quantization, "nf4")
+
+        # 4. Test INT4 video model
+        wan_loaded, _ = loader.load("Wan-AI/Wan2.1-T2V-1.3B", tier=2)
+        self.assertEqual(wan_loaded.spec.quantization, "int4")
+        self.assertEqual(wan_loaded.backend.quantization, "int4")
+
+        # 5. Test LocalPyTorchAdapter end-to-end with Tier 2 parameters
+        adapter = LocalPyTorchAdapter(model_loader=loader)
+        req = InferenceRequest(
+            job_id="test-job-tier2",
+            tenant_id="tenant-acme",
+            model_id="meta-llama/Llama-3-8B-Instruct",
+            prompt="Test prompt",
+            parameters={"tier": 2, "quantization": "int4", "max_new_tokens": 4},
+        )
+        cost = asyncio.run(adapter.estimate_cost(req))
+        self.assertGreater(cost, 0)
+
+        result = asyncio.run(adapter.predict(req))
+        self.assertEqual(result.metadata["tier"], 2)
+        self.assertEqual(result.metadata["quantization"], "int4")
+        self.assertGreater(result.usage.completion_tokens, 0)
+        self.assertGreater(result.usage.time_to_first_token_ms, 0.0)
+
+        # 6. Verify LRU cache eviction keeps cache size bounded (max 4 models) to prevent swap thrashing
+        loader.load("meta-llama/Meta-Llama-3-70B-Instruct", tier=2)
+        loader.load("Qwen/Qwen2.5-VL-7B-Instruct", tier=2)
+        loader.load("openai/clip-vit-large-patch14", tier=2)
+        loader.load("THUDM/CogVideoX-2b", tier=2)
+        self.assertLessEqual(len(loader._cache), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-

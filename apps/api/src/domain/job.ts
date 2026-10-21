@@ -74,13 +74,39 @@ export function calculateBackoffSeconds(
 
 export const RoutingPreference = {
   AUTO: 'auto',
+  MOCK: 'mock',
+  LOCAL_CPU: 'local/cpu',
+  LOCAL_GPU: 'local/gpu',
   LOCAL: 'local',
   CLOUD: 'cloud',
+  CLOUD_RUNPOD: 'cloud/runpod',
+  CLOUD_BEDROCK: 'cloud/bedrock',
+  CLOUD_SAGEMAKER: 'cloud/sagemaker',
+  RUNPOD: 'runpod',
+  BEDROCK: 'bedrock',
+  SAGEMAKER: 'sagemaker',
   COST_OPTIMIZED: 'cost_optimized',
   LOW_LATENCY: 'low_latency',
+  LOCAL_FIRST: 'local_first',
 } as const;
 
-export type RoutingPreferenceType = (typeof RoutingPreference)[keyof typeof RoutingPreference];
+export type RoutingPreferenceType =
+  | (typeof RoutingPreference)[keyof typeof RoutingPreference]
+  | 'auto'
+  | 'mock'
+  | 'local/cpu'
+  | 'local/gpu'
+  | 'local'
+  | 'cloud'
+  | 'cloud/runpod'
+  | 'cloud/bedrock'
+  | 'cloud/sagemaker'
+  | 'runpod'
+  | 'bedrock'
+  | 'sagemaker'
+  | 'cost_optimized'
+  | 'low_latency'
+  | 'local_first';
 
 export interface JobUsage {
   promptTokens: number;
@@ -100,6 +126,14 @@ export interface JobResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface JobProgress {
+  phase: 'queued' | 'loading_model' | 'denoising' | 'generating' | 'encoding_artifact' | 'completed' | 'failed';
+  step?: number;
+  totalSteps?: number;
+  percent: number;
+  message?: string;
+}
+
 export interface Job {
   id: string;
   tenantId: string;
@@ -111,6 +145,8 @@ export interface Job {
   routingPreference: RoutingPreferenceType;
   priority: number;
   status: JobStatusType;
+  progress?: JobProgress | null;
+  progressPct?: number | null;
   inputPayload: Record<string, unknown> | null;
   inputUri: string | null;
   outputPayload: Record<string, unknown> | null;
