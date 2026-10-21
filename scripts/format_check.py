@@ -28,6 +28,8 @@ IGNORE_DIRS = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
+    "data",
+    ".minio.sys",
 }
 
 CHECKED_EXTENSIONS = {

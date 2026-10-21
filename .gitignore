@@ -64,6 +64,7 @@ htmlcov/
 # Caches and scratch
 .cache/
 tmp/
+data/
 
 # Local AI Model Store (keep README.md and manifest.json tracked; ignore weight binaries & domain dirs)
 models/*
