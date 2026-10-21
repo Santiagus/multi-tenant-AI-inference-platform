@@ -13,7 +13,7 @@ from apps.worker.contracts import (
     InferenceResult,
     UsageMetrics,
 )
-from apps.worker.models import ExecutionEngine, ModelLoader, tokenize_prompt
+from apps.worker.models import ExecutionEngine, ModelLoader, emit_job_progress, tokenize_prompt
 from apps.worker.providers.base import InferenceProvider
 from apps.worker.telemetry import TelemetryCollector
 
@@ -216,10 +216,9 @@ class LocalPyTorchAdapter(InferenceProvider):
         if request.parameters.get("quantized") or quantization:
             tier = 2
 
-        sys.stderr.write(
-            f"[JOB_PROGRESS] {json.dumps({'phase': 'loading_model', 'percent': 20, 'message': f'Loading {request.model_id} model weights'})}\n"
+        emit_job_progress(
+            {"phase": "loading_model", "percent": 20, "message": f"Loading {request.model_id} model weights"}
         )
-        sys.stderr.flush()
 
         loaded, is_warm = self._loader.load(
             request.model_id,
@@ -231,10 +230,9 @@ class LocalPyTorchAdapter(InferenceProvider):
             quantization=quantization,
         )
 
-        sys.stderr.write(
-            f"[JOB_PROGRESS] {json.dumps({'phase': 'generating', 'percent': 25, 'message': 'Model weights loaded into memory, beginning inference'})}\n"
+        emit_job_progress(
+            {"phase": "generating", "percent": 25, "message": "Model weights loaded into memory, beginning inference"}
         )
-        sys.stderr.flush()
 
         prod_text_pipe = None
         clip_pipe = None
@@ -309,8 +307,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                                 "total_steps": self.target_tokens,
                                 "message": f"Generating tokens: {self.generated}/{self.target_tokens} ({pct}%)",
                             }
-                            sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                            sys.stderr.flush()
+                            emit_job_progress(payload)
 
                     def end(self) -> None:
                         pass
@@ -343,10 +340,13 @@ class LocalPyTorchAdapter(InferenceProvider):
                 if clean_output:
                     output_text = clean_output
 
-            sys.stderr.write(
-                f"[JOB_PROGRESS] {json.dumps({'phase': 'encoding_artifact', 'percent': 95, 'message': 'Token generation complete, preparing response envelope'})}\n"
+            emit_job_progress(
+                {
+                    "phase": "encoding_artifact",
+                    "percent": 95,
+                    "message": "Token generation complete, preparing response envelope",
+                }
             )
-            sys.stderr.flush()
         elif clip_pipe is not None:
             import time
 
@@ -481,25 +481,20 @@ class LocalPyTorchAdapter(InferenceProvider):
                             "percent": pct,
                             "message": f"Denoising step {current_step}/{steps}",
                         }
-                        sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                        sys.stderr.flush()
+                        emit_job_progress(payload)
                         return kwargs
 
                     pipe_kwargs["callback_on_step_end"] = on_step_end
 
-                    sys.stderr.write(
-                        f"[JOB_PROGRESS] {json.dumps({'phase': 'denoising', 'percent': 20, 'message': 'Starting diffusion inference'})}\n"
-                    )
-                    sys.stderr.flush()
+                    emit_job_progress({"phase": "denoising", "percent": 20, "message": "Starting diffusion inference"})
 
                     gen_res = pipe(**pipe_kwargs)
                     gen_image = gen_res.images[0]
                     diff_compute_ms = max((time.perf_counter() - t0) * 1000.0, 1.0)
 
-                    sys.stderr.write(
-                        f"[JOB_PROGRESS] {json.dumps({'phase': 'encoding_artifact', 'percent': 95, 'message': 'Encoding PNG image artifact'})}\n"
+                    emit_job_progress(
+                        {"phase": "encoding_artifact", "percent": 95, "message": "Encoding PNG image artifact"}
                     )
-                    sys.stderr.flush()
                     buf = io.BytesIO()
                     gen_image.save(buf, format="PNG")
                     image_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -519,10 +514,9 @@ class LocalPyTorchAdapter(InferenceProvider):
                 import imageio.v3 as iio
                 import numpy as np
 
-                sys.stderr.write(
-                    f"[JOB_PROGRESS] {json.dumps({'phase': 'generating', 'percent': 30, 'message': 'Starting spatiotemporal video rendering'})}\n"
+                emit_job_progress(
+                    {"phase": "generating", "percent": 30, "message": "Starting spatiotemporal video rendering"}
                 )
-                sys.stderr.flush()
 
                 p_lower = request.prompt.lower()
                 fps = int(request.parameters.get("fps", 24))
@@ -604,8 +598,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                                     "total_steps": target_frames,
                                     "message": f"Rendering video frame {f_idx + 1}/{target_frames} ({pct}%)",
                                 }
-                                sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                                sys.stderr.flush()
+                                emit_job_progress(payload)
                         except Exception:
                             break
                     reader.close()
@@ -685,15 +678,13 @@ class LocalPyTorchAdapter(InferenceProvider):
                                 "total_steps": num_frames,
                                 "message": f"Rendering 3D video frame {f + 1}/{num_frames} ({pct}%)",
                             }
-                            sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                            sys.stderr.flush()
+                            emit_job_progress(payload)
 
                         frames.append(frame)
 
-                sys.stderr.write(
-                    f"[JOB_PROGRESS] {json.dumps({'phase': 'encoding_artifact', 'percent': 95, 'message': 'Encoding MP4 video artifact'})}\n"
+                emit_job_progress(
+                    {"phase": "encoding_artifact", "percent": 95, "message": "Encoding MP4 video artifact"}
                 )
-                sys.stderr.flush()
 
                 buf_v = io.BytesIO()
                 iio.imwrite(buf_v, frames, extension=".mp4", fps=fps, codec="libx264")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -88,9 +89,13 @@ class WorkerRuntime:
                 result.metadata.get("execution_mode", "live" if result.provider_name == "local_pytorch" else "mock")
             )
             is_mocked = bool(result.metadata.get("is_mocked", mode == "mock"))
-            sys.stderr.write(
-                f"[PROVIDER_EXECUTION] job_id={request.job_id} provider={result.provider_name} mode={mode} is_mocked={is_mocked}\n"
-            )
+            if (
+                os.environ.get("ENABLE_JOB_PROGRESS", "").lower() in ("1", "true", "yes")
+                or os.environ.get("LOG_LEVEL", "").lower() == "debug"
+            ):
+                sys.stderr.write(
+                    f"[PROVIDER_EXECUTION] job_id={request.job_id} provider={result.provider_name} mode={mode} is_mocked={is_mocked}\n"
+                )
             artifact_uri = self._artifacts.write_local_artifact(request, result)
 
             return {

@@ -337,7 +337,14 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
     const child = execFile(
       cmd,
       args,
-      { cwd: REPO_ROOT, maxBuffer: 10 * 1024 * 1024 },
+      {
+        cwd: REPO_ROOT,
+        maxBuffer: 10 * 1024 * 1024,
+        env: {
+          ...process.env,
+          ENABLE_JOB_PROGRESS: '1',
+        },
+      },
       (err, stdout, stderr) => {
         if (err) {
           if (typeof stdout === 'string' && stdout.trim().startsWith('{')) {

@@ -12,6 +12,7 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, replace
@@ -28,6 +29,16 @@ MODALITY_TO_DOMAIN_FOLDER: dict[str, str] = {
     "media_photo": "media-photo",
     "media_video": "media-video",
 }
+
+
+def emit_job_progress(payload: dict[str, Any]) -> None:
+    """Stream progress update to stderr if progress streaming or debug logging is active."""
+    if (
+        os.environ.get("ENABLE_JOB_PROGRESS", "").lower() in ("1", "true", "yes")
+        or os.environ.get("LOG_LEVEL", "").lower() == "debug"
+    ):
+        sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
+        sys.stderr.flush()
 
 
 class ExecutionEngine(str, enum.Enum):
@@ -1136,8 +1147,7 @@ class NumpyCpuModelBackend:
                     "total_steps": target_tokens,
                     "message": f"Generating tokens: {step + 1}/{target_tokens} ({pct}%)",
                 }
-                sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                sys.stderr.flush()
+                emit_job_progress(payload)
 
         total_ms = max((time.perf_counter_ns() - start_ns) / 1_000_000, ttft_ms, 0.1)
         output_text = decode_tokens(self._spec.model_id, prompt, generated, spec=self._spec)
@@ -1419,8 +1429,7 @@ class PyTorchModelBackend:
                             "total_steps": target_tokens,
                             "message": f"Generating tokens: {step + 1}/{target_tokens} ({pct}%)",
                         }
-                        sys.stderr.write(f"[JOB_PROGRESS] {json.dumps(payload)}\n")
-                        sys.stderr.flush()
+                        emit_job_progress(payload)
 
                 if self._device.startswith("cuda"):
                     self._torch.cuda.synchronize()
