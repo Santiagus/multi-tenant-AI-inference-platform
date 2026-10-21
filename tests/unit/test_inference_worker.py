@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import numpy as np  # type: ignore[import-not-found]
 
@@ -340,11 +341,11 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
 
     def test_adapter_reasoning_content_separation(self) -> None:
         adapter = LocalPyTorchAdapter()
-        mock_tokenizer = unittest.mock.MagicMock()
+        mock_tokenizer = mock.MagicMock()
         mock_tokenizer.eos_token_id = 0
         mock_tokenizer.apply_chat_template = None
 
-        mock_inputs = unittest.mock.MagicMock()
+        mock_inputs = mock.MagicMock()
         mock_inputs.input_ids = np.zeros((1, 5))
         mock_inputs.to.return_value = mock_inputs
         mock_tokenizer.return_value = mock_inputs
@@ -353,7 +354,7 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
             "<think>\nThinking about induction.\n</think>\n\nHere are 3 core advantages."
         )
 
-        mock_model = unittest.mock.MagicMock()
+        mock_model = mock.MagicMock()
         mock_model.device = "cpu"
         mock_model.config.max_position_embeddings = 2048
         mock_model.generate.return_value = np.zeros((1, 15))

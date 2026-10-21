@@ -35,8 +35,12 @@ class LocalPyTorchAdapter(InferenceProvider):
         if model_id in self._transformers_pipes:
             return self._transformers_pipes[model_id]
         try:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+            import torch  # type: ignore[import-not-found]
+            from transformers import (  # type: ignore[import-not-found]
+                AutoModelForCausalLM,
+                AutoTokenizer,
+                BitsAndBytesConfig,
+            )
 
             is_cuda = device.startswith("cuda") and torch.cuda.is_available()
             tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -80,8 +84,11 @@ class LocalPyTorchAdapter(InferenceProvider):
         if self._diffusion_pipe is not None:
             return self._diffusion_pipe
         try:
-            import torch
-            from diffusers import AutoPipelineForText2Image, FluxPipeline
+            import torch  # type: ignore[import-not-found]
+            from diffusers import (  # type: ignore[import-not-found]
+                AutoPipelineForText2Image,
+                FluxPipeline,
+            )
 
             is_flux = "flux" in model_id.lower()
             if is_flux:
@@ -113,8 +120,8 @@ class LocalPyTorchAdapter(InferenceProvider):
         if "clip_pipe" in self._transformers_pipes:
             return self._transformers_pipes["clip_pipe"]
         try:
-            import torch
-            from transformers import CLIPModel, CLIPProcessor
+            import torch  # type: ignore[import-not-found]
+            from transformers import CLIPModel, CLIPProcessor  # type: ignore[import-not-found]
 
             processor: Any = CLIPProcessor.from_pretrained(model_id)
             model: Any = CLIPModel.from_pretrained(model_id)
@@ -245,7 +252,7 @@ class LocalPyTorchAdapter(InferenceProvider):
         if prod_text_pipe is not None:
             import time
 
-            import torch
+            import torch  # type: ignore[import-not-found]
 
             tokenizer, hf_model = prod_text_pipe
             t0 = time.perf_counter()
@@ -274,9 +281,11 @@ class LocalPyTorchAdapter(InferenceProvider):
             # Progress streamer to emit [JOB_PROGRESS] events every 5-10 tokens or percentage jump
             streamer = None
             try:
-                from transformers.generation.streamers import BaseStreamer
+                from transformers.generation.streamers import (  # type: ignore[import-not-found]
+                    BaseStreamer,
+                )
 
-                class _HuggingFaceProgressStreamer(BaseStreamer):
+                class _HuggingFaceProgressStreamer(BaseStreamer):  # type: ignore[misc]
                     def __init__(self, target_tokens: int, start_pct: int = 25, max_pct: int = 90) -> None:
                         self.target_tokens = max(target_tokens, 1)
                         self.start_pct = start_pct
@@ -350,8 +359,8 @@ class LocalPyTorchAdapter(InferenceProvider):
         elif clip_pipe is not None:
             import time
 
-            import torch
-            from PIL import Image
+            import torch  # type: ignore[import-not-found]
+            from PIL import Image  # type: ignore[import-not-found]
 
             processor, clip_model = clip_pipe
             t0 = time.perf_counter()
@@ -510,9 +519,9 @@ class LocalPyTorchAdapter(InferenceProvider):
                 import io
                 import math
 
-                import imageio.v2 as imageio_v2
-                import imageio.v3 as iio
-                import numpy as np
+                import imageio.v2 as imageio_v2  # type: ignore[import-not-found,import-untyped]
+                import imageio.v3 as iio  # type: ignore[import-not-found,import-untyped]
+                import numpy as np  # type: ignore[import-not-found]
 
                 emit_job_progress(
                     {"phase": "generating", "percent": 30, "message": "Starting spatiotemporal video rendering"}
