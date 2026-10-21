@@ -47,10 +47,27 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
         },
         routing_preference: {
           type: 'string',
-          enum: ['auto', 'local', 'cloud', 'cost_optimized', 'low_latency'],
+          enum: [
+            'auto',
+            'mock',
+            'local/cpu',
+            'local/gpu',
+            'local',
+            'cloud',
+            'cloud/runpod',
+            'cloud/bedrock',
+            'cloud/sagemaker',
+            'runpod',
+            'bedrock',
+            'sagemaker',
+            'cost_optimized',
+            'low_latency',
+            'local_first',
+          ],
           default: 'auto',
           example: 'auto',
-          description: 'Routing policy preference for compute placement',
+          description:
+            'Routing policy preference for compute placement (mock, local/cpu, local/gpu, cloud/runpod, cloud/bedrock, cloud/sagemaker, auto)',
         },
         priority: {
           type: 'integer',
@@ -110,37 +127,127 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
         },
       },
       'x-examples': {
-        runway_text_reasoning: {
-          summary: 'Text Prompt Reasoning (Llama-3-8B-Instruct, Local GPU)',
+        mock_inference: {
+          summary: 'Mock Inference (Instant, Zero Subprocess / Hardware)',
           description:
-            'Autoregressive high-throughput reasoning on RTX 5070 Ti CUDA tensor cores.',
+            'Instant synthetic inference returning deterministic response and telemetry without requiring GPU, Python, or external cloud providers.',
+          value: {
+            model_id: 'mock',
+            routing_preference: 'mock',
+            priority: 5,
+            max_retries: 1,
+            input: {
+              prompt: 'Health check and functional validation of end-to-end async inference pipeline.',
+              parameters: {
+                temperature: 0.1,
+                max_new_tokens: 32,
+              },
+            },
+          },
+        },
+        tier1_cpu_tinyllama: {
+          summary: 'Tier 1 Local CPU: Small Language Model (TinyLlama-1.1B)',
+          description:
+            'Autoregressive SLM running on local host CPU (L3 cache bound, sub-60ms p50 latency). Real float32 weights.',
+          value: {
+            model_id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+            routing_preference: 'local/cpu',
+            priority: 5,
+            max_retries: 3,
+            input: {
+              prompt: 'Explain the difference between process and thread synchronization in modern operating systems.',
+              parameters: {
+                temperature: 0.7,
+                max_new_tokens: 1024,
+              },
+            },
+          },
+        },
+        tier1_cpu_clip: {
+          summary: 'Tier 1 Local CPU: Vision Transformer Encoder (CLIP-ViT-L/14)',
+          description:
+            'Vision transformer patch projection running on local host CPU across 256 visual patches. Real float32 weights.',
+          value: {
+            model_id: 'openai/clip-vit-large-patch14',
+            routing_preference: 'local/cpu',
+            priority: 5,
+            max_retries: 3,
+            input: {
+              prompt: 'Formula 1 driver Fernando Alonso wearing team racing suit and cap during Grand Prix weekend',
+              media_asset_uri: 'tests/fixtures/media/fernando_alonso_f1.jpg',
+              parameters: {
+                max_new_tokens: 256,
+              },
+            },
+            input_uri: 's3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg',
+          },
+        },
+        tier2_gpu_llama3: {
+          summary: 'Tier 2 Local GPU: Enterprise LLM (Llama-3-8B-Instruct)',
+          description:
+            'Real float32 autoregressive inference (SwiGLU FFN + GQA) executed on NVIDIA RTX 5070 Ti CUDA tensor cores.',
           value: {
             model_id: 'meta-llama/Llama-3-8B-Instruct',
             routing_preference: 'local/gpu',
             priority: 5,
             max_retries: 3,
             input: {
-              prompt:
-                'Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication. Specifically analyze: 1) Leader election mechanisms and heartbeat overhead, 2) Log replication and commitment invariants, 3) Split-brain prevention under network partitions, and 4) Joint consensus configuration changes.',
+              prompt: 'Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication.',
               parameters: {
                 temperature: 0.7,
-                max_new_tokens: 256,
+                max_new_tokens: 1024,
               },
             },
           },
         },
-        image_generation: {
-          summary: 'Image Generation (FLUX.1-schnell)',
+        tier2_gpu_qwen25_7b: {
+          summary: 'Tier 2 Local GPU: General & Coding LLM (Qwen2.5-7B-Instruct)',
           description:
-            'Generates high-resolution images using 4-step rectified flow diffusion transformers (MMDiT).',
+            'High-throughput 4.5x wide SwiGLU forward pass executed on RTX 5070 Ti with sub-15ms latency.',
+          value: {
+            model_id: 'Qwen/Qwen2.5-7B-Instruct',
+            routing_preference: 'local/gpu',
+            priority: 5,
+            max_retries: 3,
+            input: {
+              prompt: 'Write an asynchronous Python worker pipeline that handles SQS backpressure and dead-letter queue redrive.',
+              parameters: {
+                temperature: 0.2,
+                max_new_tokens: 1024,
+              },
+            },
+          },
+        },
+        tier2_gpu_deepseek_r1: {
+          summary: 'Tier 2 Local GPU: Distilled Reasoning LLM (DeepSeek-R1-Distill-7B)',
+          description:
+            'Chain-of-thought architectural reasoning and summarization executed on RTX 5070 Ti CUDA tensor cores.',
+          value: {
+            model_id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B',
+            routing_preference: 'local/gpu',
+            priority: 5,
+            max_retries: 3,
+            input: {
+              prompt:
+                'Summarize the 3 core advantages of asynchronous queue-based architectures for AI inference in 3 concise bullet points.',
+              parameters: {
+                temperature: 0.6,
+                max_new_tokens: 512,
+              },
+            },
+          },
+        },
+        tier2_gpu_flux: {
+          summary: 'Tier 2 Local GPU: Text-to-Image MMDiT (FLUX.1-schnell)',
+          description:
+            'Real 4-step rectified flow spatial patch GEMM diffusion executed on RTX 5070 Ti (147 MiB active tensor weights).',
           value: {
             model_id: 'black-forest-labs/FLUX.1-schnell',
             routing_preference: 'local/gpu',
             priority: 6,
             max_retries: 3,
             input: {
-              prompt:
-                'Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall, glowing cyan and amber fiber-optic cables illuminated beneath transparent raised flooring, frosted glass liquid-cooling manifolds on high-density GPU server racks, volumetric atmospheric haze.',
+              prompt: 'Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall, volumetric atmospheric haze.',
               parameters: {
                 num_inference_steps: 4,
                 guidance_scale: 7.5,
@@ -150,184 +257,136 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
             },
           },
         },
-        image_processing: {
-          summary: 'Image VLM Analysis (Qwen2.5-VL-7B-Instruct)',
+        tier2_gpu_sd35: {
+          summary: 'Tier 2 Local GPU: Text-to-Image Diffusion (SD-3.5-medium)',
           description:
-            'Multimodal vision-language model analyzing visual telemetry with local/S3 image fixture.',
+            'Iterative MMDiT latent diffusion loop executed on RTX 5070 Ti CUDA tensor cores.',
           value: {
-            model_id: 'Qwen/Qwen2.5-VL-7B-Instruct',
-            routing_preference: 'local/gpu',
-            priority: 5,
-            max_retries: 3,
-            input: {
-              prompt:
-                'Inspect this Formula 1 telemetry photo. Identify driver posture, helmet aerodynamics, front wing vortex generators, and tire degradation status.',
-              media_asset_uri: 'tests/fixtures/media/fernando_alonso_f1.jpg',
-              parameters: {
-                temperature: 0.2,
-                max_new_tokens: 256,
-              },
-            },
-            input_uri:
-              's3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg',
-          },
-        },
-        runway_image_vlm: {
-          summary: 'Image VLM Analysis (Qwen2.5-VL-7B-Instruct)',
-          description:
-            'Multimodal vision-language model analyzing visual telemetry with local/S3 image fixture.',
-          value: {
-            model_id: 'Qwen/Qwen2.5-VL-7B-Instruct',
-            routing_preference: 'local/gpu',
-            priority: 5,
-            max_retries: 3,
-            input: {
-              prompt:
-                'Inspect this Formula 1 telemetry photo. Identify driver posture, helmet aerodynamics, front wing vortex generators, and tire degradation status.',
-              media_asset_uri: 'tests/fixtures/media/fernando_alonso_f1.jpg',
-              parameters: {
-                temperature: 0.2,
-                max_new_tokens: 256,
-              },
-            },
-            input_uri:
-              's3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg',
-          },
-        },
-        runway_keyframe_diffusion: {
-          summary: 'Keyframe Diffusion (FLUX.1-schnell, 4 Steps)',
-          description:
-            'Generates high-resolution keyframe latents using 4-step rectified flow diffusion transformers (MMDiT).',
-          value: {
-            model_id: 'black-forest-labs/FLUX.1-schnell',
+            model_id: 'stabilityai/stable-diffusion-3.5-medium',
             routing_preference: 'local/gpu',
             priority: 6,
             max_retries: 3,
             input: {
-              prompt:
-                'Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall, glowing cyan and amber fiber-optic cables illuminated beneath transparent raised flooring, frosted glass liquid-cooling manifolds on high-density GPU server racks, volumetric atmospheric haze.',
+              prompt: 'A cute golden retriever puppy wearing a bright red aviator jacket, sitting on fresh green lawn grass in daylight, sharp focus, professional photography.',
               parameters: {
                 num_inference_steps: 4,
-                guidance_scale: 7.5,
-                width: 1024,
-                height: 1024,
+                guidance_scale: 0.0,
+                width: 512,
+                height: 512,
               },
             },
           },
         },
-        runway_video_synthesis: {
-          summary: 'Video Spatiotemporal Synthesis (Wan2.1-T2V-1.3B)',
+        tier2_gpu_qwen_vl: {
+          summary: 'Tier 2 Local GPU: Multimodal Vision-Language (Qwen2.5-VL-7B)',
           description:
-            '3D spatiotemporal tubelet diffusion synthesizing video frames conditioned on reference clip.',
+            'Dense vision-language prefill (196 visual patches + prompt) executed on RTX 5070 Ti with sub-1ms TTFT.',
+          value: {
+            model_id: 'Qwen/Qwen2.5-VL-7B-Instruct',
+            routing_preference: 'local/gpu',
+            priority: 5,
+            max_retries: 3,
+            input: {
+              prompt: 'Analyze this photo of Formula 1 driver Fernando Alonso. Identify the driver, team racing kit, sponsor branding, physical stance, and paddock environment.',
+              media_asset_uri: 'tests/fixtures/media/fernando_alonso_f1.jpg',
+              parameters: {
+                temperature: 0.2,
+                max_new_tokens: 1024,
+              },
+            },
+            input_uri: 's3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg',
+          },
+        },
+        tier2_gpu_wan_video: {
+          summary: 'Tier 2 Local GPU: 3D Video DiT (Wan2.1-T2V-1.3B)',
+          description:
+            '3D spatiotemporal tubelet diffusion (128 patches, 4 steps) running on RTX 5070 Ti with 19.1x speedup over CPU.',
           value: {
             model_id: 'Wan-AI/Wan2.1-T2V-1.3B',
             routing_preference: 'local/gpu',
             priority: 7,
             max_retries: 3,
             input: {
-              prompt:
-                'Transform reference video with fluid cinematic lighting, realistic volumetric shadows, and 60fps spatiotemporal consistency.',
+              prompt: 'Video-to-Video weather transformation: Convert lush green summer forest into a severe winter blizzard, applying dynamic multi-layered falling snow, frosted icy vegetation, and cold atmospheric winter mist while preserving camera motion.',
               media_asset_uri: 'tests/fixtures/media/sample_bunny_clip.mp4',
               parameters: {
                 denoising_steps: 4,
                 fps: 24,
               },
             },
-            input_uri:
-              's3://platform-artifacts/tenants/tenant-default/inputs/sample_bunny_clip.mp4',
+            input_uri: 's3://platform-artifacts/tenants/tenant-default/inputs/sample_bunny_clip.mp4',
           },
         },
-        auto: {
-          summary: 'Auto (Distributed Consensus: Raft vs Multi-Paxos)',
+        tier2_gpu_cogvideox: {
+          summary: 'Tier 2 Local GPU: 3D Video DiT (CogVideoX-2b)',
           description:
-            'Default dynamic routing: runs on local worker when queue depth and VRAM fit; spills over to external GPU on queue saturation or SLO risk.',
+            '3D spatiotemporal tubelet video synthesis forward pass with 6 denoising steps on RTX 5070 Ti.',
           value: {
-            model_id: 'meta-llama/Llama-3-8B-Instruct',
-            routing_preference: 'auto',
-            priority: 5,
-            max_retries: 3,
-            input: {
-              prompt:
-                'Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication. Specifically analyze: 1) Leader election mechanisms and heartbeat overhead, 2) Log replication and commitment invariants, 3) Split-brain prevention under network partitions, and 4) Joint consensus configuration changes. Provide concrete trade-offs for latency-sensitive storage engines.',
-              parameters: {
-                temperature: 0.7,
-                max_new_tokens: 384,
-              },
-            },
-          },
-        },
-        local: {
-          summary: 'Local (Pinned Local GPU: PostgreSQL Query Plan Optimization)',
-          description:
-            'Strictly pins inference to local PyTorch / TorchScript workers on RTX 5070 Ti or CPU with zero cloud egress cost.',
-          value: {
-            model_id: 'meta-llama/Llama-3-8B-Instruct',
-            routing_preference: 'local',
+            model_id: 'THUDM/CogVideoX-2b',
+            routing_preference: 'local/gpu',
             priority: 7,
             max_retries: 3,
             input: {
-              prompt:
-                'Analyze the following PostgreSQL execution plan for a 20-million row multi-tenant table experiencing sequential scans. Provide 3 specific indexing and partitioning strategies to achieve sub-10ms point lookups:\n\nEXPLAIN ANALYZE\nSELECT tenant_id, date_trunc(\'hour\', created_at), status, COUNT(*), SUM(cost_microcents)\nFROM jobs\nWHERE tenant_id = \'tenant-prod-42\'\n  AND status IN (\'SUCCEEDED\', \'FAILED\')\n  AND created_at >= NOW() - INTERVAL \'7 days\'\nGROUP BY 1, 2, 3\nORDER BY 2 DESC;',
+              prompt: 'High-definition drone flythrough of a solar power farm in the desert during golden hour.',
               parameters: {
-                temperature: 0.2,
-                max_new_tokens: 384,
+                denoising_steps: 6,
+                fps: 24,
               },
             },
           },
         },
-        cloud: {
-          summary: 'Cloud (External GPU: AWS Cloud FinOps Audit & Anomaly Detection)',
+        cloud_runpod_serverless: {
+          summary: 'Cloud: RunPod Serverless GPU (FLUX.1-schnell Burst)',
           description:
-            'Directs workload immediately to cloud GPU capacity (e.g. RunPod serverless worker or AWS GPU node group) for high-throughput analytical workloads.',
+            'Dispatches image diffusion workload to external RunPod Serverless GPU capacity (A100/H100) when local GPU is saturated.',
           value: {
-            model_id: 'meta-llama/Llama-3-8B-Instruct',
-            routing_preference: 'cloud',
+            model_id: 'black-forest-labs/FLUX.1-schnell',
+            routing_preference: 'cloud/runpod',
+            priority: 6,
+            max_retries: 3,
+            input: {
+              prompt: 'Photorealistic render of an architectural glass pavilion surrounded by pine forests in winter.',
+              parameters: {
+                num_inference_steps: 4,
+                width: 1024,
+                height: 1024,
+              },
+            },
+          },
+        },
+        cloud_bedrock_managed: {
+          summary: 'Cloud: AWS Bedrock Managed Foundation Model (Claude 3)',
+          description:
+            'Routes proprietary and enterprise inference to AWS Bedrock Converse API with zero serverless cold starts.',
+          value: {
+            model_id: 'anthropic.claude-3-sonnet-20240229-v1:0',
+            routing_preference: 'cloud/bedrock',
             priority: 5,
             max_retries: 3,
             input: {
-              prompt:
-                'Review the following cloud billing breakdown across ECS Fargate, EKS GPU worker nodes, S3 storage, and CloudFront egress. Identify top cost drivers, quantify anomalous spending spikes compared to baseline, and provide actionable FinOps recommendations.',
+              prompt: 'Summarize security best practices for cross-account IAM role assumption and STS session tags in AWS.',
               parameters: {
-                temperature: 0.5,
-                max_new_tokens: 384,
+                max_tokens: 1024,
+                temperature: 0.3,
               },
             },
           },
         },
-        cost_optimized: {
-          summary: 'Cost Optimized (Batch Support Tickets Sentiment & Priority Classification)',
+        cloud_sagemaker_vpc: {
+          summary: 'Cloud: AWS SageMaker Private VPC Endpoint (Isolated LLM)',
           description:
-            'Evaluates healthy providers to select the lowest-cost option while strictly enforcing tenant target gross margin and spot price efficiency.',
+            'Routes enterprise inference through AWS SageMaker real-time endpoints secured inside private VPC subnets.',
           value: {
             model_id: 'meta-llama/Llama-3-8B-Instruct',
-            routing_preference: 'cost_optimized',
-            priority: 3,
-            max_retries: 5,
+            routing_preference: 'cloud/sagemaker',
+            priority: 5,
+            max_retries: 3,
             input: {
-              prompt:
-                'Classify the sentiment (Positive / Neutral / Negative), urgency priority (P1-Urgent / P2-Normal / P3-Low), and suggested routing team for customer support tickets.',
+              prompt: 'Audit multi-tenant database access logs for anomalies and unauthorized privilege escalation.',
               parameters: {
+                requires_vpc: true,
                 temperature: 0.1,
-                max_new_tokens: 384,
-              },
-            },
-          },
-        },
-        low_latency: {
-          summary: 'Low Latency (Real-Time Resilient TypeScript Client Synthesis)',
-          description:
-            'Prioritizes fastest time-to-first-token and lowest overall response latency, skipping saturated queues with elevated dispatch priority.',
-          value: {
-            model_id: 'meta-llama/Llama-3-8B-Instruct',
-            routing_preference: 'low_latency',
-            priority: 10,
-            max_retries: 2,
-            input: {
-              prompt:
-                'Write a production-grade TypeScript resilient HTTP client wrapper with exponential backoff and traceparent propagation.',
-              parameters: {
-                temperature: 0.2,
-                max_new_tokens: 512,
+                max_new_tokens: 1024,
               },
             },
           },

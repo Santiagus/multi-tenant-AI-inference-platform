@@ -288,7 +288,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Execute full 3-stage Flyte workflow for text_to_video and video_to_video modification using local MP4 fixture
         out1 = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Generate multi-stage keyframes and optical flow metadata.",
@@ -311,9 +311,9 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual(out1["backend_name"], "pytorch_torchscript_cpu")
         self.assertFalse(out1["flyte_stage1_cache_hit"])
         self.assertIn(
-            "cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/result.json", out1["cloudfront_artifact_url"]
+            "cloudfront.net/tenants/tenant-media/jobs/job-flyte-01/result.json", out1["cloudfront_artifact_url"]
         )
-        self.assertIn("cloudfront.net/tenants/tenant-runway/jobs/job-flyte-01/output.mp4", out1["cloudfront_media_url"])
+        self.assertIn("cloudfront.net/tenants/tenant-media/jobs/job-flyte-01/output.mp4", out1["cloudfront_media_url"])
         self.assertEqual(out1["usage"]["frames_generated"], 96)
         self.assertGreater(out1["usage"]["total_tokens"], 96 * 16)
         self.assertEqual(out1["kinesis_metering_event"]["event_type"], "WORKFLOW_STAGE_COMPLETED")
@@ -321,7 +321,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Second invocation with identical Stage 1 inputs hits Flyte task memoization cache
         out2 = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Generate multi-stage keyframes and optical flow metadata.",
@@ -338,7 +338,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Also verify PNG keyframe fixture inspection
         out_png = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-png-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Keyframe conditioning pass.",
@@ -354,7 +354,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Verify pet JPEG fixture inspection (cat.jpg)
         out_cat = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-cat-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Identify domestic cat and extract segmentation mask.",
@@ -370,7 +370,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Verify person portrait fixture inspection (portrait_person.jpg for background removal)
         out_portrait = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-portrait-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Remove background from human selfie portrait.",
@@ -386,7 +386,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Verify full MP4 video clip inspection (sample_bunny_clip.mp4)
         out_bunny = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-bunny-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Apply stylized neural render to bunny video clip.",
@@ -401,7 +401,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
 
         # Verify athlete fixtures (Jorge Martin MotoGP, Fernando Alonso F1, Lamine Yamal Spain)
         out_martin = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-martin-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Segment MotoGP world champion rider Jorge Martin with helmet.",
@@ -415,7 +415,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual(out_martin["asset_inspection"]["height"], 1281)
 
         out_alonso = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-alonso-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Isolate F1 champion Fernando Alonso race suit and background.",
@@ -429,7 +429,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual(out_alonso["asset_inspection"]["height"], 1268)
 
         out_yamal = multi_stage_inference_workflow(
-            tenant_id="tenant-runway",
+            tenant_id="tenant-media",
             job_id="job-flyte-yamal-01",
             model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             prompt="Detect Spain national team player Lamine Yamal in match action.",
@@ -447,7 +447,7 @@ class TestAwsTerraformAndEphemeralPlatform(unittest.TestCase):
         self.assertEqual([s.requests.gpu for s in specs], ["0", "1", "0"])
         self.assertEqual(specs[1].kueue_queue, "tenant-default-gpu-queue")
 
-        flyte_k8s_job = render_flyte_gpu_stage_k8s_job("tenant-runway")
+        flyte_k8s_job = render_flyte_gpu_stage_k8s_job("tenant-media")
         self.assertEqual(validate_manifest_against_kyverno(flyte_k8s_job), [])
 
 

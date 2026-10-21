@@ -124,6 +124,27 @@ All endpoints require authentication via Bearer token: `Authorization: Bearer <t
 
 ### 2.2 Get Job Status & Result
 - **Method**: `GET /v1/jobs/:id`
+- **Response (200 OK - In-Flight Processing)**:
+```json
+{
+  "job_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "status": "PROCESSING",
+  "model_id": "black-forest-labs/FLUX.1-schnell",
+  "routing_preference": "local/gpu",
+  "provider": "local_pytorch",
+  "progress_pct": 75,
+  "progress": {
+    "phase": "denoising",
+    "step": 3,
+    "total_steps": 4,
+    "percent": 75,
+    "message": "Denoising step 3/4"
+  },
+  "created_at": "2026-10-09T14:30:00Z",
+  "started_at": "2026-10-09T14:30:01Z"
+}
+```
+
 - **Response (200 OK - Terminal Succeeded)**:
 ```json
 {
@@ -131,6 +152,11 @@ All endpoints require authentication via Bearer token: `Authorization: Bearer <t
   "status": "SUCCEEDED",
   "model_id": "meta-llama/Llama-3-8B-Instruct",
   "provider": "local_pytorch",
+  "progress_pct": 100,
+  "progress": {
+    "phase": "completed",
+    "percent": 100
+  },
   "created_at": "2026-10-09T14:30:00Z",
   "started_at": "2026-10-09T14:30:01Z",
   "completed_at": "2026-10-09T14:30:04Z",
@@ -206,6 +232,58 @@ To test the API interactively, the repository maintains an executable REST scrat
 | **4. Job Cancellation** | Verifies client-directed abort and terminal conflict protection | `POST /v1/jobs` → `POST /v1/jobs/:id/cancel` → `GET /v1/jobs/:id` → `POST /v1/jobs/:id/cancel` (conflict attempt) | `QUEUED` → `CANCELLED`; second cancel attempt returns `409 Conflict` |
 | **5. RFC 7807 Error Handling** | Verifies structured Problem Details errors | Invalid `POST /v1/jobs` → Non-existent `GET /v1/jobs/:id` | `400 Bad Request` (validation issues) and `404 Not Found` Problem Details |
 | **6. Worker, Retries & DLQ** | Verifies worker execution, transient backoff retries, and DLQ quarantine | `POST /v1/jobs` → `POST /v1/worker/process-next` → `GET /v1/jobs/:id` → `GET /v1/jobs/dlq` | `QUEUED` → `PROCESSING` → `RETRYING` / `FAILED` (quarantined in DLQ) |
+
+---
+
+## 6. Progress Reporting & Future Streaming Improvements
+
+### 6.1 Implemented: REST Polling Progress (`GET /v1/jobs/:id`)
+Long-running generative inference (diffusion denoising, large language models) reports real-time progress through monotonic step milestones exposed directly on `GET /v1/jobs/:id`:
+* **`progress_pct`**: An integer scalar ($0 \to 100$) for simple progress bar rendering in client UIs.
+* **`progress`**: Structured lifecycle phase metadata:
+  ```json
+  {
+    "phase": "loading_model" | "denoising" | "generating" | "encoding_artifact" | "completed" | "failed",
+    "step": 2,
+    "total_steps": 4,
+    "percent": 50,
+    "message": "Denoising step 2/4"
+  }
+  ```
+The worker hooks into PyTorch/`diffusers` step callbacks (`callback_on_step_end`), streaming progress ticks into the database while throttling high-frequency disk I/O.
+
+### 6.2 Architectural Improvements (Roadmap / Deferred)
+
+```mermaid
+flowchart TD
+    Client["Client / UI / Script"]
+    REST["REST Polling: GET /v1/jobs/:id (Implemented)"]
+    SSE["SSE Push Stream: GET /v1/jobs/:id/events (Deferred)"]
+    Webhook["Webhooks: POST webhook_url (Deferred)"]
+    RedisStore[("Redis Cache-Aside & PubSub (ADR-0006)")]
+    PG[("PostgreSQL Durable State")]
+    Worker["Inference Worker (Diffusers Step Hook)"]
+
+    Worker -->|"Volatile Step Ticks (HSET with TTL)"| RedisStore
+    Worker -->|"Terminal States (SUCCEEDED / FAILED)"| PG
+    RedisStore -->|"Real-Time Push Ticks"| SSE
+    RedisStore -->|"Cache-Aside In-Flight Overlay"| REST
+    PG -->|"Durable Record (Status & Artifacts)"| REST
+    Worker -->|"Completion Event"| Webhook
+    REST --> Client
+    SSE --> Client
+    Webhook --> Client
+```
+
+1. **In-Memory Cache-Aside Pattern (Redis / Valkey)**:
+   * **Separation of Concerns**: In accordance with [ADR-0006](../adr/0006-redis-scoped-coordination.md), PostgreSQL remains the durable source of truth for permanent lifecycle states (`QUEUED`, `SUCCEEDED`, `FAILED`, `CANCELLED`).
+   * **Volatile Progress Keys**: Sub-second in-flight denoising progress ticks are written directly to Redis (`HSET job:{id}:progress` with a 10-minute TTL).
+   * **Cache-Aside REST Overlay**: When `GET /v1/jobs/:id` is invoked, the API reads the job envelope from PostgreSQL and transparently overlays live progress from Redis if the job is `PROCESSING`, preventing database disk write contention under thousands of concurrent inference steps.
+2. **Server-Sent Events (SSE) Push Stream (`GET /v1/jobs/:id/events`)**:
+   * For interactive web dashboards and frontends needing sub-second push updates without polling overhead.
+   * Transmits `text/event-stream` chunks (`event: progress`, `event: completed`).
+3. **Out-of-Band Webhooks (`webhook_url`)**:
+   * For backend-to-backend orchestrators (e.g., Flyte DAGs or enterprise workflow engines), permitting zero-polling notification when long batch jobs reach terminal state.
 
 
 

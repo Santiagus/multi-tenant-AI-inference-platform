@@ -96,48 +96,74 @@ describe('OpenAPI & Swagger Documentation Routes', () => {
     assert.equal(jobsJsonSchema.example.priority, 5);
     assert.ok(jobsJsonSchema.example.input?.prompt);
 
-    // Verify /v1/jobs has selectable examples dropdown for each routing_preference
+    // Verify /v1/jobs has selectable examples dropdown
     const postJobsExamples = postJobsOp.requestBody.content?.['application/json']?.examples;
     assert.ok(postJobsExamples, 'POST /v1/jobs must have examples map for Swagger UI dropdown');
-    const expectedPreferences = ['auto', 'local', 'cloud', 'cost_optimized', 'low_latency'];
-    for (const pref of expectedPreferences) {
-      assert.ok(postJobsExamples[pref], `Expected example for routing_preference '${pref}'`);
-      assert.ok(postJobsExamples[pref].summary, `Example for '${pref}' must have a summary`);
-      assert.equal(
-        postJobsExamples[pref].value?.routing_preference,
-        pref,
-        `Example '${pref}' value must set routing_preference to '${pref}'`
-      );
-      assert.ok(
-        postJobsExamples[pref].value?.model_id,
-        `Example '${pref}' must have model_id`
-      );
-      assert.ok(
-        postJobsExamples[pref].value?.input?.prompt,
-        `Example '${pref}' must have input prompt`
-      );
+
+    // Verify mock inference example
+    assert.ok(postJobsExamples['mock_inference'], 'Expected example for mock_inference');
+    assert.equal(postJobsExamples['mock_inference'].value?.routing_preference, 'mock');
+
+    // Verify Tier 1 Local CPU examples
+    assert.ok(postJobsExamples['tier1_cpu_tinyllama'], 'Expected example for tier1_cpu_tinyllama');
+    assert.equal(postJobsExamples['tier1_cpu_tinyllama'].value?.routing_preference, 'local/cpu');
+    assert.equal(postJobsExamples['tier1_cpu_tinyllama'].value?.model_id, 'TinyLlama/TinyLlama-1.1B-Chat-v1.0');
+
+    assert.ok(postJobsExamples['tier1_cpu_clip'], 'Expected example for tier1_cpu_clip');
+    assert.equal(postJobsExamples['tier1_cpu_clip'].value?.routing_preference, 'local/cpu');
+    assert.equal(postJobsExamples['tier1_cpu_clip'].value?.model_id, 'openai/clip-vit-large-patch14');
+
+    // Verify Tier 2 Local GPU examples
+    assert.ok(postJobsExamples['tier2_gpu_llama3'], 'Expected example for tier2_gpu_llama3');
+    assert.equal(postJobsExamples['tier2_gpu_llama3'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_qwen25_7b'], 'Expected example for tier2_gpu_qwen25_7b');
+    assert.equal(postJobsExamples['tier2_gpu_qwen25_7b'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_deepseek_r1'], 'Expected example for tier2_gpu_deepseek_r1');
+    assert.equal(postJobsExamples['tier2_gpu_deepseek_r1'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_flux'], 'Expected example for tier2_gpu_flux');
+    assert.equal(postJobsExamples['tier2_gpu_flux'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_sd35'], 'Expected example for tier2_gpu_sd35');
+    assert.equal(postJobsExamples['tier2_gpu_sd35'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_qwen_vl'], 'Expected example for tier2_gpu_qwen_vl');
+    assert.equal(postJobsExamples['tier2_gpu_qwen_vl'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_wan_video'], 'Expected example for tier2_gpu_wan_video');
+    assert.equal(postJobsExamples['tier2_gpu_wan_video'].value?.routing_preference, 'local/gpu');
+
+    assert.ok(postJobsExamples['tier2_gpu_cogvideox'], 'Expected example for tier2_gpu_cogvideox');
+    assert.equal(postJobsExamples['tier2_gpu_cogvideox'].value?.routing_preference, 'local/gpu');
+
+    // Verify cloud provider examples
+    assert.ok(postJobsExamples['cloud_runpod_serverless'], 'Expected example for cloud_runpod_serverless');
+    assert.equal(postJobsExamples['cloud_runpod_serverless'].value?.routing_preference, 'cloud/runpod');
+
+    assert.ok(postJobsExamples['cloud_bedrock_managed'], 'Expected example for cloud_bedrock_managed');
+    assert.equal(postJobsExamples['cloud_bedrock_managed'].value?.routing_preference, 'cloud/bedrock');
+
+    assert.ok(postJobsExamples['cloud_sagemaker_vpc'], 'Expected example for cloud_sagemaker_vpc');
+    assert.equal(postJobsExamples['cloud_sagemaker_vpc'].value?.routing_preference, 'cloud/sagemaker');
+
+    // Verify duplicate cases already covered in tier 1 or 2 have been removed
+    const removedDuplicates = [
+      'image_generation',
+      'image_processing',
+      'auto',
+      'local',
+      'cloud',
+      'cost_optimized',
+      'low_latency',
+    ];
+    for (const dup of removedDuplicates) {
+      assert.equal(postJobsExamples[dup], undefined, `Duplicate example '${dup}' must be removed`);
     }
 
-    // Verify image generation and image processing examples
-    assert.ok(postJobsExamples['image_generation'], 'Expected example for image_generation');
-    assert.equal(
-      postJobsExamples['image_generation'].value?.model_id,
-      'black-forest-labs/FLUX.1-schnell'
-    );
-    assert.ok(
-      postJobsExamples['image_generation'].value?.input?.parameters?.width,
-      'image_generation example must have width parameter'
-    );
-
-    assert.ok(postJobsExamples['image_processing'], 'Expected example for image_processing');
-    assert.equal(
-      postJobsExamples['image_processing'].value?.model_id,
-      'Qwen/Qwen2.5-VL-7B-Instruct'
-    );
-    assert.ok(
-      postJobsExamples['image_processing'].value?.input_uri,
-      'image_processing example must have input_uri'
-    );
+    // Verify exactly 14 curated, non-duplicated examples exist in Swagger UI
+    assert.equal(Object.keys(postJobsExamples).length, 14, 'Expected exactly 14 distinct curated examples in Swagger UI');
 
     // Verify x-tenant-id security scheme is configured in components
     const tenantScheme = spec.components?.securitySchemes?.tenantId;
