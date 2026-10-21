@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { JobService } from '../application/job-service.js';
-import type { JobWorker } from '../application/job-worker.js';
+import { type JobWorker, getJobOutputModality } from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ValidationError } from '../domain/errors.js';
@@ -297,6 +297,29 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         name: 'output_artifact',
         download_url: downloadUrl,
       });
+
+      const modality = getJobOutputModality(job.modelId);
+      if (modality === 'image') {
+        const imageKey = `tenants/${tenantId}/outputs/${job.id}/output.png`;
+        const imageDownloadUrl = await storageClient.getPresignedDownloadUrl(imageKey);
+        artifacts.push({
+          name: 'output_image',
+          download_url: imageDownloadUrl,
+        });
+      } else if (modality === 'video') {
+        const videoKey = `tenants/${tenantId}/outputs/${job.id}/output.mp4`;
+        const posterKey = `tenants/${tenantId}/outputs/${job.id}/poster.png`;
+        const videoDownloadUrl = await storageClient.getPresignedDownloadUrl(videoKey);
+        const posterDownloadUrl = await storageClient.getPresignedDownloadUrl(posterKey);
+        artifacts.push({
+          name: 'output_video',
+          download_url: videoDownloadUrl,
+        });
+        artifacts.push({
+          name: 'output_poster',
+          download_url: posterDownloadUrl,
+        });
+      }
     }
 
     const traceId = job.traceparent?.split('-')[1] ?? null;
@@ -318,6 +341,28 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       completed_at: job.completedAt?.toISOString() ?? null,
       duration_ms: job.durationMs,
     };
+
+    // Granular progress reporting for REST polling
+    let progressPct = job.progressPct ?? 0;
+    let progress = job.progress ?? null;
+    if (!progress) {
+      if (job.status === 'SUCCEEDED') {
+        progressPct = 100;
+        progress = { phase: 'completed', percent: 100 };
+      } else if (job.status === 'FAILED') {
+        progress = { phase: 'failed', percent: progressPct, message: job.errorMessage ?? undefined };
+      } else if (job.status === 'PROCESSING') {
+        progressPct = Math.max(progressPct, 15);
+        progress = { phase: 'generating', percent: progressPct };
+      } else {
+        progressPct = 0;
+        progress = { phase: 'queued', percent: 0 };
+      }
+    } else {
+      progressPct = job.progressPct ?? progress.percent;
+    }
+    response.progress_pct = progressPct;
+    response.progress = progress;
 
     if (job.tokensIn !== null || job.tokensOut !== null || job.costMicrocents !== null) {
       const inTokens = job.tokensIn ?? 0;

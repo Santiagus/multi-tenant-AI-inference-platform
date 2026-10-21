@@ -126,6 +126,14 @@ export interface JobResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface JobProgress {
+  phase: 'queued' | 'loading_model' | 'denoising' | 'generating' | 'encoding_artifact' | 'completed' | 'failed';
+  step?: number;
+  totalSteps?: number;
+  percent: number;
+  message?: string;
+}
+
 export interface Job {
   id: string;
   tenantId: string;
@@ -137,6 +145,8 @@ export interface Job {
   routingPreference: RoutingPreferenceType;
   priority: number;
   status: JobStatusType;
+  progress?: JobProgress | null;
+  progressPct?: number | null;
   inputPayload: Record<string, unknown> | null;
   inputUri: string | null;
   outputPayload: Record<string, unknown> | null;

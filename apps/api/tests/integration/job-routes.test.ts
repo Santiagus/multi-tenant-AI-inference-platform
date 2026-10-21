@@ -143,6 +143,8 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(queryRes1.statusCode, 200);
     const initialJob = JSON.parse(queryRes1.body);
     assert.equal(initialJob.status, 'QUEUED');
+    assert.equal(initialJob.progress_pct, 0);
+    assert.equal(initialJob.progress.phase, 'queued');
 
     // 3. Worker transitions to PROCESSING
     const procRes = await app.inject({
@@ -190,6 +192,8 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(finalRes.statusCode, 200);
     const finalJob = JSON.parse(finalRes.body);
     assert.equal(finalJob.status, 'SUCCEEDED');
+    assert.equal(finalJob.progress_pct, 100);
+    assert.equal(finalJob.progress.phase, 'completed');
     assert.equal(finalJob.provider, 'local_pytorch');
     assert.equal(finalJob.duration_ms, 1240);
     assert.equal(finalJob.usage.prompt_tokens, 12);
@@ -466,6 +470,92 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.ok(body.job_id);
     assert.equal(body.model_id, 'Qwen/Qwen2.5-VL-7B-Instruct');
     assert.equal(queueClient.getQueueLength(), 1);
+
+    await app.close();
+  });
+
+  test('Image generation model returns both result.json and output.png artifacts upon completion', async () => {
+    const { app } = createTestApp();
+
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'black-forest-labs/FLUX.1-schnell',
+        routing_preference: 'mock',
+        input: {
+          prompt: 'Cinematic wide-angle photograph of an AI server room',
+        },
+      },
+    });
+    assert.equal(postRes.statusCode, 202);
+    const { job_id } = JSON.parse(postRes.body);
+
+    const procRes = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+    });
+    assert.equal(procRes.statusCode, 200);
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const jobData = JSON.parse(getRes.body);
+
+    assert.equal(jobData.status, 'SUCCEEDED');
+    assert.ok(jobData.artifacts && jobData.artifacts.length === 2);
+    assert.equal(jobData.artifacts[0].name, 'output_artifact');
+    assert.ok(jobData.artifacts[0].download_url.includes('result.json'));
+    assert.equal(jobData.artifacts[1].name, 'output_image');
+    assert.ok(jobData.artifacts[1].download_url.includes('output.png'));
+
+    await app.close();
+  });
+
+  test('Video generation model returns result.json, output.mp4, and output_poster artifacts upon completion', async () => {
+    const { app } = createTestApp();
+
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'Wan-AI/Wan2.1-T2V-1.3B',
+        routing_preference: 'mock',
+        input: {
+          prompt: 'Cinematic drone flythrough of a datacenter',
+        },
+      },
+    });
+    assert.equal(postRes.statusCode, 202);
+    const { job_id } = JSON.parse(postRes.body);
+
+    const procRes = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+    });
+    assert.equal(procRes.statusCode, 200);
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const jobData = JSON.parse(getRes.body);
+
+    assert.equal(jobData.status, 'SUCCEEDED');
+    assert.ok(jobData.artifacts && jobData.artifacts.length === 3);
+    assert.equal(jobData.artifacts[0].name, 'output_artifact');
+    assert.ok(jobData.artifacts[0].download_url.includes('result.json'));
+    assert.equal(jobData.artifacts[1].name, 'output_video');
+    assert.ok(jobData.artifacts[1].download_url.includes('output.mp4'));
+    assert.equal(jobData.artifacts[2].name, 'output_poster');
+    assert.ok(jobData.artifacts[2].download_url.includes('poster.png'));
 
     await app.close();
   });

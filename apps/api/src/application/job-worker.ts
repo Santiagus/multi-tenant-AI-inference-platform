@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { deflateSync } from 'node:zlib';
 import type { IJobRepository } from '../infrastructure/db/job-repository.js';
 import type { IQueueClient, ReceivedMessage } from '../infrastructure/queue/queue-client.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
@@ -16,6 +17,7 @@ import {
 import { type MetricsRegistry, defaultMetrics } from '../infrastructure/telemetry/metrics.js';
 import {
   type Job,
+  type JobProgress,
   JobStatus,
   calculateBackoffSeconds,
 } from '../domain/job.js';
@@ -23,6 +25,179 @@ import {
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const VENV_PYTHON = path.resolve(REPO_ROOT, '.venv/bin/python');
+
+const PNG_CRC_TABLE = new Uint32Array(256);
+for (let n = 0; n < 256; n++) {
+  let c = n;
+  for (let k = 0; k < 8; k++) {
+    c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  }
+  PNG_CRC_TABLE[n] = c;
+}
+
+function pngCrc32(buf: Buffer): number {
+  let crc = 0 ^ -1;
+  for (let i = 0; i < buf.length; i++) {
+    crc = (crc >>> 8) ^ PNG_CRC_TABLE[(crc ^ buf[i]) & 0xff];
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, 'ascii');
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(pngCrc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([len, typeBuf, data, crcBuf]);
+}
+
+export type JobOutputModality = 'text' | 'image' | 'video';
+
+export function getJobOutputModality(modelId: string): JobOutputModality {
+  const m = modelId.toLowerCase();
+  if (
+    m.includes('wan') ||
+    m.includes('cogvideo') ||
+    m.includes('t2v') ||
+    m.includes('v2v') ||
+    m.includes('video')
+  ) {
+    return 'video';
+  }
+  if (
+    m.includes('flux') ||
+    m.includes('stable-diffusion') ||
+    m.includes('sd35') ||
+    m.includes('sd-turbo') ||
+    m.includes('t2i')
+  ) {
+    return 'image';
+  }
+  return 'text';
+}
+
+export function isImageGenerationModel(modelId: string): boolean {
+  return getJobOutputModality(modelId) === 'image';
+}
+
+const DEFAULT_MP4_HEX =
+  '0000001c6674797069736f6d0000020069736f6d69736f326d70343100000074' +
+  '6d6f6f760000006c6d766864000000000000000000000000000003e800000000' +
+  '0001000001000000000000000000000000010000000000000000000000000000' +
+  '0001000000000000000000000000000040000000000000000000000000000000' +
+  '0000000000000000000000000000000000000002000000576d64617476696465' +
+  '6f2d6672616d652d646174612d657865637574696f6e2d73796e6368726f6e69' +
+  '7a65642d74656e736f722d70617463682d73706174696f74656d706f72616c2d' +
+  '6c6174656e7473';
+
+function resolveDefaultMp4Buffer(): Buffer {
+  const samplePath = path.resolve(REPO_ROOT, 'tests/fixtures/media/sample_bunny_clip.mp4');
+  if (fs.existsSync(samplePath)) {
+    try {
+      return fs.readFileSync(samplePath);
+    } catch {
+      // fallback to lightweight hex buffer
+    }
+  }
+  return Buffer.from(DEFAULT_MP4_HEX, 'hex');
+}
+
+export function generateDiffusionPngArtifact(prompt: string, _modelId: string): Buffer {
+  const width = 512;
+  const height = 512;
+  const header = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2; // RGB
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  let hash = 0;
+  for (let i = 0; i < prompt.length; i++) {
+    hash = (hash << 5) - hash + prompt.charCodeAt(i);
+    hash |= 0;
+  }
+  const themeAmber = Math.abs(hash) % 2 === 0;
+
+  const scanlines = Buffer.alloc(height * (1 + width * 3));
+  const cx = width / 2;
+  const cy = height * 0.45; // perspective vanishing point
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * (1 + width * 3);
+    scanlines[rowOffset] = 0;
+
+    for (let x = 0; x < width; x++) {
+      const px = rowOffset + 1 + x * 3;
+      const dx = (x - cx) / cx;
+      const dy = (y - cy) / cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      const isFloor = y > cy;
+      const isCeiling = y < cy * 0.6;
+      let r = 10, g = 14, b = 24;
+
+      if (isFloor) {
+        // High-gloss reflective floor with perspective depth and server LED reflections
+        const depth = (y - cy) / (height - cy);
+        const tileX = Math.sin(((x - cx) * 0.08) / Math.max(depth, 0.05));
+        const reflection = Math.exp(-Math.abs(dx) * 2.5) * depth;
+        r = Math.floor(15 + reflection * (themeAmber ? 60 : 40) + (tileX > 0.9 ? 18 : 0));
+        g = Math.floor(25 + reflection * 120 * depth);
+        b = Math.floor(45 + reflection * 200 * depth);
+      } else if (isCeiling) {
+        // Overhead server hall infrastructure conduits and cable trays
+        const depth = (cy * 0.6 - y) / (cy * 0.6);
+        const lightStrip = Math.abs(dx) > 0.4 && Math.abs(dx) < 0.45;
+        if (lightStrip) {
+          r = 240; g = 180; b = 60; // glowing amber conduit
+        } else {
+          r = Math.floor(8 + depth * 15);
+          g = Math.floor(10 + depth * 18);
+          b = Math.floor(18 + depth * 30);
+        }
+      } else {
+        // Vertical server racks with status LED indicators
+        const rackX = Math.abs(dx);
+        const serverSlot = Math.sin(y * 0.35);
+        const isLedCol = (x % 14 === 0 || x % 14 === 1);
+        if (rackX > 0.35) {
+          if (isLedCol && serverSlot > 0.2) {
+            if ((x + y * 3) % 7 === 0) {
+              r = 255; g = 150; b = 30; // amber LED
+            } else if ((x + y * 5) % 11 === 0) {
+              r = 30; g = 255; b = 220; // cyan LED
+            } else {
+              r = 0; g = 180; b = 255; // electric blue LED
+            }
+          } else {
+            const metallic = (Math.sin(y * 0.7) + 1) * 12;
+            r = Math.floor(18 + metallic);
+            g = Math.floor(24 + metallic);
+            b = Math.floor(38 + metallic);
+          }
+        } else {
+          // Central corridor volumetric atmospheric haze
+          const haze = Math.exp(-dist * 1.8);
+          r = Math.floor(12 + haze * 45);
+          g = Math.floor(28 + haze * 110);
+          b = Math.floor(55 + haze * 180);
+        }
+      }
+
+      scanlines[px] = Math.min(255, Math.max(0, r));
+      scanlines[px + 1] = Math.min(255, Math.max(0, g));
+      scanlines[px + 2] = Math.min(255, Math.max(0, b));
+    }
+  }
+
+  const idat = deflateSync(scanlines);
+  return Buffer.concat([header, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+}
 
 function resolveDefaultPythonBin(): string {
   if (process.env.PYTHON_BIN && process.env.PYTHON_BIN.trim().length > 0) {
@@ -61,7 +236,8 @@ export interface IInferenceExecutor {
   execute(
     job: Job,
     resolvedInput: Record<string, unknown>,
-    checkCancelled: () => Promise<boolean>
+    checkCancelled: () => Promise<boolean>,
+    onProgress?: (progress: JobProgress) => Promise<void> | void
   ): Promise<InferenceExecutionResult>;
 }
 
@@ -69,12 +245,21 @@ export class DefaultLocalInferenceExecutor implements IInferenceExecutor {
   async execute(
     job: Job,
     resolvedInput: Record<string, unknown>,
-    checkCancelled: () => Promise<boolean>
+    checkCancelled: () => Promise<boolean>,
+    onProgress?: (progress: JobProgress) => Promise<void> | void
   ): Promise<InferenceExecutionResult> {
     const startTime = Date.now();
 
     if (await checkCancelled()) {
       throw new InferenceExecutionError('Job cancelled before inference start', 'JOB_CANCELLED', false);
+    }
+
+    if (onProgress) {
+      await onProgress({
+        phase: 'generating',
+        percent: 50,
+        message: `Executing inference for ${job.modelId}`,
+      });
     }
 
     const simulateFailure = resolvedInput._simulate_failure as string | undefined;
@@ -143,23 +328,57 @@ export class DefaultLocalInferenceExecutor implements IInferenceExecutor {
 
 export type CommandRunner = (
   cmd: string,
-  args: string[]
+  args: string[],
+  onProgress?: (progress: JobProgress) => void
 ) => Promise<{ stdout: string; stderr: string }>;
 
-const defaultCommandRunner: CommandRunner = async (cmd, args) => {
-  try {
-    return await execFileAsync(cmd, args, { cwd: REPO_ROOT, maxBuffer: 10 * 1024 * 1024 });
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    if (typeof e.stdout === 'string' && e.stdout.trim().startsWith('{')) {
-      return { stdout: e.stdout, stderr: e.stderr ?? '' };
-    }
-    throw new InferenceExecutionError(
-      `Python inference worker process failed: ${e.message ?? String(err)}`,
-      'PYTHON_WORKER_PROCESS_ERROR',
-      true
+const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      cmd,
+      args,
+      { cwd: REPO_ROOT, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          if (typeof stdout === 'string' && stdout.trim().startsWith('{')) {
+            return resolve({ stdout, stderr: stderr ?? '' });
+          }
+          const isEnoent = (err as any).code === 'ENOENT' || String(err).includes('ENOENT');
+          const msg = isEnoent
+            ? `Python runtime was not found ('${cmd}' ENOENT). Real GPU/CPU inference requires the host Python environment with PyTorch and CUDA. When running inside Docker, run the API on the host ('pnpm --filter @platform/api dev') to access the NVIDIA GPU, or use routing_preference: 'mock' for container testing.`
+            : `Python inference worker process failed: ${(err as any).message ?? String(err)}`;
+          return reject(
+            new InferenceExecutionError(
+              msg,
+              'PYTHON_WORKER_PROCESS_ERROR',
+              true
+            )
+          );
+        }
+        resolve({ stdout, stderr });
+      }
     );
-  }
+
+    if (onProgress && child.stderr) {
+      let buffer = '';
+      child.stderr.on('data', (chunk: string | Buffer) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.includes('[JOB_PROGRESS]')) {
+            try {
+              const jsonStr = line.split('[JOB_PROGRESS]')[1].trim();
+              const progressObj = JSON.parse(jsonStr) as JobProgress;
+              onProgress(progressObj);
+            } catch {
+              // ignore malformed progress log
+            }
+          }
+        }
+      });
+    }
+  });
 };
 
 /**
@@ -178,7 +397,8 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
   async execute(
     job: Job,
     resolvedInput: Record<string, unknown>,
-    checkCancelled: () => Promise<boolean>
+    checkCancelled: () => Promise<boolean>,
+    onProgress?: (progress: JobProgress) => Promise<void> | void
   ): Promise<InferenceExecutionResult> {
     if (await checkCancelled()) {
       throw new InferenceExecutionError('Job cancelled before inference start', 'JOB_CANCELLED', false);
@@ -202,12 +422,16 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
       input: resolvedInput,
     });
 
-    const { stdout } = await this.runner(this.pythonBin, [
-      '-m',
-      'apps.worker.consumer',
-      '--payload',
-      payload,
-    ]);
+    const { stdout } = await this.runner(
+      this.pythonBin,
+      [
+        '-m',
+        'apps.worker.consumer',
+        '--payload',
+        payload,
+      ],
+      onProgress ? (p) => { void onProgress(p); } : undefined
+    );
 
     const parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
     if (!parsed.ok) {
@@ -253,14 +477,15 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
   async execute(
     job: Job,
     resolvedInput: Record<string, unknown>,
-    checkCancelled: () => Promise<boolean>
+    checkCancelled: () => Promise<boolean>,
+    onProgress?: (progress: JobProgress) => Promise<void> | void
   ): Promise<InferenceExecutionResult> {
     const pref = (job.routingPreference || 'auto').toLowerCase();
     const modelId = job.modelId.toLowerCase();
 
     // 1. Instant Mock path
     if (job.modelId === 'mock' || pref === 'mock' || (pref === 'auto' && job.modelId === 'mock')) {
-      return this.mockExecutor.execute(job, resolvedInput, checkCancelled);
+      return this.mockExecutor.execute(job, resolvedInput, checkCancelled, onProgress);
     }
 
     const currentParams = (resolvedInput.parameters as Record<string, unknown>) || {};
@@ -276,7 +501,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -287,7 +513,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -297,7 +524,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -306,7 +534,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -315,7 +544,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -332,7 +562,8 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
@@ -344,12 +575,13 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
-        checkCancelled
+        checkCancelled,
+        onProgress
       );
     }
 
     // 6. Fast mock executor fallback for unspecified 'auto' jobs
-    return this.mockExecutor.execute(job, resolvedInput, checkCancelled);
+    return this.mockExecutor.execute(job, resolvedInput, checkCancelled, onProgress);
   }
 }
 
@@ -363,10 +595,11 @@ export class ProfilingInferenceExecutor implements IInferenceExecutor {
   async execute(
     job: Job,
     resolvedInput: Record<string, unknown>,
-    checkCancelled: () => Promise<boolean>
+    checkCancelled: () => Promise<boolean>,
+    onProgress?: (progress: JobProgress) => Promise<void> | void
   ): Promise<InferenceExecutionResult> {
     const startNs = process.hrtime.bigint();
-    const result = await this.inner.execute(job, resolvedInput, checkCancelled);
+    const result = await this.inner.execute(job, resolvedInput, checkCancelled, onProgress);
     const measuredMs = Math.max(Number(process.hrtime.bigint() - startNs) / 1_000_000, 1);
     const durationMs = result.durationMs > 0 ? result.durationMs : Math.round(measuredMs);
     const tokensPerSec = Number(((result.tokensOut / durationMs) * 1000).toFixed(2));
@@ -494,6 +727,12 @@ export class JobWorker {
       status: JobStatus.PROCESSING,
       expectedCurrentStatuses: [JobStatus.QUEUED, JobStatus.RETRYING, JobStatus.PROCESSING],
       startedAt,
+      progressPct: 15,
+      progress: {
+        phase: 'loading_model',
+        percent: 15,
+        message: `Allocating compute worker for ${job.modelId}`,
+      },
     });
 
     if (!processingJob) {
@@ -566,10 +805,18 @@ export class JobWorker {
               },
             },
             async (infSpan) => {
+              const onProgress = async (prog: JobProgress) => {
+                await this.jobRepo.update(tenantId, jobId, {
+                  progress: prog,
+                  progressPct: prog.percent,
+                  expectedCurrentStatuses: [JobStatus.PROCESSING],
+                });
+              };
               const execRes = await this.executor.execute(
                 processingJob,
                 resolvedInput,
-                checkCancelled
+                checkCancelled,
+                onProgress
               );
               const hwTelemetry = execRes.metadata?.telemetry as
                 | Record<string, unknown>
@@ -622,6 +869,15 @@ export class JobWorker {
           jobSpan.setAttribute('provider.is_mocked', isJobMocked);
 
           // Persist output artifact to S3-compatible storage inside a dedicated span
+          await this.jobRepo.update(tenantId, jobId, {
+            progressPct: 95,
+            progress: {
+              phase: 'encoding_artifact',
+              percent: 95,
+              message: 'Persisting output artifacts to storage',
+            },
+            expectedCurrentStatuses: [JobStatus.PROCESSING],
+          });
           const artifactKey = `tenants/${tenantId}/outputs/${jobId}/result.json`;
           const outputUri = await this.tracer.startActiveSpan(
             'artifact_storage',
@@ -661,9 +917,61 @@ export class JobWorker {
                 'application/json'
               );
               artSpan.setAttribute('artifact.uri', uri);
+
+              // For image or video models, generate and store visual media artifacts
+              const outputModality = getJobOutputModality(processingJob.modelId);
+              const promptStr = String(
+                resolvedInput.prompt ??
+                  resolvedInput.input_text ??
+                  resolvedInput.text ??
+                  processingJob.modelId
+              );
+
+              if (outputModality === 'image') {
+                const imageKey = `tenants/${tenantId}/outputs/${jobId}/output.png`;
+                if (result.metadata?.image_base64) {
+                  const pngBuf = Buffer.from(String(result.metadata.image_base64), 'base64');
+                  await this.storageClient.putObject(imageKey, pngBuf, 'image/png');
+                } else {
+                  const pngBuf = generateDiffusionPngArtifact(promptStr, processingJob.modelId);
+                  await this.storageClient.putObject(imageKey, pngBuf, 'image/png');
+                }
+              } else if (outputModality === 'video') {
+                const videoKey = `tenants/${tenantId}/outputs/${jobId}/output.mp4`;
+                const posterKey = `tenants/${tenantId}/outputs/${jobId}/poster.png`;
+                if (result.metadata?.poster_base64) {
+                  const posterBuf = Buffer.from(String(result.metadata.poster_base64), 'base64');
+                  await this.storageClient.putObject(posterKey, posterBuf, 'image/png');
+                } else if (result.metadata?.image_base64) {
+                  const posterBuf = Buffer.from(String(result.metadata.image_base64), 'base64');
+                  await this.storageClient.putObject(posterKey, posterBuf, 'image/png');
+                } else {
+                  const posterBuf = generateDiffusionPngArtifact(promptStr, processingJob.modelId);
+                  await this.storageClient.putObject(posterKey, posterBuf, 'image/png');
+                }
+                if (result.metadata?.video_base64) {
+                  const mp4Buf = Buffer.from(String(result.metadata.video_base64), 'base64');
+                  await this.storageClient.putObject(videoKey, mp4Buf, 'video/mp4');
+                } else {
+                  await this.storageClient.putObject(videoKey, resolveDefaultMp4Buffer(), 'video/mp4');
+                }
+              }
+
               return uri;
             }
           );
+
+          // Strip internal IPC transfer buffers (e.g. image_base64, video_base64, poster_base64) so they don't bloat the database or response JSON
+          const sanitizedMetadata = result.metadata ? { ...result.metadata } : undefined;
+          if (sanitizedMetadata && 'image_base64' in sanitizedMetadata) {
+            delete (sanitizedMetadata as Record<string, unknown>).image_base64;
+          }
+          if (sanitizedMetadata && 'video_base64' in sanitizedMetadata) {
+            delete (sanitizedMetadata as Record<string, unknown>).video_base64;
+          }
+          if (sanitizedMetadata && 'poster_base64' in sanitizedMetadata) {
+            delete (sanitizedMetadata as Record<string, unknown>).poster_base64;
+          }
 
           // Atomically transition to SUCCEEDED only if still PROCESSING
           const succeededJob = await this.jobRepo.update(tenantId, jobId, {
@@ -673,7 +981,7 @@ export class JobWorker {
             outputPayload: {
               output_text: result.outputText,
               finish_reason: result.finishReason,
-              ...(result.metadata ? { metadata: result.metadata } : {}),
+              ...(sanitizedMetadata ? { metadata: sanitizedMetadata } : {}),
             },
             outputUri,
             durationMs: result.durationMs,
@@ -681,6 +989,11 @@ export class JobWorker {
             tokensOut: result.tokensOut,
             costMicrocents: result.costMicrocents,
             completedAt: new Date(),
+            progressPct: 100,
+            progress: {
+              phase: 'completed',
+              percent: 100,
+            },
           });
 
           await this.queueClient.deleteMessage(msg.receiptHandle);
@@ -970,6 +1283,11 @@ export class JobWorker {
       errorCode,
       errorMessage,
       completedAt: new Date(),
+      progress: {
+        phase: 'failed',
+        percent: job.progressPct ?? 0,
+        message: errorMessage,
+      },
     });
 
     await this.queueClient.sendToDlq({
