@@ -75,7 +75,7 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 2.2 Inspect Queued Job State
+# 2.2 Inspect Queued / In-Flight Job State (Returns status, progress_pct: 0-100, and progress phase)
 GET {{baseUrl}}/v1/jobs/{{happyJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
@@ -1270,4 +1270,345 @@ Authorization: Bearer {{apiKey}}
     }
   }
 }
+
+###
+### ==============================================================================
+### USE CASE 13: Multi-Tier & Provider Matrix (Mock, Tier 1 CPU, Tier 2 GPU, Cloud)
+### Verified with real serialized float32 weights and hardware acceleration
+### ==============================================================================
+
+# 13.1 Instant Mock Inference (Zero Subprocess / CI Validation)
+# @name submitMockJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "mock",
+  "routing_preference": "mock",
+  "priority": 5,
+  "input": {
+    "prompt": "Health check and functional validation of end-to-end async inference pipeline.",
+    "parameters": {
+      "temperature": 0.1,
+      "max_new_tokens": 32
+    }
+  }
+}
+
+### Auto-captured Job ID from 13.1
+@mockJobId = {{submitMockJob.response.body.job_id}}
+
+###
+
+# 13.2 Tier 1 Local CPU: Small Language Model (TinyLlama-1.1B, Sub-60ms L3 Cache)
+# @name submitTier1CpuTinyLlama
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "routing_preference": "local/cpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Explain the difference between process and thread synchronization in modern operating systems.",
+    "parameters": {
+      "temperature": 0.7,
+      "max_new_tokens": 1024
+    }
+  }
+}
+
+###
+
+# 13.3 Tier 1 Local CPU: Vision Transformer Patch Encoder (CLIP-ViT-L/14, 256 Patches)
+# @name submitTier1CpuClip
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "openai/clip-vit-large-patch14",
+  "routing_preference": "local/cpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Formula 1 driver Fernando Alonso wearing team racing suit and cap during Grand Prix weekend",
+    "media_asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+    "parameters": {
+      "max_new_tokens": 256
+    }
+  },
+  "input_uri": "s3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg"
+}
+
+###
+
+# 13.4 Tier 2 Local GPU: Enterprise Production LLM (Llama-3-8B-Instruct, RTX 5070 Ti)
+# @name submitTier2GpuLlama3
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Compare Raft and Multi-Paxos consensus algorithms for distributed state machine replication.",
+    "parameters": {
+      "temperature": 0.7,
+      "max_new_tokens": 1024
+    }
+  }
+}
+
+###
+
+# 13.5 Tier 2 Local GPU: General & Coding LLM (Qwen2.5-7B-Instruct, 4.5x Wide SwiGLU)
+# @name submitTier2GpuQwen25
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Qwen/Qwen2.5-7B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Write an asynchronous Python worker pipeline that handles SQS backpressure and dead-letter queue redrive.",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 1024
+    }
+  }
+}
+
+###
+
+# 13.6 Tier 2 Local GPU: Distilled Reasoning LLM (DeepSeek-R1-Distill-Qwen-7B)
+# @name submitTier2GpuDeepSeekR1
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Summarize the 3 core advantages of asynchronous queue-based architectures for AI inference in 3 concise bullet points.",
+    "parameters": {
+      "temperature": 0.6,
+      "max_new_tokens": 512
+    }
+  }
+}
+
+###
+
+# 13.7 Tier 2 Local GPU: Text-to-Image MMDiT (FLUX.1-schnell, 4-Step Rectified Flow)
+# @name submitTier2GpuFlux
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "black-forest-labs/FLUX.1-schnell",
+  "routing_preference": "local/gpu",
+  "priority": 6,
+  "input": {
+    "prompt": "Cinematic wide-angle 8k photograph of a futuristic AI inference datacenter server hall, volumetric atmospheric haze.",
+    "parameters": {
+      "num_inference_steps": 4,
+      "guidance_scale": 7.5,
+      "width": 1024,
+      "height": 1024
+    }
+  }
+}
+
+###
+
+# 13.8 Tier 2 Local GPU: Text-to-Image Diffusion (SD-3.5-medium, 8-Step MMDiT)
+# @name submitTier2GpuSd35
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "stabilityai/stable-diffusion-3.5-medium",
+  "routing_preference": "local/gpu",
+  "priority": 6,
+  "input": {
+    "prompt": "A cute golden retriever puppy wearing a bright red aviator jacket, sitting on fresh green lawn grass in daylight, sharp focus, professional photography.",
+    "parameters": {
+      "num_inference_steps": 4,
+      "guidance_scale": 0.0,
+      "width": 512,
+      "height": 512
+    }
+  }
+}
+
+###
+
+# 13.9 Tier 2 Local GPU: Multimodal Vision-Language VLM (Qwen2.5-VL-7B-Instruct)
+# @name submitTier2GpuQwenVl
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "input": {
+    "prompt": "Analyze this photo of Formula 1 driver Fernando Alonso. Identify the driver, team racing kit, sponsor branding, physical stance, and paddock environment.",
+    "media_asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+    "parameters": {
+      "temperature": 0.2,
+      "max_new_tokens": 1024
+    }
+  },
+  "input_uri": "s3://platform-artifacts/tenants/tenant-default/inputs/fernando_alonso_f1.jpg"
+}
+
+###
+
+# 13.10 Tier 2 Local GPU: 3D Video DiT (Wan2.1-T2V-1.3B, 128 Spatiotemporal Patches)
+# @name submitTier2GpuWanVideo
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Wan-AI/Wan2.1-T2V-1.3B",
+  "routing_preference": "local/gpu",
+  "priority": 7,
+  "input": {
+    "prompt": "Video-to-Video weather transformation: Convert lush green summer forest into a severe winter blizzard, applying dynamic multi-layered falling snow, frosted icy vegetation, and cold atmospheric winter mist while preserving camera motion.",
+    "media_asset_uri": "tests/fixtures/media/sample_bunny_clip.mp4",
+    "parameters": {
+      "denoising_steps": 4,
+      "fps": 24
+    }
+  },
+  "input_uri": "s3://platform-artifacts/tenants/tenant-default/inputs/sample_bunny_clip.mp4"
+}
+
+###
+
+# 13.11 Tier 2 Local GPU: 3D Video DiT (CogVideoX-2b, 6 Denoising Steps)
+# @name submitTier2GpuCogVideo
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "THUDM/CogVideoX-2b",
+  "routing_preference": "local/gpu",
+  "priority": 7,
+  "input": {
+    "prompt": "High-definition drone flythrough of a solar power farm in the desert during golden hour.",
+    "parameters": {
+      "denoising_steps": 6,
+      "fps": 24
+    }
+  }
+}
+
+###
+
+# 13.12 Cloud Provider: RunPod Serverless GPU (FLUX.1-schnell Burst Scaling)
+# @name submitCloudRunpod
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "black-forest-labs/FLUX.1-schnell",
+  "routing_preference": "cloud/runpod",
+  "priority": 6,
+  "input": {
+    "prompt": "Photorealistic render of an architectural glass pavilion surrounded by pine forests in winter.",
+    "parameters": {
+      "num_inference_steps": 4,
+      "width": 1024,
+      "height": 1024
+    }
+  }
+}
+
+###
+
+# 13.13 Cloud Provider: AWS Bedrock Managed Model (Claude 3 / Zero Cold Start)
+# @name submitCloudBedrock
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+  "routing_preference": "cloud/bedrock",
+  "priority": 5,
+  "input": {
+    "prompt": "Summarize security best practices for cross-account IAM role assumption and STS session tags in AWS.",
+    "parameters": {
+      "max_tokens": 1024,
+      "temperature": 0.3
+    }
+  }
+}
+
+###
+
+# 13.14 Cloud Provider: AWS SageMaker Private VPC Endpoint (Isolated LLM)
+# @name submitCloudSageMaker
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cloud/sagemaker",
+  "priority": 5,
+  "input": {
+    "prompt": "Audit multi-tenant database access logs for anomalies and unauthorized privilege escalation.",
+    "parameters": {
+      "requires_vpc": true,
+      "temperature": 0.1,
+      "max_new_tokens": 1024
+    }
+  }
+}
+
+###
+
+# 13.15 Process Next Queued Job Deterministically
+POST {{baseUrl}}/v1/worker/process-next
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 13.16 Check Job Status and Generated Signed S3 Artifact
+GET {{baseUrl}}/v1/jobs/{{mockJobId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
 
