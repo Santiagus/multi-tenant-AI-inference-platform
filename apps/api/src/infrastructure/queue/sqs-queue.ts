@@ -148,6 +148,7 @@ export class SqsQueueClient implements IQueueClient {
       new ReceiveMessageCommand({
         QueueUrl: this.dlqUrl,
         MaxNumberOfMessages: Math.min(Math.max(maxMessages, 1), 10),
+        VisibilityTimeout: 0,
         WaitTimeSeconds: 0,
         MessageSystemAttributeNames: ['ApproximateReceiveCount'],
       })

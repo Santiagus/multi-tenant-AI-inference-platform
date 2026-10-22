@@ -1612,3 +1612,104 @@ GET {{baseUrl}}/v1/jobs/{{mockJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+### ==============================================================================
+### USE CASE 14: Product Dashboard, Economics & Routing Ledger (M11)
+### Jobs listing, FinOps gross margin analytics, and routing explainability
+### ==============================================================================
+
+# 14.1 List Paginated Inference Jobs for Tenant
+GET {{baseUrl}}/v1/jobs?limit=20&offset=0
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.2 List Inference Jobs Filtered by Lifecycle Status (e.g. SUCCEEDED)
+GET {{baseUrl}}/v1/jobs?status=SUCCEEDED&limit=10
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.3 Query Aggregated Usage, Cost, Revenue, Gross Profit and Margins (FinOps Ledger)
+GET {{baseUrl}}/analytics/economics
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.4 Inspect Available Inference Providers with Unit Token Rates & VRAM
+GET {{baseUrl}}/v1/routing/providers
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.5 Toggle Provider Health for Failover / Chaos Testing
+PATCH {{baseUrl}}/v1/routing/providers/runpod/health
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "healthy": false
+}
+
+###
+
+# 14.6 Evaluate Routing Decision with Deterministic 5-Stage Policy Ledger
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 32,
+    "max_new_tokens": 128,
+    "estimated_vram_mb": 8192
+  },
+  "capacity": {
+    "local_vram_total_mb": 16384,
+    "local_vram_allocated_mb": 4096,
+    "local_queue_depth": 12,
+    "local_queue_threshold": 10
+  },
+  "slo": {
+    "latency_slo_ms": 1500
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "routing_preference": "local_first",
+    "max_cost_microcents": 500000,
+    "billed_rate_microcents_per_token": 40
+  },
+  "economics": {
+    "target_gross_margin": 0.4,
+    "allow_margin_degradation_for_slo": false
+  }
+}
+
+###
+
+# 14.7 Run Queue Depth Spillover Sweep Simulation
+POST {{baseUrl}}/v1/routing/simulate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct"
+  },
+  "queue_depth_range": [0, 5, 10, 15, 20],
+  "tenant_policy": {
+    "routing_preference": "local_first"
+  },
+  "economics": {
+    "target_gross_margin": 0.4
+  }
+}
+
+

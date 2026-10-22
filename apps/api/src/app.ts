@@ -22,6 +22,7 @@ import { observabilityRoutes } from './routes/observability.js';
 import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
+import { analyticsRoutes } from './routes/analytics.js';
 import { ENDPOINT_OPENAPI_CONFIGS } from './infrastructure/openapi/endpoint-schemas.js';
 
 export interface AppDependencies {
@@ -215,6 +216,11 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     jobService,
     jobWorker,
     storageClient: deps.storageClient,
+  });
+
+  app.register(analyticsRoutes, {
+    jobService,
+    routerController,
   });
 
   return app;

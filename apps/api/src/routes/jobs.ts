@@ -88,6 +88,14 @@ const TransitionJobSchema = z.object({
   retry_count: z.number().int().nonnegative().optional(),
 });
 
+const ListJobsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  status: z
+    .enum(['SUBMITTED', 'QUEUED', 'PROCESSING', 'RETRYING', 'SUCCEEDED', 'FAILED', 'CANCELLED'])
+    .optional(),
+});
+
 export interface JobRoutesOptions {
   jobService: JobService;
   jobWorker: JobWorker;
@@ -206,6 +214,93 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         upload_url: uploadUrl,
         asset_uri: assetUri,
         expires_in_seconds: expiresInSeconds,
+      });
+    }
+  );
+
+  // GET /v1/jobs - List asynchronous inference jobs for tenant
+  fastify.get(
+    '/v1/jobs',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'List Inference Jobs',
+        description:
+          'Returns a paginated list of inference jobs for the tenant, filterable by lifecycle status.',
+      },
+    },
+    async (req, reply) => {
+      const parseResult = ListJobsQuerySchema.safeParse(req.query);
+      if (!parseResult.success) {
+        throw new ValidationError('Invalid query parameters', parseResult.error.flatten().fieldErrors);
+      }
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const { limit, offset, status } = parseResult.data;
+      const jobs = await jobService.listJobs(tenantId, { limit, offset, status: status as JobStatusType | undefined });
+
+      return reply.status(200).send({
+        total: jobs.length,
+        limit,
+        offset,
+        jobs: jobs.map((job) => {
+          let progressPct = job.progressPct ?? 0;
+          let progress = job.progress ?? null;
+          if (!progress) {
+            if (job.status === 'SUCCEEDED') {
+              progressPct = 100;
+              progress = { phase: 'completed', percent: 100 };
+            } else if (job.status === 'FAILED') {
+              progress = { phase: 'failed', percent: progressPct, message: job.errorMessage ?? undefined };
+            } else if (job.status === 'PROCESSING') {
+              progressPct = Math.max(progressPct, 15);
+              progress = { phase: 'generating', percent: progressPct };
+            } else {
+              progressPct = 0;
+              progress = { phase: 'queued', percent: 0 };
+            }
+          } else {
+            progressPct = job.progressPct ?? progress.percent;
+          }
+
+          const traceId = job.traceparent?.split('-')[1] ?? null;
+
+          return {
+            job_id: job.id,
+            tenant_id: job.tenantId,
+            status: job.status,
+            model_id: job.modelId,
+            correlation_id: job.correlationId ?? null,
+            trace_id: traceId,
+            traceparent: job.traceparent ?? null,
+            routing_preference: job.routingPreference,
+            priority: job.priority,
+            provider: job.provider,
+            retry_count: job.retryCount,
+            max_retries: job.maxRetries,
+            created_at: job.createdAt.toISOString(),
+            started_at: job.startedAt?.toISOString() ?? null,
+            completed_at: job.completedAt?.toISOString() ?? null,
+            duration_ms: job.durationMs,
+            progress_pct: progressPct,
+            progress,
+            usage:
+              job.tokensIn !== null || job.tokensOut !== null || job.costMicrocents !== null
+                ? {
+                    prompt_tokens: job.tokensIn ?? 0,
+                    completion_tokens: job.tokensOut ?? 0,
+                    total_tokens: (job.tokensIn ?? 0) + (job.tokensOut ?? 0),
+                    cost_microcents: job.costMicrocents ?? 0,
+                  }
+                : undefined,
+            error:
+              job.errorCode || job.errorMessage
+                ? {
+                    code: job.errorCode,
+                    message: job.errorMessage,
+                  }
+                : undefined,
+          };
+        }),
       });
     }
   );
