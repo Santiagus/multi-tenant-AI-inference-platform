@@ -2,6 +2,7 @@ import { loadConfig } from './config/env.js';
 import { DatabasePool } from './infrastructure/db/pool.js';
 import { runMigrations } from './infrastructure/db/migrator.js';
 import { PostgresJobRepository } from './infrastructure/db/job-repository.js';
+import { PostgresSecurityRepository } from './infrastructure/db/security-repository.js';
 import { S3StorageClient } from './infrastructure/storage/s3-storage.js';
 import { SqsQueueClient } from './infrastructure/queue/sqs-queue.js';
 import { buildApp } from './app.js';
@@ -62,8 +63,9 @@ async function main() {
 
   // Initialize Job Repository & Worker
   const jobRepo = new PostgresJobRepository(db);
-  const { JobWorker } = await import('./application/job-worker.js');
-  const jobWorker = new JobWorker(jobRepo, queueClient, storageClient);
+  const { JobWorker, RoutingInferenceExecutor } = await import('./application/job-worker.js');
+  const inferenceExecutor = new RoutingInferenceExecutor();
+  const jobWorker = new JobWorker(jobRepo, queueClient, storageClient, inferenceExecutor);
 
   if (config.WORKER_ENABLED) {
     jobWorker.start();
@@ -71,12 +73,15 @@ async function main() {
   }
 
   // Build Fastify App
+  const securityRepo = new PostgresSecurityRepository(db);
   const app = buildApp({
     config,
     db,
     jobRepo,
+    securityRepo,
     storageClient,
     queueClient,
+    inferenceExecutor,
     jobWorker,
   });
 

@@ -17,7 +17,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M06** | Kubernetes Scheduling | Kind / k3d + Helm | KEDA autoscaler, Kueue batch admission, Kyverno policies | **Passed** |
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | **Passed** |
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | **Passed** |
-| **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | _Planned_ |
+| **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | **Passed** |
 | **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | _Planned_ |
 | **M11** | Product Dashboard | React + Fastify API | Component tests, API contract integration, WebSocket feeds | _Planned_ |
 | **M12** | Production Readiness | Distributed Load & Chaos | Locust load tests, worker crash injection, partition recovery | _Planned_ |
@@ -133,7 +133,24 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 9. Maintenance Rules for Subsequent Milestones
+## 9. M09 Verification Matrix (Multi-Tenant Security, Isolation & Supply Chain)
+
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-53** | **API Key Lifecycle & Secret Hashing** | Unit / Integration | In-Memory / Simulated | `POST /v1/auth/api-keys`, `GET /v1/auth/api-keys`, `DELETE /v1/auth/api-keys/:id`, `security-repository` | Issues cryptographically secure API keys with SHA-256 hashed secrets and unique prefixes (`ak_live_...`). Plaintext secret returned only upon creation; secrets masked in list queries. Instant key revocation halts subsequent authentication. | `apps/api/tests/unit/security-domain.test.ts`<br>`apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.1–14.2, 14.9–14.10) |
+| **TC-54** | **Authentication Boundary & Credential Enforcement** | Integration | Simulated | Fastify Security Hook, `POST /v1/jobs` | Enforces zero-trust authentication boundary. Requests with missing, malformed, or revoked credentials return `401 Unauthorized` with RFC 7807 Problem Details and security audit event logging. | `apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.6, 14.10) |
+| **TC-55** | **Cross-Tenant Job Isolation (Read & Cancel)** | Integration | Simulated | `GET /v1/jobs/:id`, `POST /v1/jobs/:id/cancel`, `PostgresJobRepository` | Enforces tenant-partitioned SQL queries (`WHERE tenant_id = $1`). Tenant B querying or attempting to cancel Tenant A's job receives `404 Not Found` (resource existence hidden within tenant domain). | `apps/api/tests/security/tenant-isolation.test.ts` |
+| **TC-56** | **Cross-Tenant Header Spoofing Prevention** | Integration | Simulated | Fastify Security Hook, `AbacPolicyEngine` | Detects and rejects header spoofing. Presenting Tenant A's valid API key alongside `x-tenant-id: tenant-b` immediately returns `403 Forbidden` and records security audit violation. | `apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.7) |
+| **TC-57** | **Cross-Tenant S3 Artifact Isolation** | Integration | Simulated | `POST /v1/jobs`, `POST /v1/jobs/upload-url`, `AbacPolicyEngine` | Validates S3 storage keys and media URIs against `tenants/{tenant_id}/` boundary. Tenant A referencing an input or media artifact under `tenants/tenant-b/` is rejected with `403 Forbidden`. | `apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.8) |
+| **TC-58** | **ABAC Scoped Authorization Engine** | Unit / Integration | In-Memory / Simulated | `requireScopes`, `AbacPolicyEngine`, `POST /v1/jobs`, `POST /v1/jobs/upload-url` | Enforces granular permission scopes (`jobs:read`, `jobs:write`, `models:execute`, `storage:write`, `admin`). Key with only `jobs:read` attempting job submission or upload URL generation receives `403 Forbidden`. | `apps/api/tests/unit/security-domain.test.ts`<br>`apps/api/tests/security/tenant-isolation.test.ts` |
+| **TC-59** | **ABAC Model Execution Restrictions** | Unit / Integration | In-Memory / Simulated | `AbacPolicyEngine`, `POST /v1/jobs` | Enforces per-credential `allowed_models` lists. Credential restricted to specific models attempting execution of disallowed foundation models receives `403 Forbidden`. | `apps/api/tests/unit/security-domain.test.ts`<br>`apps/api/tests/security/tenant-isolation.test.ts` |
+| **TC-60** | **Per-Tenant Sliding Window Rate Limiting** | Unit / Integration | In-Memory / Simulated | `SlidingWindowRateLimiter`, Fastify Security Hook, `GET /v1/security/rate-limits` | Enforces tenant rate limits using sliding windows. Exceeding per-minute request allowance returns `429 Too Many Requests` with standard `x-ratelimit-limit`, `x-ratelimit-remaining`, and `x-ratelimit-reset` headers. | `apps/api/tests/unit/security-domain.test.ts`<br>`apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.4) |
+| **TC-61** | **Structured Security Audit Logging** | Unit / Integration | In-Memory / Simulated | `GET /v1/security/audit-events`, `ISecurityRepository` | Records structured security audit logs for authentication success/failure, authorization denials, rate limit breaches, and key lifecycle. Audit log queries strictly isolated to requesting tenant. | `apps/api/tests/security/tenant-isolation.test.ts`<br>`request.rest` (Cycle 14.5) |
+| **TC-62** | **Kyverno Admission Policies & Supply-Chain SBOM** | Unit / Integration | Local File Validator | `deploy/k8s/kyverno/*`, `scripts/generate_sbom.py`, `scripts/security_scan.py` | Validates Kyverno ClusterPolicies (non-root execution, drop ALL capabilities, read-only rootfs, tenant namespace isolation). Generates CycloneDX 1.5 JSON SBOM and validates 0 dependency/manifest violations. | `tests/unit/test_kubernetes_scheduling.py`<br>`scripts/security_scan.py`<br>`scripts/generate_sbom.py` |
+
+---
+
+## 10. Maintenance Rules for Subsequent Milestones
 
 When implementing future milestones (M09–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.

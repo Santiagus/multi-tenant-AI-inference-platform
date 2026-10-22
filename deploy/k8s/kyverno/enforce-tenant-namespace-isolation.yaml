@@ -1,0 +1,31 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: enforce-tenant-namespace-isolation
+  annotations:
+    policies.kyverno.io/title: Enforce Multi-Tenant Workload Labeling & Namespace Isolation
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Guarantees every deployed workload possesses an explicit platform.ai/tenant label for strict scheduling and cost attribution.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-tenant-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - Job
+                - Pod
+              namespaces:
+                - inference-workers
+      validate:
+        message: "Workloads in inference-workers must specify a valid platform.ai/tenant label."
+        pattern:
+          metadata:
+            labels:
+              platform.ai/tenant: "?*"
+
