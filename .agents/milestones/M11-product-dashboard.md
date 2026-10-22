@@ -26,4 +26,10 @@ Duplicating Grafana operational dashboards.
 
 ## Outcome
 
-_Pending._
+- Entry points: `pnpm --filter @platform/dashboard dev` (Vite port 5173), `pnpm --filter @platform/dashboard build`, and `GET /v1/jobs`, `GET /v1/analytics/economics`.
+- Product dashboard: Implemented React + TypeScript + Vite app in `apps/dashboard/` with dark mode UI, auto-polling, and real-time state.
+- Views delivered: Jobs & DLQ inspection, Provider & Model catalog with live health toggles, Deterministic Routing 5-stage explainability simulator, and FinOps Usage & Gross Margin economics.
+- React Flow visualization: Built interactive Two-Path lifecycle diagram in `WorkloadPathView` highlighting Path A (SQS+KEDA) vs Path B (Flyte+Kueue) with protocol and telemetry side-panels.
+- Test coverage: 12 dashboard unit tests (`api-client.test.ts`, `economics-calculations.test.ts`) and 2 API integration tests in `analytics-routes.test.ts`. Total 106 TypeScript tests passed.
+- Deviations from spec: None.
+- Stubs left: Live production readiness benchmark reporting in dashboard deferred to M12.

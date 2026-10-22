@@ -429,6 +429,24 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     },
   },
 
+  'GET /v1/jobs': {
+    tags: ['Jobs'],
+    summary: 'List Inference Jobs',
+    description: 'Returns a paginated list of inference jobs for the tenant, filterable by lifecycle status.',
+    querystring: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 50, example: 20 },
+        offset: { type: 'integer', minimum: 0, default: 0, example: 0 },
+        status: {
+          type: 'string',
+          enum: ['SUBMITTED', 'QUEUED', 'PROCESSING', 'RETRYING', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
+          example: 'SUCCEEDED',
+        },
+      },
+    },
+  },
+
   'GET /v1/jobs/:id': {
     tags: ['Jobs'],
     summary: 'Get Job Status & Artifacts',
@@ -895,6 +913,13 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
         prompt: 'Explain Raft consensus protocol in distributed databases.',
       },
     },
+  },
+
+  'GET /v1/analytics/economics': {
+    tags: ['Jobs'],
+    summary: 'Aggregated Economics & Usage Metrics',
+    description:
+      'Computes end-to-end economic metrics including token usage, infrastructure costs, projected revenue, gross profit, and gross margin breakdown by provider and model.',
   },
 };
 
