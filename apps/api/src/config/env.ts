@@ -32,13 +32,19 @@ export const EnvSchema = z.object({
   // Tenancy & Auth Defaults
   DEFAULT_TENANT_ID: z.string().default('tenant-default'),
   API_KEY: z.string().default('dev-secret-key'),
+  AUTH_ENFORCED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
+  RATE_LIMITING_ENABLED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(true),
 });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;
 
 export function loadConfig(overrides: Partial<Record<string, unknown>> = {}): EnvConfig {
+  const workerEnabledRaw =
+    process.env.WORKER_ENABLED ?? process.env.WORKER_ENABLE ?? overrides.WORKER_ENABLED ?? overrides.WORKER_ENABLE;
+
   const merged = {
     ...process.env,
+    ...(workerEnabledRaw !== undefined ? { WORKER_ENABLED: workerEnabledRaw } : {}),
     ...overrides,
   };
   return EnvSchema.parse(merged);

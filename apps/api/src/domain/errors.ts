@@ -80,6 +80,12 @@ export class ForbiddenError extends AppError {
   }
 }
 
+export class TooManyRequestsError extends AppError {
+  constructor(detail = 'Rate limit exceeded. Please retry after reset period.', code = 'RATE_LIMIT_EXCEEDED') {
+    super(429, code, 'Too Many Requests', detail);
+  }
+}
+
 export class ServiceUnavailableError extends AppError {
   constructor(detail = 'Underlying dependency is unavailable', code = 'SERVICE_UNAVAILABLE') {
     super(503, code, 'Service Unavailable', detail);

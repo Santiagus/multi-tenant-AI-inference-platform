@@ -6,7 +6,9 @@ import type { JobService } from '../application/job-service.js';
 import { type JobWorker, getJobOutputModality } from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
-import { ValidationError } from '../domain/errors.js';
+import { ForbiddenError, ValidationError } from '../domain/errors.js';
+import { requireScopes } from '../plugins/security.js';
+import { SecurityScope, type TenantSecurityContext } from '../domain/security.js';
 
 const SUPPORTED_UPLOAD_CONTENT_TYPES = [
   'image/jpeg',
@@ -109,6 +111,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.post(
     '/v1/jobs',
     {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
       schema: {
         tags: ['Jobs'],
         summary: 'Submit Asynchronous Inference Job',
@@ -126,11 +129,40 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     }
 
     const tenantId = (req as any).tenantId || 'tenant-default';
+    const securityContext = (req as any).securityContext as TenantSecurityContext | undefined;
     const correlationId = (req as any).correlationId as string | undefined;
     const traceparent = (req as any).traceparent as string | undefined;
     const traceId = (req as any).traceId as string | undefined;
     const idempotencyKey = (req.headers['idempotency-key'] as string) || null;
     const body = parseResult.data;
+
+    // ABAC Model allowance verification
+    if (securityContext?.allowedModels && securityContext.allowedModels.size > 0) {
+      if (!securityContext.allowedModels.has(body.model_id) && !securityContext.scopes.has(SecurityScope.ADMIN)) {
+        throw new ForbiddenError(
+          `Model access restricted: Model '${body.model_id}' is not in the allowed list for this credential.`
+        );
+      }
+    }
+
+    // S3 Tenant isolation: Prevent reading inputs or media from another tenant
+    if (body.input_uri) {
+      const match = body.input_uri.match(/tenants\/([^/]+)\//);
+      if (match && match[1] !== tenantId) {
+        throw new ForbiddenError(
+          `Cross-tenant artifact access forbidden: Cannot access input artifact belonging to '${match[1]}'.`
+        );
+      }
+    }
+    const mediaUri = (body.input as any)?.media_asset_uri;
+    if (typeof mediaUri === 'string') {
+      const match = mediaUri.match(/tenants\/([^/]+)\//);
+      if (match && match[1] !== tenantId) {
+        throw new ForbiddenError(
+          `Cross-tenant artifact access forbidden: Cannot access media asset belonging to '${match[1]}'.`
+        );
+      }
+    }
 
     const mergedParameters: Record<string, unknown> = {
       ...(body.parameters || {}),
@@ -182,6 +214,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.post(
     '/v1/jobs/upload-url',
     {
+      preHandler: [requireScopes(SecurityScope.STORAGE_WRITE)],
       schema: {
         tags: ['Jobs'],
         summary: 'Generate Presigned S3 Media Upload URL',
@@ -309,6 +342,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.get(
     '/v1/jobs/dlq',
     {
+      preHandler: [requireScopes(SecurityScope.JOBS_READ)],
       schema: {
         tags: ['Jobs'],
         summary: 'List Dead-Letter Queue Messages',
@@ -360,6 +394,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.get<{ Params: { id: string } }>(
     '/v1/jobs/:id',
     {
+      preHandler: [requireScopes(SecurityScope.JOBS_READ)],
       schema: {
         tags: ['Jobs'],
         summary: 'Get Job Status & Artifacts',
@@ -492,6 +527,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.post<{ Params: { id: string } }>(
     '/v1/jobs/:id/cancel',
     {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
       schema: {
         tags: ['Jobs'],
         summary: 'Cancel In-Flight Job',
@@ -521,6 +557,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
   fastify.post<{ Params: { id: string } }>(
     '/v1/jobs/:id/transition',
     {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
       schema: {
         tags: ['Jobs'],
         summary: 'Transition Job Lifecycle State',

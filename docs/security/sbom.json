@@ -1,0 +1,178 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:platform-sbom-20261022160118",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-22T16:01:18.530153+00:00",
+    "tools": [
+      {
+        "vendor": "Multi-Tenant AI Inference Platform",
+        "name": "Platform SBOM Generator",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "multi-tenant-ai-inference-platform",
+      "version": "0.1.0",
+      "description": "Production reference platform for multi-tenant AI inference workloads"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "@aws-sdk/client-s3",
+      "version": "3.660.0",
+      "purl": "pkg:npm/@aws-sdk/client-s3@3.660.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@aws-sdk/client-sqs",
+      "version": "3.660.0",
+      "purl": "pkg:npm/@aws-sdk/client-sqs@3.660.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@aws-sdk/s3-request-presigner",
+      "version": "3.660.0",
+      "purl": "pkg:npm/@aws-sdk/s3-request-presigner@3.660.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@fastify/cors",
+      "version": "9.0.1",
+      "purl": "pkg:npm/@fastify/cors@9.0.1",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@fastify/sensible",
+      "version": "5.5.0",
+      "purl": "pkg:npm/@fastify/sensible@5.5.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@fastify/swagger",
+      "version": "8.15.0",
+      "purl": "pkg:npm/@fastify/swagger@8.15.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@fastify/swagger-ui",
+      "version": "4.2.0",
+      "purl": "pkg:npm/@fastify/swagger-ui@4.2.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@types/node",
+      "version": "20.16.5",
+      "purl": "pkg:npm/@types/node@20.16.5",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@types/pg",
+      "version": "8.11.10",
+      "purl": "pkg:npm/@types/pg@8.11.10",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@types/uuid",
+      "version": "10.0.0",
+      "purl": "pkg:npm/@types/uuid@10.0.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "fastify",
+      "version": "4.28.1",
+      "purl": "pkg:npm/fastify@4.28.1",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "pg",
+      "version": "8.13.0",
+      "purl": "pkg:npm/pg@8.13.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "tsx",
+      "version": "4.19.1",
+      "purl": "pkg:npm/tsx@4.19.1",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "typescript",
+      "version": "5.6.2",
+      "purl": "pkg:npm/typescript@5.6.2",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "uuid",
+      "version": "10.0.0",
+      "purl": "pkg:npm/uuid@10.0.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "zod",
+      "version": "3.23.8",
+      "purl": "pkg:npm/zod@3.23.8",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "mypy",
+      "version": "1.0.0",
+      "purl": "pkg:pypi/mypy@1.0.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "numpy",
+      "version": "1.24.0",
+      "purl": "pkg:pypi/numpy@1.24.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "psutil",
+      "version": "5.9.0",
+      "purl": "pkg:pypi/psutil@5.9.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "7.0.0",
+      "purl": "pkg:pypi/pytest@7.0.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "pyyaml",
+      "version": "6.0.0",
+      "purl": "pkg:pypi/pyyaml@6.0.0",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "ruff",
+      "version": "0.5.0",
+      "purl": "pkg:pypi/ruff@0.5.0",
+      "scope": "required"
+    }
+  ]
+}

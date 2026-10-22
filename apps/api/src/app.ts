@@ -23,12 +23,18 @@ import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { securityRoutes } from './routes/security.js';
+import { registerSecurityHooks } from './plugins/security.js';
+import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
+import { SlidingWindowRateLimiter } from './domain/security.js';
 import { ENDPOINT_OPENAPI_CONFIGS } from './infrastructure/openapi/endpoint-schemas.js';
 
 export interface AppDependencies {
   config: EnvConfig;
   db: { isHealthy: () => Promise<boolean> };
   jobRepo: IJobRepository;
+  securityRepo?: ISecurityRepository;
+  rateLimiter?: SlidingWindowRateLimiter;
   storageClient: IStorageClient;
   queueClient: IQueueClient;
   inferenceExecutor?: IInferenceExecutor;
@@ -88,6 +94,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
         { name: 'Provider Routing', description: 'Multi-provider policy routing and cost evaluation' },
         { name: 'Kubernetes', description: 'KEDA queue autoscaling & Kueue batch admission hooks' },
         { name: 'AWS Cloud', description: 'Ephemeral AWS infrastructure and workflow execution' },
+        { name: 'Security', description: 'API key lifecycle, ABAC scopes, rate limits, and audit logs' },
       ],
     },
     transform: ({ schema, url, route }) => {
@@ -114,6 +121,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
 
       if (!s.tags || s.tags.length === 0) {
         if (url.startsWith('/healthz') || url.startsWith('/readyz')) s.tags = ['Health'];
+        else if (url.startsWith('/v1/auth') || url.startsWith('/v1/security')) s.tags = ['Security'];
         else if (url.startsWith('/v1/jobs') || url.startsWith('/v1/worker')) s.tags = ['Jobs'];
         else if (url.startsWith('/metrics') || url.startsWith('/v1/traces')) s.tags = ['Observability'];
         else if (url.startsWith('/v1/routing')) s.tags = ['Provider Routing'];
@@ -179,10 +187,20 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     );
 
   // Modularized Lifecycle Hooks & Centralized Error Boundary
+  const { securityRepo, rateLimiter } = registerSecurityHooks(app, {
+    config: deps.config,
+    securityRepo: deps.securityRepo,
+    rateLimiter: deps.rateLimiter,
+  });
   registerRequestContextHooks(app, deps.config, tracer, metrics);
   registerErrorHandler(app, deps.config, metrics);
 
   // Register Routes
+  app.register(securityRoutes, {
+    securityRepo,
+    rateLimiter,
+  });
+
   app.register(healthRoutes, {
     db: deps.db,
     storage: deps.storageClient,
