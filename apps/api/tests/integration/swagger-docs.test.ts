@@ -61,6 +61,7 @@ describe('OpenAPI & Swagger Documentation Routes', () => {
       'Provider Routing',
       'Kubernetes',
       'AWS Cloud',
+      'Security',
     ]);
 
     let operationCount = 0;
