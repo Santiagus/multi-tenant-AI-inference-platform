@@ -19,7 +19,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | **Passed** |
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | _Planned_ |
 | **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | _Planned_ |
-| **M11** | Product Dashboard | React + Fastify API | Component tests, API contract integration, WebSocket feeds | _Planned_ |
+| **M11** | Product Dashboard | React + Fastify API | Unit SDK tests, FinOps calculations, API contract integration, React Flow visualization | **Passed** |
 | **M12** | Production Readiness | Distributed Load & Chaos | Locust load tests, worker crash injection, partition recovery | _Planned_ |
 
 ---
@@ -133,7 +133,21 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 9. Maintenance Rules for Subsequent Milestones
+## 9. M11 Verification Matrix (Product Dashboard, React Flow & FinOps Economics)
+
+### Detailed Test Matrix
+
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-53** | **Job Listing & Status Filter API** | Integration | In-Memory / Simulated | `GET /v1/jobs` | Returns paginated inference jobs for tenant with lifecycle status, progress percentages, latency metrics, and token usage. Filters accurately by status (`SUCCEEDED`, `PROCESSING`, `FAILED`). | `apps/api/tests/integration/analytics-routes.test.ts`<br>`request.rest` (Cycle 14.1–14.2) |
+| **TC-54** | **FinOps Usage, Cost & Margin Aggregation** | Integration / Unit | In-Memory / Simulated | `GET /v1/analytics/economics` | Computes token volume, infrastructure compute costs, projected revenue ($0.0004/token), net gross profit, and gross margin percentage. Generates per-provider and per-model financial breakdowns. | `apps/api/tests/integration/analytics-routes.test.ts`<br>`apps/dashboard/tests/economics-calculations.test.ts`<br>`request.rest` (Cycle 14.3) |
+| **TC-55** | **Dashboard API Client SDK Parity & Error Boundary** | Unit | Mocked | `PlatformApiClient`, `ApiError` | Formats query parameters, injects tenant headers (`x-tenant-id`), encapsulates HTTP RFC 7807 problem details in `ApiError`, and provides typed wrappers for all control plane endpoints. | `apps/dashboard/tests/api-client.test.ts` |
+| **TC-56** | **Deterministic Routing Explainability & Queue Sweep UI** | Unit / Integration | Simulated | `RoutingView`, `POST /v1/routing/evaluate`, `POST /v1/routing/simulate` | Interactive 5-stage explainability ledger rendering passed/rejected criteria (hardware VRAM, VPC isolation, provider health, gross margin). Visualizes queue depth spillover threshold table. | `apps/dashboard/tests/api-client.test.ts`<br>`request.rest` (Cycle 14.6–14.7) |
+| **TC-57** | **Interactive Workload Lifecycle Visualization (React Flow)** | Component / Static Check | Vite Build / React Flow | `WorkloadPathView` (`@xyflow/react`) | Renders pannable, zoomable interactive node graph of Two-Path architecture (Path A: SQS+KEDA vs Path B: Flyte+Kueue), displaying component details, protocols, telemetry metrics, and monitored failure modes upon selection. | `apps/dashboard/src/components/flow/WorkloadPathView.tsx`<br>`pnpm --filter @platform/dashboard build` |
+
+---
+
+## 10. Maintenance Rules for Subsequent Milestones
 
 When implementing future milestones (M09–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
