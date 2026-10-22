@@ -1272,6 +1272,30 @@ Authorization: Bearer {{apiKey}}
 }
 
 ###
+
+# 12.5 Vertical 9:16 Instagram Reel Synthesis (Keyframe Conditioned, 720x1280 @ 24fps)
+# Model: Wan-AI/Wan2.1-T2V-1.3B (Local RTX 5070 Ti PyTorch CUDA Acceleration)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "Wan-AI/Wan2.1-T2V-1.3B",
+  "routing_preference": "local/gpu",
+  "priority": 7,
+  "input": {
+    "prompt": "Cinematic vertical 9:16 Formula 1 night pitstop race car, air jacks hissing, glowing red carbon ceramic brake discs emitting sparks, pit crew in fireproof racing suits changing tires, asphalt heat haze and tire smoke, volumetric floodlights, fluid 24fps motion",
+    "media_asset_uri": "s3://platform-artifacts/tenants/tenant-default/outputs/42644a2a-4552-43e9-b07e-a659d85e49d1/output.png",
+    "parameters": {
+      "fps": 24,
+      "duration_seconds": 3,
+      "denoising_steps": 4
+    }
+  }
+}
+
+###
 ### ==============================================================================
 ### USE CASE 13: Multi-Tier & Provider Matrix (Mock, Tier 1 CPU, Tier 2 GPU, Cloud)
 ### Verified with real serialized float32 weights and hardware acceleration
@@ -1611,4 +1635,251 @@ Authorization: Bearer {{apiKey}}
 GET {{baseUrl}}/v1/jobs/{{mockJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
+
+
+### ==============================================================================
+### USE CASE 14: Security Boundary, ABAC, Tenant Isolation & Rate Limiting (M09)
+### Zero-trust authentication, scoped permissions, rate limits, and audit logs
+### ==============================================================================
+
+# 14.1 Issue Cryptographic Scoped API Key for Tenant Alpha
+# @name issueApiKey
+POST {{baseUrl}}/v1/auth/api-keys
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "name": "Production Worker Key",
+  "scopes": ["jobs:read", "jobs:write", "models:execute"],
+  "allowed_models": ["meta-llama/Llama-3-8B-Instruct", "tinyllama/tinyllama-1.1b-chat-v1.0"],
+  "rate_limit_per_minute": 120,
+  "expires_in_days": 30
+}
+
+###
+
+@newApiKey = {{issueApiKey.response.body.key}}
+@keyId = {{issueApiKey.response.body.id}}
+
+# 14.2 List Tenant API Keys (Secrets Masked)
+GET {{baseUrl}}/v1/auth/api-keys
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.3 Execute Inference Job Using Newly Issued Scoped Key
+# @name executeWithScopedKey
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "routing_preference": "instant/mock",
+  "input": {
+    "prompt": "Hello zero-trust security."
+  }
+}
+
+###
+
+# 14.4 Check Tenant Sliding Window Rate Limit Consumption
+GET {{baseUrl}}/v1/security/rate-limits
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+###
+
+# 14.5 Inspect Structured Security Audit Events (Tenant Partitioned)
+GET {{baseUrl}}/v1/security/audit-events
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.6 Reject Unauthenticated Request (Expect 401 Unauthorized)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Test missing token."
+  }
+}
+
+###
+
+# 14.7 Attempt Cross-Tenant Header Spoofing (Expect 403 Forbidden)
+# Key belongs to tenantId, but header claims tenant-intruder
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-intruder
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Spoofed tenant header attempt."
+  }
+}
+
+###
+
+# 14.8 Attempt Cross-Tenant S3 Artifact Tampering (Expect 403 Forbidden)
+# Tenant default attempts to access artifact owned by tenant-victim
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Tampering attempt.",
+    "media_asset_uri": "s3://platform-artifacts/tenants/tenant-victim/models/weights.bin"
+  }
+}
+
+###
+
+# 14.9 Revoke Scoped API Key
+DELETE {{baseUrl}}/v1/auth/api-keys/{{keyId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.10 Verify Revoked Key Immediately Rejected (Expect 401 Unauthorized)
+GET {{baseUrl}}/v1/security/rate-limits
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+
+### ==============================================================================
+### USE CASE 14: Security Boundary, ABAC, Tenant Isolation & Rate Limiting (M09)
+### Zero-trust authentication, scoped permissions, rate limits, and audit logs
+### ==============================================================================
+
+# 14.1 Issue Cryptographic Scoped API Key for Tenant Alpha
+# @name issueApiKey
+POST {{baseUrl}}/v1/auth/api-keys
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "name": "Production Worker Key",
+  "scopes": ["jobs:read", "jobs:write", "models:execute"],
+  "allowed_models": ["meta-llama/Llama-3-8B-Instruct", "tinyllama/tinyllama-1.1b-chat-v1.0"],
+  "rate_limit_per_minute": 120,
+  "expires_in_days": 30
+}
+
+###
+
+@newApiKey = {{issueApiKey.response.body.key}}
+@keyId = {{issueApiKey.response.body.id}}
+
+# 14.2 List Tenant API Keys (Secrets Masked)
+GET {{baseUrl}}/v1/auth/api-keys
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.3 Execute Inference Job Using Newly Issued Scoped Key
+# @name executeWithScopedKey
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "routing_preference": "instant/mock",
+  "input": {
+    "prompt": "Hello zero-trust security."
+  }
+}
+
+###
+
+# 14.4 Check Tenant Sliding Window Rate Limit Consumption
+GET {{baseUrl}}/v1/security/rate-limits
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+###
+
+# 14.5 Inspect Structured Security Audit Events (Tenant Partitioned)
+GET {{baseUrl}}/v1/security/audit-events
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.6 Reject Unauthenticated Request (Expect 401 Unauthorized)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Test missing token."
+  }
+}
+
+###
+
+# 14.7 Attempt Cross-Tenant Header Spoofing (Expect 403 Forbidden)
+# Key belongs to tenantId, but header claims tenant-intruder
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-intruder
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Spoofed tenant header attempt."
+  }
+}
+
+###
+
+# 14.8 Attempt Cross-Tenant S3 Artifact Tampering (Expect 403 Forbidden)
+# Tenant default attempts to access artifact owned by tenant-victim
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
+
+{
+  "model_id": "tinyllama/tinyllama-1.1b-chat-v1.0",
+  "input": {
+    "prompt": "Tampering attempt.",
+    "media_asset_uri": "s3://platform-artifacts/tenants/tenant-victim/models/weights.bin"
+  }
+}
+
+###
+
+# 14.9 Revoke Scoped API Key
+DELETE {{baseUrl}}/v1/auth/api-keys/{{keyId}}
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 14.10 Verify Revoked Key Immediately Rejected (Expect 401 Unauthorized)
+GET {{baseUrl}}/v1/security/rate-limits
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{newApiKey}}
 
