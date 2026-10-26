@@ -9,9 +9,15 @@ api:
     type: NodePort
     port: 3000
     nodePort: 30080
+  env:
+    databaseUrl: "postgresql://postgres:postgres@172.25.0.1:5432/platform"
+    s3Endpoint: "http://172.25.0.1:9000"
+    sqsEndpoint: "http://172.25.0.1:9324"
+    sqsQueueUrl: "http://172.25.0.1:9324/000000000000/inference-jobs"
+    sqsDlqUrl: "http://172.25.0.1:9324/000000000000/inference-jobs-dlq"
 
 worker:
-  replicaCount: 1
+  replicaCount: 0
   executionMode: cpu-fallback
   runtimeClassName: ""
   nodeSelector:

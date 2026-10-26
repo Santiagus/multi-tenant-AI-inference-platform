@@ -33,6 +33,7 @@ api:
   env:
     nodeEnv: production
     logLevel: info
+    databaseUrl: "postgresql://postgres:postgres@postgres.inference-platform.svc.cluster.local:5432/platform"
     databaseUrlSecretName: platform-runtime-config
     s3Endpoint: http://platform-minio.inference-platform.svc.cluster.local:9000
     s3Region: us-east-1
