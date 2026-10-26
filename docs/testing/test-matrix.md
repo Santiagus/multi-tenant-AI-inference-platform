@@ -18,7 +18,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M07** | AWS Ephemeral Platform | AWS S3, SQS, EKS (Terraform) | Ephemeral cloud integration, least-privilege IAM, cost budget | **Passed** |
 | **M08** | Provider Routing | Local / RunPod / Bedrock / SageMaker | Provider contract tests, fallback routing, cost optimization | **Passed** |
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | **Passed** |
-| **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | _Planned_ |
+| **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | **Passed** |
 | **M11** | Product Dashboard | React + Fastify API | Unit SDK tests, FinOps calculations, API contract integration, React Flow visualization | **Passed** |
 | **M12** | Production Readiness | Distributed Load & Chaos | Locust load tests, worker crash injection, partition recovery | _Planned_ |
 
@@ -164,7 +164,23 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 11. Maintenance Rules for Subsequent Milestones
+## 11. M10 Verification Matrix (GitOps, Continuous Delivery & Argo CD Reconciliation)
+
+### Detailed Test Matrix
+
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-68** | **Multi-Stage CI Pipeline & AWS OIDC Configuration** | Unit | Local File Validator | `.github/workflows/ci.yml`, `scripts/validate_gitops.py` | Validates all 5 required CI stages (fast-validation, integration-tests, security-and-sbom, infrastructure-validation, image-build) and ensures `id-token: write` for AWS STS OIDC federation with mock inference mode. | `tests/unit/test_gitops_ci_cd.py`<br>`scripts/validate_gitops.py` |
+| **TC-69** | **Acceptance Criteria: Zero Imperative Kubernetes Bypass** | Unit / Integration | Static Scanner / Simulated | `.github/workflows/*`, `scripts/validate_gitops.py`, `apps/api/src/domain/gitops.ts` | Enforces that GitHub Actions never executes direct `kubectl apply` or `helm upgrade` against clusters. API rejects `direct_cluster_apply: true` with `403 Forbidden` (`GITOPS_BYPASS_PROHIBITED`). | `tests/unit/test_gitops_ci_cd.py`<br>`apps/api/tests/unit/gitops.test.ts`<br>`apps/api/tests/integration/gitops-routes.test.ts`<br>`request.rest` (Cycle 16.7) |
+| **TC-70** | **Declarative Argo CD Manifests & App-of-Apps Architecture** | Unit | Local File Validator | `deploy/argocd/*`, `scripts/validate_gitops.py` | Validates `AppProject` bounds destination namespaces (`inference-platform`, `inference-workers`), staging auto-sync (`prune: true`, `selfHeal: true`), production approval-required label, and root App-of-Apps. | `tests/unit/test_gitops_ci_cd.py`<br>`scripts/validate_gitops.py` |
+| **TC-71** | **Environment Overlays & Image Tag Governance** | Unit | Local File Validator | `deploy/environments/*`, `scripts/validate_gitops.py` | Validates staging and production values overlays cleanly parameterize replicas, HPA limits, GPU resources, and verifies programmatic image tag updates via `--update-env`. | `tests/unit/test_gitops_ci_cd.py`<br>`scripts/validate_gitops.py` |
+| **TC-72** | **Production Promotion Explicit Approval Gate** | Unit / Integration | In-Memory / Simulated | `POST /v1/gitops/promote`, `apps/api/src/domain/gitops.ts` | Enforces that production release promotions must supply explicit `approver` username and `approval_token`. Unapproved requests fail with `400 Bad Request` (`PRODUCTION_APPROVAL_REQUIRED`). | `apps/api/tests/unit/gitops.test.ts`<br>`apps/api/tests/integration/gitops-routes.test.ts`<br>`request.rest` (Cycle 16.5 & 16.6) |
+| **TC-73** | **Staging Progressive Promotion & GitOps Commit Tracking** | Unit / Integration | In-Memory / Simulated | `POST /v1/gitops/promote`, `GET /v1/gitops/environments` | Promotes staging release without manual gate, generates GitOps commit SHA, and records previous and new container image tags. | `apps/api/tests/unit/gitops.test.ts`<br>`apps/api/tests/integration/gitops-routes.test.ts`<br>`request.rest` (Cycle 16.4) |
+| **TC-74** | **Declarative Argo CD Sync & Status Telemetry** | Unit / Integration | In-Memory / Simulated | `POST /v1/gitops/sync/:environment`, `GET /v1/gitops/status`, Prometheus metrics | Triggers simulated Argo CD sync cycle, updates environment revision to desired, marks `Synced` and `Healthy`, and increments `gitops_sync_cycles_total`. | `apps/api/tests/unit/gitops.test.ts`<br>`apps/api/tests/integration/gitops-routes.test.ts`<br>`request.rest` (Cycle 16.1 & 16.8) |
+
+---
+
+## 12. Maintenance Rules for Subsequent Milestones
 
 When implementing future milestones (M09–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
