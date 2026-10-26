@@ -22,6 +22,7 @@ import { observabilityRoutes } from './routes/observability.js';
 import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
+import { analyticsRoutes } from './routes/analytics.js';
 import { securityRoutes } from './routes/security.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
@@ -233,6 +234,11 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     jobService,
     jobWorker,
     storageClient: deps.storageClient,
+  });
+
+  app.register(analyticsRoutes, {
+    jobService,
+    routerController,
   });
 
   return app;
