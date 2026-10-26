@@ -1859,3 +1859,91 @@ Authorization: Bearer {{apiKey}}
     "target_gross_margin": 0.4
   }
 }
+
+
+###############################################################################
+# CYCLE 16: GitOps, CI/CD & Argo CD Reconciliation (M10)
+###############################################################################
+
+# 16.1 Inspect GitOps Controller Status, Argo CD Reconciler & OIDC IAM Trust
+GET {{baseUrl}}/v1/gitops/status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 16.2 List All Declared GitOps Environments & Sync Policies
+GET {{baseUrl}}/v1/gitops/environments
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 16.3 Get Staging Environment Details (Automated Prune & Self-Heal)
+GET {{baseUrl}}/v1/gitops/environments/staging
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 16.4 Promote Release to Staging Environment (Automated GitOps Sync)
+POST {{baseUrl}}/v1/gitops/promote
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "environment": "staging",
+  "image_tag": "0.10.1-staging",
+  "target_revision": "HEAD"
+}
+
+###
+
+# 16.5 Rejected Production Promotion (Missing Approver Sign-Off)
+POST {{baseUrl}}/v1/gitops/promote
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "environment": "production",
+  "image_tag": "0.10.1"
+}
+
+###
+
+# 16.6 Approved Production Promotion (Explicit Approver & Sign-Off Token)
+POST {{baseUrl}}/v1/gitops/promote
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "environment": "production",
+  "image_tag": "0.10.1",
+  "target_revision": "v0.10.1",
+  "approver": "lead-architect",
+  "approval_token": "sec-signoff-token-20261023"
+}
+
+###
+
+# 16.7 Enforce GitOps Non-Bypass Invariant (Direct Cluster Apply Prohibited)
+POST {{baseUrl}}/v1/gitops/promote
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "environment": "production",
+  "image_tag": "0.10.1",
+  "direct_cluster_apply": true
+}
+
+###
+
+# 16.8 Trigger Declarative Argo CD Reconciliation Cycle
+POST {{baseUrl}}/v1/gitops/sync/staging
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}

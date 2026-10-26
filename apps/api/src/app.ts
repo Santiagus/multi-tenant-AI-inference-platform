@@ -12,6 +12,7 @@ import { MetricsRegistry } from './infrastructure/telemetry/metrics.js';
 import { KueueAdmissionController } from './domain/kubernetes-scheduler.js';
 import { AwsPlatformController } from './domain/aws-platform.js';
 import { ProviderRouterController } from './domain/provider-routing.js';
+import { GitOpsController } from './domain/gitops.js';
 import { JobService } from './application/job-service.js';
 import { JobWorker, type IInferenceExecutor } from './application/job-worker.js';
 import { registerRequestContextHooks } from './plugins/request-context.js';
@@ -24,6 +25,7 @@ import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { securityRoutes } from './routes/security.js';
+import { gitOpsRoutes } from './routes/gitops.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
 import { SlidingWindowRateLimiter } from './domain/security.js';
@@ -44,6 +46,7 @@ export interface AppDependencies {
   kueueController?: KueueAdmissionController;
   awsController?: AwsPlatformController;
   routerController?: ProviderRouterController;
+  gitOpsController?: GitOpsController;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -127,6 +130,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
         else if (url.startsWith('/v1/routing')) s.tags = ['Provider Routing'];
         else if (url.startsWith('/v1/k8s')) s.tags = ['Kubernetes'];
         else if (url.startsWith('/v1/cloud/aws')) s.tags = ['AWS Cloud'];
+        else if (url.startsWith('/v1/gitops')) s.tags = ['GitOps'];
       }
 
       // Pre-fill x-tenant-id header default so Try-It-Out works immediately without typing
@@ -168,6 +172,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const kueueController = deps.kueueController ?? new KueueAdmissionController();
   const awsController = deps.awsController ?? new AwsPlatformController();
   const routerController = deps.routerController ?? new ProviderRouterController();
+  const gitOpsController = deps.gitOpsController ?? new GitOpsController();
 
   const jobService = new JobService(
     deps.jobRepo,
@@ -239,6 +244,11 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.register(analyticsRoutes, {
     jobService,
     routerController,
+  });
+
+  app.register(gitOpsRoutes, {
+    metrics,
+    gitOpsController,
   });
 
   return app;

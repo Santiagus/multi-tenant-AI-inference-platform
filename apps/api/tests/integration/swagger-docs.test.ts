@@ -62,6 +62,7 @@ describe('OpenAPI & Swagger Documentation Routes', () => {
       'Kubernetes',
       'AWS Cloud',
       'Security',
+      'GitOps',
     ]);
 
     let operationCount = 0;
