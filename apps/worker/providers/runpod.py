@@ -32,11 +32,12 @@ class RunPodAdapter(InferenceProvider):
     ) -> None:
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
         self._endpoint_id = endpoint_id or os.environ.get("RUNPOD_ENDPOINT_ID", "runpod-llama3-serverless")
-        self._mock_mode = (
-            mock_mode
-            if mock_mode is not None
-            else (not bool(self._api_key) or os.environ.get("RUNPOD_MOCK", "1") == "1")
+        is_ci_or_mock = (
+            os.environ.get("CI", "").lower() in ("true", "1", "yes")
+            or os.environ.get("INFERENCE_MOCK_MODE", "").lower() in ("true", "1", "yes")
+            or os.environ.get("RUNPOD_MOCK", "1") == "1"
         )
+        self._mock_mode = mock_mode if mock_mode is not None else (not bool(self._api_key) or is_ci_or_mock)
         self._healthy = healthy
         self._base_url = base_url.rstrip("/")
 

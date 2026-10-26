@@ -219,6 +219,20 @@ class LocalPyTorchAdapter(InferenceProvider):
         else:
             tier = 1
 
+        # Enforce zero expensive weights loading or model downloads when in CI or mock mode
+        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
+            "INFERENCE_MOCK_MODE", ""
+        ).lower() in ("true", "1", "yes")
+        if is_ci_or_mock and request.parameters.get("weights") != "production":
+            tier = 1
+
+        # Enforce zero expensive weights loading or model downloads when in CI or mock mode
+        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
+            "INFERENCE_MOCK_MODE", ""
+        ).lower() in ("true", "1", "yes")
+        if is_ci_or_mock and request.parameters.get("weights") != "production":
+            tier = 1
+
         quantization = request.parameters.get("quantization")
         if request.parameters.get("quantized") or quantization:
             tier = 2
