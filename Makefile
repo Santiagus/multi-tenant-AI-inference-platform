@@ -4,7 +4,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers
+.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform validate-gitops sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers local-argocd local-argocd-ui local-sync-images
 
 all: ci
 
@@ -23,6 +23,10 @@ help:
 	@echo "  make handoff-check          - Validate milestone handoff protocol integrity"
 	@echo "  make validate-k8s           - Render Helm charts and validate KEDA, Kueue, and Kyverno policies"
 	@echo "  make validate-terraform     - Validate AWS Terraform modules, IAM policies, and cost guardrails"
+	@echo "  make validate-gitops        - Validate Argo CD manifests, environment overlays, and CI/CD pipelines"
+	@echo "  make local-argocd           - Set up local Kind cluster with Argo CD & GitOps manifests"
+	@echo "  make local-argocd-ui        - Port-forward Argo CD web dashboard to localhost:8080"
+	@echo "  make local-sync-images      - Build and load local container images into Kind cluster"
 	@echo "  make simulate-observability - Run live workload simulator to populate Grafana & Prometheus"
 	@echo "  make benchmark-engines      - Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)"
 	@echo "  make benchmark-inference    - Run concurrency and prompt-tier inference benchmark"
@@ -79,6 +83,24 @@ validate-terraform:
 	@echo "==> Validating AWS Terraform modules, IAM policies, cost guardrails, and ephemeral lifecycle..."
 	@$(PYTHON) scripts/validate_terraform.py
 
+validate-gitops:
+	@echo "==> Validating GitOps pipelines, Argo CD applications, environment overlays, and non-bypass invariants..."
+	@$(PYTHON) scripts/validate_gitops.py
+
+local-argocd:
+	@bash scripts/setup_local_argocd.sh up
+
+local-argocd-ui:
+	@bash scripts/setup_local_argocd.sh ui
+
+local-sync-images:
+	@echo "==> Building and syncing container images into local Kind cluster..."
+	@docker build -t ghcr.io/multi-tenant-ai-inference-platform/api:0.6.0 -f apps/api/Dockerfile .
+	@docker build -t ghcr.io/multi-tenant-ai-inference-platform/worker:0.6.0 -f apps/worker/Dockerfile .
+	@export PATH="${HOME}/.local/bin:${PATH}"; kind load docker-image ghcr.io/multi-tenant-ai-inference-platform/api:0.6.0 --name inference-platform-local
+	@export PATH="${HOME}/.local/bin:${PATH}"; kind load docker-image ghcr.io/multi-tenant-ai-inference-platform/worker:0.6.0 --name inference-platform-local
+	@echo "Local container images synced to Kind cluster."
+
 simulate-observability:
 	@echo "==> Running observability workload simulator..."
 	@$(PYTHON) scripts/simulate_observability_workload.py
@@ -99,7 +121,7 @@ check-providers:
 	@echo "==> Checking provider and hardware diagnostics..."
 	@$(PYTHON) scripts/setup_providers.py --check
 
-ci: format-check lint typecheck test scan handoff-check
+ci: format-check lint typecheck validate-gitops test scan handoff-check
 	@echo ""
 	@echo "=========================================="
 	@echo "  Local CI validation gate PASSED (All OK)"

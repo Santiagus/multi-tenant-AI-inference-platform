@@ -921,5 +921,65 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     description:
       'Computes end-to-end economic metrics including token usage, infrastructure costs, projected revenue, gross profit, and gross margin breakdown by provider and model.',
   },
+
+  // =========================================================================
+  // GitOps & Continuous Delivery (M10)
+  // =========================================================================
+  'GET /v1/gitops/status': {
+    tags: ['GitOps'],
+    summary: 'Inspect GitOps Controller & Reconciliation Status',
+    description:
+      'Returns current Argo CD controller status, GitHub OIDC IAM trust configuration, and declared environment overlays.',
+  },
+  'GET /v1/gitops/environments': {
+    tags: ['GitOps'],
+    summary: 'List Declared GitOps Environments',
+    description:
+      'Lists all declared environments (staging, production) along with their sync policies, revisions, and approval requirements.',
+  },
+  'POST /v1/gitops/promote': {
+    tags: ['GitOps'],
+    summary: 'Promote Release to Target Environment',
+    description:
+      'Promotes a validated container image tag to staging or production. Requires explicit approver sign-off for production. Rejects direct cluster apply attempts.',
+    body: {
+      type: 'object',
+      required: ['environment', 'image_tag'],
+      properties: {
+        environment: {
+          type: 'string',
+          enum: ['staging', 'production'],
+          example: 'staging',
+        },
+        image_tag: {
+          type: 'string',
+          example: '0.10.0-staging',
+        },
+        target_revision: {
+          type: 'string',
+          example: 'HEAD',
+        },
+        approver: {
+          type: 'string',
+          example: 'lead-operator',
+        },
+        approval_token: {
+          type: 'string',
+          example: 'token-signoff-12345',
+        },
+        direct_cluster_apply: {
+          type: 'boolean',
+          example: false,
+        },
+      },
+    },
+  },
+  'POST /v1/gitops/sync/:environment': {
+    tags: ['GitOps'],
+    summary: 'Trigger Argo CD Declarative Sync',
+    description:
+      'Triggers a declarative Argo CD reconciliation cycle for the declared target environment manifests.',
+  },
 };
+
 

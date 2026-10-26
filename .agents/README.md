@@ -35,7 +35,7 @@ Commit (`<type>(mXX): …`, see `.gitmessage`) before starting the next mileston
 | M07 | AWS Platform | Terraform, S3/SQS/EKS, ephemeral cloud deployment | done |
 | M08 | Provider Routing | Local/RunPod/Bedrock/SageMaker adapters and routing | done |
 | M09 | Security | Multi-tenancy, ABAC, isolation, supply chain | done |
-| M10 | GitOps / CI-CD | Argo CD, environments, OIDC, promotion | todo |
+| M10 | GitOps / CI-CD | Argo CD, environments, OIDC, promotion | done |
 | M11 | Product Dashboard | Jobs, routing, usage and economics UI | done |
 | M12 | Production Readiness | Load/failure/security/benchmark evidence, demo path | todo |
 

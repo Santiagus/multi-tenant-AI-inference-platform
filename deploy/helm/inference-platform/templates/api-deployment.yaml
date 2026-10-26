@@ -55,6 +55,8 @@ spec:
               value: "false"
             - name: DEFAULT_TENANT_ID
               value: {{ .Values.global.tenantDefault | quote }}
+            - name: DATABASE_URL
+              value: {{ .Values.api.env.databaseUrl | default "postgresql://postgres:postgres@postgres.inference-platform.svc.cluster.local:5432/platform" | quote }}
             - name: S3_ENDPOINT
               value: {{ .Values.api.env.s3Endpoint | quote }}
             - name: S3_REGION

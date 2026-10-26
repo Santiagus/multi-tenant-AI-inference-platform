@@ -11,6 +11,11 @@
   "ruff.configuration": "${workspaceFolder}/ruff.toml",
   "files.eol": "\n",
   "files.insertFinalNewline": true,
-  "files.trimTrailingWhitespace": true
+  "files.trimTrailingWhitespace": true,
+  "antigravity.autoOpenFiles": false,
+  "workbench.editor.limit.enabled": true,
+  "workbench.editor.limit.value": 3,
+  "workbench.editor.limit.perEditorGroup": true,
+  "workbench.editor.enablePreview": true
 }
 

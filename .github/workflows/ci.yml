@@ -1,6 +1,6 @@
 name: CI
 
-on:
+"on":
   push:
     branches: ["**"]
   pull_request:
@@ -12,12 +12,23 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
+
+env:
+  CI: "true"
+  INFERENCE_MOCK_MODE: "true"
+  BEDROCK_MOCK: "1"
+  SAGEMAKER_MOCK: "1"
+  RUNPOD_MOCK: "1"
+  USE_PRODUCTION_WEIGHTS: "false"
 
 jobs:
-  validate:
-    name: Local CI Gate & Security Scan
+  # ---------------------------------------------------------------------------
+  # Stage 1: Fast Static Validation (Linter, Formatter, Types, Mermaid, Handoff)
+  # ---------------------------------------------------------------------------
+  fast-validation:
+    name: Fast Static Validation
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -36,13 +47,85 @@ jobs:
       - name: Install Node dependencies
         run: pnpm install
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
-      - name: Install Python validation tools and worker dependencies
-        run: pip install mypy ./apps/worker
+      - name: Install Python validation tools
+        run: pip install ruff mypy pyyaml
+
+      - name: Format Check
+        run: python scripts/format_check.py
+
+      - name: Lint Check
+        run: python scripts/lint.py
+
+      - name: Mermaid Architecture Diagram Check
+        run: python scripts/validate_mermaid.py
+
+      - name: Type Check (Python & TypeScript)
+        run: python scripts/typecheck.py
+
+      - name: Milestone Handoff Check
+        run: python scripts/check_milestone_handoff.py
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Integration & Contract Tests (Mock Mode Enforced - Zero Real Inference Costs)
+  # ---------------------------------------------------------------------------
+  integration-tests:
+    name: Integration & Contract Tests
+    needs: fast-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install Node dependencies
+        run: pnpm install
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Python worker & test dependencies
+        run: pip install -e ./apps/worker pyyaml
+
+      - name: Run Python Automated Tests (Mocked Cloud & Local Fallback)
+        run: python -m unittest discover -s tests
+
+      - name: Run TypeScript Fastify & Dashboard Tests
+        run: pnpm test
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Security, Secret Scanning, PII & CycloneDX SBOM Generation
+  # ---------------------------------------------------------------------------
+  security-and-sbom:
+    name: Security, Secret Scanning & SBOM
+    needs: fast-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
 
       - name: Install Gitleaks
         run: |
@@ -50,5 +133,91 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sudo tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
-      - name: Run Local CI Validation Gate
-        run: make ci
+      - name: Run Secret & PII Scanning
+        run: python scripts/check_secrets_pii.py
+
+      - name: Generate CycloneDX 1.5 Software Bill of Materials (SBOM)
+        run: python scripts/generate_sbom.py --output dist/sbom.cdx.json
+
+      - name: Run Comprehensive Security Scan
+        run: python scripts/security_scan.py
+
+  # ---------------------------------------------------------------------------
+  # Stage 4: Cloud Infrastructure & Declarative GitOps Validation
+  # ---------------------------------------------------------------------------
+  infrastructure-validation:
+    name: Infrastructure & GitOps Manifest Validation
+    needs: fast-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install validation dependencies
+        run: pip install pyyaml
+
+      - name: Validate Kubernetes Helm, KEDA & Kueue Manifests
+        run: python scripts/validate_kubernetes.py
+
+      - name: Validate AWS Terraform Modules, Cost Guardrails & IAM
+        run: python scripts/validate_terraform.py
+
+      - name: Validate Declarative GitOps & Argo CD Configurations
+        run: python scripts/validate_gitops.py
+
+  # ---------------------------------------------------------------------------
+  # Stage 5: Container Image Build & AWS OIDC Publication Gate
+  # ---------------------------------------------------------------------------
+  image-build:
+    name: Build & Verify Container Images
+    needs: [integration-tests, security-and-sbom, infrastructure-validation]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        component:
+          - name: api
+            context: .
+            dockerfile: apps/api/Dockerfile
+            image: ghcr.io/multi-tenant-ai-inference-platform/api
+          - name: worker
+            context: .
+            dockerfile: apps/worker/Dockerfile
+            image: ghcr.io/multi-tenant-ai-inference-platform/worker
+          - name: dashboard
+            context: .
+            dockerfile: apps/dashboard/Dockerfile
+            image: ghcr.io/multi-tenant-ai-inference-platform/dashboard
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials via GitHub OIDC (Federated Trust)
+        if: github.ref == 'refs/heads/main' && env.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'eu-central-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Build and Inspect Container Image (${{ matrix.component.name }})
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.component.context }}
+          file: ${{ matrix.component.dockerfile }}
+          push: false
+          tags: |
+            ${{ matrix.component.image }}:${{ github.sha }}
+            ${{ matrix.component.image }}:latest
+          load: true

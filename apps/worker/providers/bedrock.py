@@ -30,9 +30,12 @@ class BedrockAdapter(InferenceProvider):
         has_aws_creds = bool(
             os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
         )
-        self._mock_mode = (
-            mock_mode if mock_mode is not None else (not has_aws_creds or os.environ.get("BEDROCK_MOCK", "1") == "1")
+        is_ci_or_mock = (
+            os.environ.get("CI", "").lower() in ("true", "1", "yes")
+            or os.environ.get("INFERENCE_MOCK_MODE", "").lower() in ("true", "1", "yes")
+            or os.environ.get("BEDROCK_MOCK", "1") == "1"
         )
+        self._mock_mode = mock_mode if mock_mode is not None else (not has_aws_creds or is_ci_or_mock)
         self._healthy = healthy
 
     @property

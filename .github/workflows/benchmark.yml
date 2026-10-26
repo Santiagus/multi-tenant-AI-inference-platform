@@ -1,0 +1,62 @@
+name: Benchmark Workflow
+
+"on":
+  workflow_dispatch:
+    inputs:
+      benchmark_suite:
+        description: "Benchmark suite to execute (manual on-demand trigger to avoid unwanted compute costs)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - engines
+          - inference
+          - production-reality
+
+permissions:
+  contents: read
+
+jobs:
+  run-benchmarks:
+    name: Execute Platform Inference Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Worker and Benchmark Dependencies
+        run: |
+          pip install -e ./apps/worker pyyaml matplotlib
+
+      - name: Synchronize Local AI Models
+        run: python scripts/sync_models.py
+
+      - name: Run Multi-Engine Comparison Benchmark
+        if: ${{ inputs.benchmark_suite == 'all' || inputs.benchmark_suite == 'engines' }}
+        run: python benchmarks/run_engine_comparison.py
+
+      - name: Run Concurrency & Prompt-Tier Benchmark
+        if: ${{ inputs.benchmark_suite == 'all' || inputs.benchmark_suite == 'inference' }}
+        run: python benchmarks/run_inference_benchmark.py
+
+      - name: Run Production Reality & Shape Churn Benchmark
+        if: ${{ inputs.benchmark_suite == 'all' || inputs.benchmark_suite == 'production-reality' }}
+        run: python benchmarks/run_production_reality_test.py
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmarks/reports/
+          if-no-files-found: ignore
+

@@ -1,0 +1,153 @@
+name: GitOps Deployment & Environment Promotion
+
+"on":
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Target environment to promote"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: "Image tag to deploy (e.g. v0.10.0 or commit SHA)"
+        required: true
+        type: string
+      approver:
+        description: "Approver username (mandatory for production promotion)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CI: "true"
+  INFERENCE_MOCK_MODE: "true"
+  BEDROCK_MOCK: "1"
+  SAGEMAKER_MOCK: "1"
+  RUNPOD_MOCK: "1"
+  USE_PRODUCTION_WEIGHTS: "false"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: Promote to Staging (Automated GitOps Reconciliation)
+  # ---------------------------------------------------------------------------
+  promote-staging:
+    name: Promote to Staging Environment
+    if: inputs.target_environment == 'staging' || inputs.target_environment == 'production'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS Credentials via GitHub OIDC
+        if: env.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'eu-central-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install validation dependencies
+        run: pip install pyyaml
+
+      - name: Update Staging Deployment Manifests
+        run: |
+          python scripts/validate_gitops.py --update-env staging --tag "${{ inputs.image_tag }}"
+
+      - name: Commit and Push Versioned Deployment State
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/environments/staging/values.yaml
+          if git diff --staged --quiet; then
+            echo "No changes in staging configuration; skipping commit."
+          else
+            git commit -m "chore(gitops): promote staging to ${{ inputs.image_tag }}"
+            git push origin HEAD
+          fi
+
+      - name: Verify GitOps Boundary (Zero Imperative Kubernetes Apply)
+        run: |
+          python scripts/validate_gitops.py --verify-no-bypass
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Promote to Production (Explicit Approval & Invariant Enforcement)
+  # ---------------------------------------------------------------------------
+  promote-production:
+    name: Promote to Production Environment
+    needs: promote-staging
+    if: inputs.target_environment == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://inference.internal.domain/v1/gitops/status
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate Production Approval
+        run: |
+          if [ -z "${{ inputs.approver }}" ]; then
+            echo "ERROR: Production promotion requires explicit approver identification."
+            exit 1
+          fi
+          echo "Production promotion approved by: ${{ inputs.approver }}"
+
+      - name: Configure AWS Credentials via GitHub OIDC
+        if: env.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION || 'eu-central-1' }}
+          audience: sts.amazonaws.com
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install validation dependencies
+        run: pip install pyyaml
+
+      - name: Enforce GitOps Non-Bypass Invariant (Acceptance Criteria)
+        run: |
+          python scripts/validate_gitops.py --verify-no-bypass
+
+      - name: Update Production Deployment Manifests
+        run: |
+          python scripts/validate_gitops.py --update-env production --tag "${{ inputs.image_tag }}"
+
+      - name: Commit and Push Production Versioned State
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/environments/production/values.yaml
+          if git diff --staged --quiet; then
+            echo "No changes in production configuration; skipping commit."
+          else
+            git commit -m "chore(gitops): promote production to ${{ inputs.image_tag }} (approved by ${{ inputs.approver }})"
+            git push origin HEAD
+          fi
+
+      - name: Argo CD Reconciles Declarative State
+        run: |
+          echo "Production declared state updated in Git repository."
+          echo "Argo CD in-cluster controller reconciles cluster state declaratively from deploy/environments/production."
+
