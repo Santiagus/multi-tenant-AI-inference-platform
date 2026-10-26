@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inference-platform-root-apps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    tier: meta-orchestration
+spec:
+  project: inference-platform
+  source:
+    repoURL: https://github.com/Santiagus/multi-tenant-AI-inference-platform.git
+    targetRevision: main
+    path: deploy/argocd
+    directory:
+      recurse: false
+      include: "application-*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+

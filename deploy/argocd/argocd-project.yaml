@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: inference-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Multi-Tenant AI Inference Platform GitOps Project
+  sourceRepos:
+    - "https://github.com/Santiagus/multi-tenant-AI-inference-platform"
+    - "https://github.com/Santiagus/multi-tenant-AI-inference-platform.git"
+    - "https://github.com/org/multi-tenant-AI-inference-platform"
+    - "https://github.com/org/multi-tenant-AI-inference-platform.git"
+    - "*"
+  destinations:
+    - namespace: inference-platform
+      server: https://kubernetes.default.svc
+    - namespace: inference-workers
+      server: https://kubernetes.default.svc
+    - namespace: observability
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: kueue.x-k8s.io
+      kind: ClusterQueue
+    - group: kueue.x-k8s.io
+      kind: ResourceFlavor
+    - group: kueue.x-k8s.io
+      kind: WorkloadPriorityClass
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: DaemonSet
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: keda.sh
+      kind: ScaledObject
+    - group: keda.sh
+      kind: TriggerAuthentication
+    - group: kueue.x-k8s.io
+      kind: LocalQueue
+    - group: batch
+      kind: Job
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+

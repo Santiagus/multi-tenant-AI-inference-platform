@@ -1,0 +1,95 @@
+global:
+  environment: production
+  tenantDefault: tenant-default
+  namespaces:
+    controlPlane: inference-platform
+    workers: inference-workers
+    observability: observability
+
+api:
+  name: inference-api
+  replicaCount: 3
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/api
+    tag: "0.10.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+  env:
+    nodeEnv: production
+    logLevel: info
+    s3Endpoint: https://s3.eu-central-1.amazonaws.com
+    s3Region: eu-central-1
+    s3Bucket: inference-platform-production-artifacts
+    sqsEndpoint: https://sqs.eu-central-1.amazonaws.com
+    sqsRegion: eu-central-1
+    sqsQueueUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-platform-production-jobs
+    sqsDlqUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-platform-production-jobs-dlq
+
+worker:
+  name: inference-worker
+  replicaCount: 0
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/worker
+    tag: "0.10.0"
+    pullPolicy: IfNotPresent
+  executionMode: torchscript
+  runtimeClassName: nvidia
+  nodeSelector:
+    platform.ai/node-role: gpu-worker
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+      nvidiaGpu: 1
+
+keda:
+  enabled: true
+  pollingInterval: 5
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 16
+  targetQueueDepthPerReplica: 5
+  activationQueueDepthThreshold: 1
+  queueName: inference-platform-production-jobs
+  awsRegion: eu-central-1
+
+kueue:
+  enabled: true
+  cohortName: tenant-production-gpu-cohort
+  clusterQueueName: production-gpu-cluster-queue
+  localQueueName: tenant-default-gpu-queue
+  quotas:
+    nominalCpu: "32"
+    borrowingLimitCpu: "16"
+    nominalMemory: "128Gi"
+    borrowingLimitMemory: "64Gi"
+    nominalGpu: 4
+    borrowingLimitGpu: 4
+
+gpu:
+  enabled: true
+  dcgmExporter:
+    enabled: true
+

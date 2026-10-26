@@ -1,0 +1,91 @@
+global:
+  environment: staging
+  tenantDefault: tenant-default
+  namespaces:
+    controlPlane: inference-platform
+    workers: inference-workers
+    observability: observability
+
+api:
+  name: inference-api
+  replicaCount: 2
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/api
+    tag: "0.10.0-staging"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+  env:
+    nodeEnv: production
+    logLevel: info
+    s3Endpoint: https://s3.eu-central-1.amazonaws.com
+    s3Region: eu-central-1
+    s3Bucket: inference-platform-staging-artifacts
+    sqsEndpoint: https://sqs.eu-central-1.amazonaws.com
+    sqsRegion: eu-central-1
+    sqsQueueUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-platform-staging-jobs
+    sqsDlqUrl: https://sqs.eu-central-1.amazonaws.com/000000000000/inference-platform-staging-jobs-dlq
+
+worker:
+  name: inference-worker
+  replicaCount: 0
+  image:
+    repository: ghcr.io/multi-tenant-ai-inference-platform/worker
+    tag: "0.10.0-staging"
+    pullPolicy: Always
+  executionMode: cpu-fallback
+  runtimeClassName: ""
+  nodeSelector:
+    workload-role: api-and-cpu-worker
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+      nvidiaGpu: 0
+
+keda:
+  enabled: true
+  pollingInterval: 5
+  cooldownPeriod: 30
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  targetQueueDepthPerReplica: 5
+  activationQueueDepthThreshold: 1
+  queueName: inference-platform-staging-jobs
+  awsRegion: eu-central-1
+
+kueue:
+  enabled: true
+  cohortName: tenant-staging-gpu-cohort
+  clusterQueueName: staging-gpu-cluster-queue
+  localQueueName: tenant-default-gpu-queue
+  quotas:
+    nominalCpu: "8"
+    borrowingLimitCpu: "4"
+    nominalMemory: "32Gi"
+    borrowingLimitMemory: "16Gi"
+    nominalGpu: 1
+    borrowingLimitGpu: 1
+
+gpu:
+  enabled: false
+  dcgmExporter:
+    enabled: false
+

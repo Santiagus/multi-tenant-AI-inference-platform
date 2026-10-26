@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inference-platform-production
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    environment: production
+    tier: control-plane-and-workers
+    approval-required: "true"
+spec:
+  project: inference-platform
+  source:
+    repoURL: https://github.com/Santiagus/multi-tenant-AI-inference-platform.git
+    targetRevision: main
+    path: deploy/helm/inference-platform
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: inference-platform
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - Validate=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  # Production promotion gate: Sync windows restrict reconciliation to approved maintenance windows
+  syncWindows:
+    - kind: allow
+      schedule: "0 0 * * *"
+      duration: 24h
+      applications:
+        - inference-platform-production
+      manualSync: true
+
