@@ -212,7 +212,7 @@ jobs:
           audience: sts.amazonaws.com
 
       - name: Build and Inspect Container Image (${{ matrix.component.name }})
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.component.context }}
           file: ${{ matrix.component.dockerfile }}
