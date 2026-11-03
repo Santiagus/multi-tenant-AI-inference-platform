@@ -14,7 +14,12 @@ from apps.worker.contracts import (
     UsageMetrics,
 )
 from apps.worker.models import ExecutionEngine, ModelLoader, emit_job_progress, tokenize_prompt
-from apps.worker.providers.base import InferenceProvider
+from apps.worker.providers.base import (
+    InferenceProvider,
+    assert_no_real_inference_in_test,
+    is_mock_inference_enabled,
+    is_test_environment,
+)
 from apps.worker.telemetry import TelemetryCollector
 
 
@@ -220,16 +225,7 @@ class LocalPyTorchAdapter(InferenceProvider):
             tier = 1
 
         # Enforce zero expensive weights loading or model downloads when in CI or mock mode
-        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
-            "INFERENCE_MOCK_MODE", ""
-        ).lower() in ("true", "1", "yes")
-        if is_ci_or_mock and request.parameters.get("weights") != "production":
-            tier = 1
-
-        # Enforce zero expensive weights loading or model downloads when in CI or mock mode
-        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
-            "INFERENCE_MOCK_MODE", ""
-        ).lower() in ("true", "1", "yes")
+        is_ci_or_mock = is_mock_inference_enabled() or os.environ.get("CI", "").lower() in ("true", "1", "yes")
         if is_ci_or_mock and request.parameters.get("weights") != "production":
             tier = 1
 

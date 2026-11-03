@@ -26,6 +26,22 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+
+# Automatically load local .env if present (without overriding existing environment)
+def _load_env_file(env_path: Path) -> None:
+    if not env_path.is_file():
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            k, v = stripped.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+
+
+_load_env_file(REPO_ROOT / ".env")
+
 from apps.worker.consumer import WorkerRuntime
 from apps.worker.contracts import InferenceRequest
 from apps.worker.models import ModelLoader

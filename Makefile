@@ -4,7 +4,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform validate-gitops sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers local-argocd local-argocd-ui local-sync-images
+.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform validate-gitops sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers local-argocd local-argocd-ui local-sync-images load-test demo
 
 all: ci
 
@@ -32,6 +32,8 @@ help:
 	@echo "  make benchmark-inference    - Run concurrency and prompt-tier inference benchmark"
 	@echo "  make benchmark-production-reality - Run dynamic shape churn and cold scaling production test"
 	@echo "  make check-providers        - Run provider and hardware acceleration diagnostics"
+	@echo "  make load-test              - Run API concurrency load test and Little's Law capacity analysis"
+	@echo "  make demo                   - Run end-to-end 8-stage production verification walkthrough"
 	@echo "  make install-hooks          - Configure local Git repository to run pre-commit hook"
 
 init:
@@ -64,8 +66,8 @@ typecheck:
 
 test:
 	@echo "==> Running tests..."
-	@$(PYTHON) -m unittest discover -s tests
-	@if [ -f package.json ]; then pnpm test; fi
+	@MOCK_INFERENCE=1 INFERENCE_MOCK_MODE=true $(PYTHON) -m unittest discover -s tests
+	@if [ -f package.json ]; then MOCK_INFERENCE=1 INFERENCE_MOCK_MODE=true pnpm test; fi
 
 scan:
 	@echo "==> Running secret & PII scan..."
@@ -120,6 +122,14 @@ benchmark-production-reality:
 check-providers:
 	@echo "==> Checking provider and hardware diagnostics..."
 	@$(PYTHON) scripts/setup_providers.py --check
+
+load-test:
+	@echo "==> Running API load test and capacity analysis..."
+	@$(PYTHON) benchmarks/run_load_test.py
+
+demo:
+	@echo "==> Running end-to-end production verification walkthrough..."
+	@$(PYTHON) scripts/demo_end_to_end.py
 
 ci: format-check lint typecheck validate-gitops test scan handoff-check
 	@echo ""

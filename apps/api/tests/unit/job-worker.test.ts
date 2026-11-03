@@ -4,6 +4,9 @@ import {
   JobWorker,
   InferenceExecutionError,
   DefaultLocalInferenceExecutor,
+  isMockInferenceEnabled,
+  shouldRunRealInference,
+  isTestEnvironment,
   type IInferenceExecutor,
   type InferenceExecutionResult,
 } from '../../src/application/job-worker.js';
@@ -562,6 +565,31 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     assert.equal((receivedPayload as any).media_metadata.content_type, 'image/jpeg');
     assert.equal((receivedPayload as any).media_metadata.filename, 'telemetry_f1.jpg');
     assert.ok((receivedPayload as any).local_cached_path);
+  });
+
+  test('generalized mock inference flag supports ENABLE/TRUE/1 and forbids real inference in tests', () => {
+    assert.equal(isTestEnvironment(), true);
+    assert.equal(shouldRunRealInference(), false);
+
+    // Truthy values
+    for (const val of ['1', 'ENABLE', 'enable', 'TRUE', 'true', 'YES', 'yes']) {
+      process.env.MOCK_INFERENCE = val;
+      assert.equal(isMockInferenceEnabled(), true);
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Falsy values must throw in test environment because real inference is strictly forbidden
+    for (const val of ['0', 'DISABLE', 'disable', 'FALSE', 'false', 'NO', 'no']) {
+      process.env.MOCK_INFERENCE = val;
+      assert.throws(
+        () => isMockInferenceEnabled(),
+        /Real inference in test is strictly forbidden/
+      );
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Reset back to enabled mock mode for tests
+    process.env.MOCK_INFERENCE = '1';
   });
 });
 
