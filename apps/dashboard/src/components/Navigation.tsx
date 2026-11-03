@@ -1,4 +1,4 @@
-export type ActiveTab = 'jobs' | 'providers' | 'routing' | 'economics' | 'workload-path';
+export type ActiveTab = 'jobs' | 'providers' | 'pricing' | 'routing' | 'economics' | 'workload-path';
 
 interface NavigationProps {
   activeTab: ActiveTab;
@@ -24,6 +24,12 @@ export function Navigation({
       label: 'Jobs & DLQ',
       badge: inFlightCount && inFlightCount > 0 ? `${inFlightCount} running` : jobCount,
       badgeColor: inFlightCount && inFlightCount > 0 ? '#6366f1' : '#475569',
+    },
+    {
+      id: 'pricing',
+      label: 'GPU & Model Pricing',
+      badge: 'Live',
+      badgeColor: '#10b981',
     },
     {
       id: 'providers',

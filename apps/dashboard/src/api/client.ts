@@ -211,6 +211,56 @@ export class PlatformApiClient {
   async getEconomics(tenantId: string): Promise<EconomicsResponse> {
     return this.request<EconomicsResponse>('/v1/analytics/economics', {}, tenantId);
   }
+
+  async getGpuPricing(options?: {
+    provider?: string;
+    hardware_sku?: string;
+    pricing_model?: string;
+  }): Promise<{ ok: boolean; count: number; data: import('../types').GpuPricingItem[] }> {
+    const params = new URLSearchParams();
+    if (options?.provider) params.set('provider', options.provider);
+    if (options?.hardware_sku) params.set('hardware_sku', options.hardware_sku);
+    if (options?.pricing_model) params.set('pricing_model', options.pricing_model);
+    const qs = params.toString();
+    return this.request(`/v1/finops/gpu-pricing${qs ? `?${qs}` : ''}`);
+  }
+
+  async getModelPricing(options?: {
+    provider?: string;
+    execution_type?: string;
+  }): Promise<{ ok: boolean; count: number; data: import('../types').ModelPricingItem[] }> {
+    const params = new URLSearchParams();
+    if (options?.provider) params.set('provider', options.provider);
+    if (options?.execution_type) params.set('execution_type', options.execution_type);
+    const qs = params.toString();
+    return this.request(`/v1/finops/model-pricing${qs ? `?${qs}` : ''}`);
+  }
+
+  async getPricingHistory(options?: {
+    provider?: string;
+    item_id?: string;
+  }): Promise<{
+    ok: boolean;
+    count: number;
+    data: import('../types').PricingHistorySummary[];
+    cadence_audits: import('../types').PricingSyncAudit[];
+  }> {
+    const params = new URLSearchParams();
+    if (options?.provider) params.set('provider', options.provider);
+    if (options?.item_id) params.set('item_id', options.item_id);
+    const qs = params.toString();
+    return this.request(`/v1/finops/pricing-history${qs ? `?${qs}` : ''}`);
+  }
+
+  async syncPricing(): Promise<{
+    ok: boolean;
+    message: string;
+    syncedProviders: string[];
+    recordsCount: number;
+    syncedAt: string;
+  }> {
+    return this.request('/v1/finops/sync', { method: 'POST' });
+  }
 }
 
 export const apiClient = new PlatformApiClient();

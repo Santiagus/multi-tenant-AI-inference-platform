@@ -237,5 +237,46 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('FinOps pricing methods format endpoints and queries correctly', async () => {
+    const originalFetch = globalThis.fetch;
+    const capturedUrls: string[] = [];
+
+    globalThis.fetch = async (url: any) => {
+      capturedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, data: [] }),
+      } as Response;
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+
+      await client.getGpuPricing({ provider: 'runpod', pricing_model: 'spot_bid' });
+      assert.equal(
+        capturedUrls[0],
+        'http://test.local/v1/finops/gpu-pricing?provider=runpod&pricing_model=spot_bid'
+      );
+
+      await client.getModelPricing({ execution_type: 'token_factory' });
+      assert.equal(
+        capturedUrls[1],
+        'http://test.local/v1/finops/model-pricing?execution_type=token_factory'
+      );
+
+      await client.getPricingHistory({ provider: 'vast_ai' });
+      assert.equal(
+        capturedUrls[2],
+        'http://test.local/v1/finops/pricing-history?provider=vast_ai'
+      );
+
+      await client.syncPricing();
+      assert.equal(capturedUrls[3], 'http://test.local/v1/finops/sync');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 

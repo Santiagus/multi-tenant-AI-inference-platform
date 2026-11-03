@@ -208,3 +208,80 @@ export interface EconomicsResponse {
   recent_job_series: RecentJobSeriesItem[];
 }
 
+export type GpuPricingModel = 'on_demand' | 'spot_bid' | 'preemptible' | 'serverless';
+
+export interface GpuPricingItem {
+  id: string;
+  provider: string;
+  hardwareSkuId: string;
+  hardwareDisplayName: string;
+  vramGb: number;
+  zone: string;
+  pricingModel: GpuPricingModel;
+  rateMicrocents: number;
+  billingUnit: 'second' | 'minute' | 'hour';
+  normalizedHourlyMicrocents: number;
+  normalizedHourlyUsd: number;
+  obtainabilityScore: number;
+  obtainabilityLabel: 'High' | 'Medium' | 'Low' | 'Out of Stock';
+  interruptionRiskTier: '<5%' | '5-10%' | '10-20%' | '>20%' | 'guaranteed';
+  isAvailable: boolean;
+  commitment: string;
+  recordedAt: string;
+}
+
+export type ModelExecutionType = 'token_factory' | 'serverless_endpoint' | 'pay_per_call';
+
+export interface ModelPricingItem {
+  id: string;
+  provider: string;
+  modelId: string;
+  modelName: string;
+  developer: string;
+  executionType: ModelExecutionType;
+  inputTokenPriceMicrocents?: number;
+  outputTokenPriceMicrocents?: number;
+  cachedInputTokenPriceMicrocents?: number;
+  inputPricePerMillionUsd?: number;
+  outputPricePerMillionUsd?: number;
+  cachedPricePerMillionUsd?: number;
+  perUnitPriceMicrocents?: number;
+  perUnitUsd?: number;
+  unitType: 'token_1m' | 'megapixel' | 'compute_second';
+  contextLength?: number;
+  isAvailable: boolean;
+  recordedAt: string;
+}
+
+export interface PricingHistoryPoint {
+  recordedAt: string;
+  priceUsd: number;
+  spotPriceUsd?: number;
+  availability: string;
+}
+
+export interface PricingHistorySummary {
+  provider: string;
+  itemType: 'gpu' | 'model';
+  itemId: string;
+  displayName: string;
+  updateCadence: string;
+  estimatedUpdateFrequencyMinutes: number;
+  latestPriceUsd: number;
+  priceChange24hPct: number;
+  history: PricingHistoryPoint[];
+}
+
+export interface PricingSyncAudit {
+  id: string;
+  provider: string;
+  syncType: string;
+  recordsCount: number;
+  updateCadenceCategory: 'realtime_auction' | 'dynamic_shifts' | 'scheduled';
+  estimatedUpdateIntervalSec: number;
+  updateFrequencyDescription: string;
+  status: string;
+  syncedAt: string;
+}
+
+
