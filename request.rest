@@ -1947,3 +1947,139 @@ Authorization: Bearer {{apiKey}}
 POST {{baseUrl}}/v1/gitops/sync/staging
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
+###
+
+###############################################################################
+# CYCLE 17: PRODUCTION READINESS, CHAOS & SLO VERIFICATION (M12)
+###############################################################################
+
+# 17.1 Submit Job with Chaos Failure Injection (Permanent Error -> DLQ)
+# @name submitChaosJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Chaos permanent failure trigger",
+    "_simulate_failure": "permanent"
+  }
+}
+
+###
+
+# 17.2 Inspect Dead-Letter Queue (DLQ) for Quarantined Poison Pills
+GET {{baseUrl}}/v1/jobs/dlq
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 17.3 Submit Job for Mid-Flight Cancellation
+# @name submitJobToCancel
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "input": {
+    "prompt": "This job will be cancelled mid-flight."
+  }
+}
+
+###
+
+# 17.4 Cancel In-Flight Job
+@cancelJobId = {{submitJobToCancel.response.body.job_id}}
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 17.5 Evaluate Deterministic 5-Stage Provider Routing with Explainability
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 16,
+    "max_new_tokens": 32,
+    "estimated_vram_mb": 8192,
+    "modality": "text_to_text",
+    "requires_vpc": false
+  },
+  "capacity": {
+    "local_vram_total_mb": 16384,
+    "local_vram_allocated_mb": 4096,
+    "local_queue_depth": 2,
+    "local_queue_threshold": 10,
+    "worker_concurrency": 4
+  },
+  "slo": {
+    "latency_slo_ms": 1500
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "tenant_tier": "enterprise",
+    "routing_preference": "auto"
+  },
+  "economics": {
+    "target_gross_margin": 0.4,
+    "allow_margin_degradation_for_slo": false
+  }
+}
+
+###
+
+###############################################################################
+# CYCLE 18: NEOCLOUD FINOPS PRICING INTELLIGENCE & AVAILABILITY
+###############################################################################
+
+# 18.1 Query Normalized GPU Pricing & Obtainability (On-Demand, Spot Bid, Serverless)
+# Supports filtering by provider, hardware_sku, and pricing_model
+GET {{baseUrl}}/v1/finops/gpu-pricing?provider=runpod&pricing_model=spot_bid
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.2 Query Open Models & Token Factory Rates (Input/Output/Cached per 1M tokens)
+# Supports filtering by provider, developer, execution_mode
+GET {{baseUrl}}/v1/finops/model-pricing?provider=jarvislabs
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.3 Query Historical Pricing Trends & Provider Update Cadence (7-day lookback)
+GET {{baseUrl}}/v1/finops/pricing-history?lookback_days=7
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.4 Trigger On-Demand FinOps Pricing & Availability Sync Across Neocloud Providers
+POST {{baseUrl}}/v1/finops/sync
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "providers": ["runpod", "vast_ai", "baseten", "fal_ai", "jarvislabs", "nebius", "runware"]
+}
+
+
+

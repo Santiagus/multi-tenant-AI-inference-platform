@@ -20,7 +20,7 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **M09** | Multi-Tenant Security | Isolated DB + S3 Prefixes | Tenant cross-boundary isolation, ABAC authorization tests | **Passed** |
 | **M10** | GitOps & Continuous Delivery | Argo CD + GitHub Actions | Argo CD sync, environment promotion, OIDC deployment gates | **Passed** |
 | **M11** | Product Dashboard | React + Fastify API | Unit SDK tests, FinOps calculations, API contract integration, React Flow visualization | **Passed** |
-| **M12** | Production Readiness | Distributed Load & Chaos | Locust load tests, worker crash injection, partition recovery | _Planned_ |
+| **M12** | Production Readiness | Distributed Load & Chaos | Locust load tests, worker crash injection, partition recovery | **Passed** |
 
 ---
 
@@ -180,7 +180,38 @@ This document tracks the verification matrix, automated test suites, and workloa
 
 ---
 
-## 12. Maintenance Rules for Subsequent Milestones
+## 12. M12 Verification Matrix (Production Readiness, Load, Chaos & SLOs)
+
+### Detailed Test Matrix
+
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-75** | **Concurrent Multi-Tenant Queue Ordering & Submission** | Integration | Local Emulated | `POST /v1/jobs` | Concurrently accepts 30 jobs across 3 tenants (`tenant-alpha`, `tenant-beta`, `tenant-gamma`), returning `202 Accepted` with unique IDs, correct queue ordering, and zero cross-tenant contamination. | `apps/api/tests/integration/load-and-chaos.test.ts` |
+| **TC-76** | **Chaos Failure Injection & Immediate DLQ Quarantine** | Integration / Unit | Local Emulated | `JobWorker`, `GET /v1/jobs/dlq` | Injects unrecoverable permanent exception (`_simulate_failure: "permanent"`). Worker marks job `FAILED`, consumes 0 retries, and quarantines message to dead-letter queue. | `apps/api/tests/integration/load-and-chaos.test.ts`<br>`tests/unit/test_production_readiness.py` |
+| **TC-77** | **In-Flight Cancellation & Terminal State Guard** | Integration | Local Emulated | `POST /v1/jobs/:id/cancel` | Transitions queued or processing jobs to `CANCELLED`, ceasing downstream compute. Subsequent cancel attempts return `409 Conflict` (`CONFLICT`). | `apps/api/tests/integration/load-and-chaos.test.ts` |
+| **TC-78** | **Downstream Readiness Probe Failure Detection** | Integration | Mocked (Fault Injection) | `GET /readyz` | Downstream storage or database outage triggers `503 Service Unavailable` with `status: "unhealthy"` and component diagnostic failure map. | `apps/api/tests/integration/load-and-chaos.test.ts` |
+| **TC-79** | **Interactive Path Latency SLO Budget Verification** | Integration | Local Emulated | `GET /healthz` | Measures P95 latency across sample distribution. Enforces $P95 < 50\text{ ms}$ threshold ($18.06\text{ ms}$ observed). | `apps/api/tests/integration/load-and-chaos.test.ts` |
+| **TC-80** | **Little's Law Equilibrium & Capacity Saturation Knee** | Performance / Unit | Simulated / Emulated | `benchmarks/run_load_test.py` | Verifies $L = \lambda \cdot W$ across concurrency tiers ($c = 1, 5, 10, 25$). Detects non-linear queue backlog knee at $c \ge 25$, establishing KEDA scale-out threshold. | `benchmarks/run_load_test.py`<br>`tests/unit/test_production_readiness.py` |
+| **TC-81** | **End-to-End Workload Lifecycle Walkthrough** | E2E | Live / Measured | `scripts/demo_end_to_end.py` | Executes full 8-stage workload lifecycle: Probes $\to$ AuthN $\to$ Path A (SQS) $\to$ Routing Explainability $\to$ Polling $\to$ Path B (Flyte) $\to$ Economics $\to$ Tracing. | `scripts/demo_end_to_end.py`<br>`make demo` |
+| **TC-82** | **Multi-Tenant Boundary Isolation End-to-End** | Unit / Security | Measured | `multi_stage_inference_workflow` | Verifies independent S3 prefixes (`/tenants/{tenant_id}/`), CloudFront URLs, and Kinesis metering partition keys across tenants. | `tests/unit/test_production_readiness.py`<br>`tests/unit/test_multi_tenant_capacity.py` |
+
+---
+
+## 13. FinOps Neocloud Pricing & Intelligence Verification Matrix
+
+### Detailed Test Matrix
+
+| ID | Use Case & Description | Level | Execution Mode | Target Component | Expected Behavior & Invariants | Automated Test / Scratchpad |
+|---|---|---|---|---|---|---|
+| **TC-83** | **Generalized Mock Inference & Test Strictness Guard** | Unit | Mocked / Enforced | `apps/worker/providers/base.py`, `apps/api/src/application/job-worker.ts` | Enforces `MOCK_INFERENCE` (`1`, `TRUE`, `ENABLE`). Any attempt to execute real cloud inference in test suites throws `RuntimeError` (`REAL_INFERENCE_FORBIDDEN_IN_TEST`). Zero cloud billing in tests. | `tests/test_provider_adapters.py`<br>`apps/api/tests/unit/job-worker.test.ts` |
+| **TC-84** | **Normalized GPU Pricing & Obtainability Catalog** | Integration | In-Memory / Simulated | `GET /v1/finops/gpu-pricing` | Returns normalized hourly USD rates across on-demand, spot bid, and serverless tiers. Filters by provider and pricing model with obtainability scores ($0 long-term commitment). | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.1) |
+| **TC-85** | **Open Models & Token Factory Pricing Matrix** | Integration | In-Memory / Simulated | `GET /v1/finops/model-pricing` | Returns per-million input/output/cached token rates (DeepSeek, Gemma, Qwen) and per-unit media generation pricing (megapixels, audio seconds). | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.2) |
+| **TC-86** | **Historical Pricing Trends & Update Cadence Auditing** | Integration | In-Memory / Simulated | `GET /v1/finops/pricing-history` | Returns historical price series and provider update frequency categorization (`realtime_auction` for Vast.ai 5m, `dynamic_shifts` for RunPod 1h, `scheduled` for Token Factory). | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.3) |
+| **TC-87** | **On-Demand FinOps Catalog Synchronization** | Integration | In-Memory / Simulated | `POST /v1/finops/sync` | Initiates on-demand pricing and availability refresh across all configured neocloud adapters, updating timestamps and recording sync latency. | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.4) |
+
+---
+
+## 14. Maintenance Rules for Subsequent Milestones
 
 When implementing future milestones (M09–M12):
 1. **Update Milestone Status**: Set the milestone status in Section 1 to `In Progress` or `Passed`.
