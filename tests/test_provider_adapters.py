@@ -318,10 +318,12 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res_err["error"]["code"], "UNKNOWN_INFERENCE_PROVIDER")
 
     def test_generalized_mock_flag_parsing(self) -> None:
-        """Verify generalized MOCK_INFERENCE flag accepts 1, ENABLE, TRUE, YES."""
+        """Verify unique MOCK_PROVIDERS and MOCK_INFERENCE flags accept 1, ENABLE, TRUE, YES."""
         for truthy in ("1", "ENABLE", "enable", "TRUE", "true", "YES", "yes"):
+            with unittest.mock.patch.dict(os.environ, {"MOCK_PROVIDERS": truthy}):
+                self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_PROVIDERS={truthy}")
             with unittest.mock.patch.dict(os.environ, {"MOCK_INFERENCE": truthy}):
-                self.assertTrue(is_mock_inference_enabled(), f"Failed for {truthy}")
+                self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_INFERENCE={truthy}")
 
     def test_real_inference_forbidden_during_test_execution(self) -> None:
         """Enforce that no real inference is permitted in automated tests."""
@@ -355,9 +357,9 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
         cleaned_env = {
             k: v
             for k, v in os.environ.items()
-            if not k.endswith("_MOCK") and k != "MOCK_INFERENCE" and k != "INFERENCE_MOCK_MODE"
+            if not k.endswith("_MOCK") and k not in ("MOCK_PROVIDERS", "MOCK_INFERENCE", "INFERENCE_MOCK_MODE")
         }
-        cleaned_env["MOCK_INFERENCE"] = "1"
+        cleaned_env["MOCK_PROVIDERS"] = "1"
 
         with unittest.mock.patch.dict(os.environ, cleaned_env, clear=True):
             rp = RunPodAdapter(endpoint_id="rp-test")

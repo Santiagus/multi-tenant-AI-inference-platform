@@ -3,9 +3,13 @@
 
 Validates credentials, hardware readiness, and endpoint connectivity for:
 - Local PyTorch (CUDA / RTX 5070 Ti / CPU)
-- RunPod Serverless GPU
-- AWS Bedrock (Converse API)
-- AWS SageMaker (Real-Time Endpoints)
+- Hyperscalers: AWS Bedrock, AWS SageMaker
+- Neoclouds & Specialized AI Clouds: RunPod, Modal, Baseten, Nebius, Vast.ai,
+  Runware, CoreWeave Forge, Weights & Biases, fal.ai, JarvisLabs, Beam Cloud,
+  Hivenet, WaveSpeed AI, NeoCloudz
+
+Uses the canonical unique mock flag MOCK_PROVIDERS (or MOCK_INFERENCE) to
+determine whether providers execute in mock or live mode.
 
 Usage:
   python3 scripts/setup_providers.py --check
@@ -43,9 +47,8 @@ def _load_env_file(env_path: Path) -> None:
 _load_env_file(REPO_ROOT / ".env")
 
 from apps.worker.consumer import WorkerRuntime
-from apps.worker.contracts import InferenceRequest
 from apps.worker.models import ModelLoader
-from apps.worker.providers.registry import ProviderRegistry
+from apps.worker.providers.base import is_mock_inference_enabled
 
 
 def check_local_pytorch() -> dict[str, Any]:
@@ -67,11 +70,12 @@ def check_local_pytorch() -> dict[str, Any]:
 
     return {
         "provider": "local_pytorch",
+        "category": "Local Hardware",
         "ready": True,
         "device": device,
         "device_name": device_name,
         "vram_mb": vram_mb,
-        "mode": "live",
+        "mode": "live",  # Local PyTorch is always live hardware
     }
 
 
@@ -79,14 +83,17 @@ def check_runpod() -> dict[str, Any]:
     """Validate RunPod Serverless credentials and endpoint configuration."""
     api_key = os.environ.get("RUNPOD_API_KEY", "")
     endpoint_id = os.environ.get("RUNPOD_ENDPOINT_ID", "")
-    mock_mode = os.environ.get("RUNPOD_MOCK", "1") == "1" or not api_key
+    base_url = os.environ.get("RUNPOD_BASE_URL", "https://api.runpod.ai/v2")
+    has_creds = bool(api_key and endpoint_id)
+    mock_mode = is_mock_inference_enabled() or not has_creds
 
-    ready = bool(api_key and endpoint_id) or mock_mode
     return {
         "provider": "runpod",
-        "ready": ready,
+        "category": "Neocloud Serverless GPU",
+        "ready": has_creds or mock_mode,
         "has_api_key": bool(api_key),
         "endpoint_id": endpoint_id or "(not set; using mock/fallback)",
+        "base_url": base_url,
         "mode": "mock" if mock_mode else "live",
     }
 
@@ -94,18 +101,21 @@ def check_runpod() -> dict[str, Any]:
 def check_aws_bedrock() -> dict[str, Any]:
     """Validate AWS Bedrock credentials and region."""
     region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+    base_url = os.environ.get("BEDROCK_BASE_URL", f"https://bedrock-runtime.{region}.amazonaws.com")
     has_creds = bool(
         os.environ.get("AWS_ACCESS_KEY_ID")
         or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
         or os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
     )
-    mock_mode = os.environ.get("BEDROCK_MOCK", "1") == "1" or not has_creds
+    mock_mode = is_mock_inference_enabled() or not has_creds
 
     return {
         "provider": "bedrock",
+        "category": "Hyperscaler Managed Foundation Models",
         "ready": has_creds or mock_mode,
         "has_credentials": has_creds,
         "aws_region": region,
+        "base_url": base_url,
         "mode": "mock" if mock_mode else "live",
     }
 
@@ -114,96 +124,262 @@ def check_aws_sagemaker() -> dict[str, Any]:
     """Validate AWS SageMaker credentials and endpoint configuration."""
     region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
     endpoint_name = os.environ.get("SAGEMAKER_ENDPOINT_NAME", "")
+    base_url = os.environ.get("SAGEMAKER_BASE_URL", f"https://runtime.sagemaker.{region}.amazonaws.com")
     has_creds = bool(
         os.environ.get("AWS_ACCESS_KEY_ID")
         or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
         or os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
     )
-    mock_mode = os.environ.get("SAGEMAKER_MOCK", "1") == "1" or not has_creds
+    mock_mode = is_mock_inference_enabled() or not has_creds
 
     return {
         "provider": "sagemaker",
+        "category": "Hyperscaler Dedicated Endpoints",
         "ready": (has_creds and bool(endpoint_name)) or mock_mode,
         "has_credentials": has_creds,
         "endpoint_name": endpoint_name or "(not set; using mock/fallback)",
+        "base_url": base_url,
         "aws_region": region,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_modal() -> dict[str, Any]:
+    token_id = os.environ.get("MODAL_TOKEN_ID", "")
+    base_url = os.environ.get("MODAL_BASE_URL", "https://api.modal.com")
+    has_creds = bool(token_id)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "modal",
+        "category": "Neocloud Serverless GPU",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_baseten() -> dict[str, Any]:
+    api_key = os.environ.get("BASETEN_API_KEY", "")
+    base_url = os.environ.get("BASETEN_BASE_URL", "https://bridge.baseten.co/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "baseten",
+        "category": "Neocloud Serverless GPU",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_nebius() -> dict[str, Any]:
+    api_key = os.environ.get("NEBIUS_API_KEY", "")
+    studio_url = os.environ.get("NEBIUS_STUDIO_BASE_URL", "https://api.studio.nebius.ai/v1")
+    cloud_url = os.environ.get("NEBIUS_ENDPOINT_URL", "")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "nebius",
+        "category": "European Sovereign AI & Cloud",
+        "ready": has_creds or mock_mode,
+        "studio_base_url": studio_url,
+        "cloud_endpoint_url": cloud_url or "(not set)",
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_vast() -> dict[str, Any]:
+    api_key = os.environ.get("VAST_API_KEY", "")
+    base_url = os.environ.get("VAST_BASE_URL", "https://console.vast.ai/api/v0")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "vast",
+        "category": "GPU Marketplace",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_runware() -> dict[str, Any]:
+    api_key = os.environ.get("RUNWARE_API_KEY", "")
+    base_url = os.environ.get("RUNWARE_BASE_URL", "https://api.runware.ai/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "runware",
+        "category": "Fast Media & Inference Gateway",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_coreweave() -> dict[str, Any]:
+    api_key = os.environ.get("COREWEAVE_FORGE_API_KEY", "")
+    base_url = os.environ.get("COREWEAVE_FORGE_BASE_URL", "https://api.inference.wandb.ai/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "coreweave",
+        "category": "Specialized Cloud & Sandboxes",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_wandb() -> dict[str, Any]:
+    api_key = os.environ.get("WANDB_API_KEY", "")
+    base_url = os.environ.get("WANDB_BASE_URL", "https://api.wandb.ai")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "wandb",
+        "category": "Tracing, Evaluation & Model Registry",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_fal() -> dict[str, Any]:
+    key = os.environ.get("FAL_KEY", "")
+    base_url = os.environ.get("FAL_BASE_URL", "https://rest.alpha.fal.ai")
+    has_creds = bool(key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "fal",
+        "category": "Serverless Diffusion & Media",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_jarvislabs() -> dict[str, Any]:
+    api_key = os.environ.get("JL_API_KEY", "")
+    base_url = os.environ.get("JARVISLABS_BASE_URL", "https://models.jarvislabs.net/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "jarvislabs",
+        "category": "Token Factory & Serverless Endpoints",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_beam() -> dict[str, Any]:
+    token = os.environ.get("BEAM_TOKEN", "")
+    base_url = os.environ.get("BEAM_BASE_URL", "https://api.beam.cloud/v1")
+    has_creds = bool(token)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "beam",
+        "category": "Serverless GPU Functions",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_hivenet() -> dict[str, Any]:
+    api_key = os.environ.get("HIVENET_API_KEY", "")
+    base_url = os.environ.get("HIVENET_COMPUTE_BASE_URL", "https://api.hivecompute.ai/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "hivenet",
+        "category": "Distributed GPU Cloud",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_wavespeed() -> dict[str, Any]:
+    api_key = os.environ.get("WAVESPEED_API_KEY", "")
+    base_url = os.environ.get("WAVESPEED_BASE_URL", "https://api.wavespeed.ai")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "wavespeed",
+        "category": "Multi-Modal Inference Gateway",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
+        "mode": "mock" if mock_mode else "live",
+    }
+
+
+def check_neocloudz() -> dict[str, Any]:
+    api_key = os.environ.get("NEOCLOUDZ_API_KEY", "")
+    base_url = os.environ.get("NEOCLOUDZ_BASE_URL", "https://console.neocloudz.com/gateway/v1")
+    has_creds = bool(api_key)
+    mock_mode = is_mock_inference_enabled() or not has_creds
+    return {
+        "provider": "neocloudz",
+        "category": "Decentralized GPU Cloud & Gateway",
+        "ready": has_creds or mock_mode,
+        "base_url": base_url,
         "mode": "mock" if mock_mode else "live",
     }
 
 
 def generate_env_example(output_path: Path) -> None:
     """Generate sanitized .env.providers.example file."""
-    content = """# ==============================================================================
-# Inference Provider Environment Configuration
-# Reference template for live cloud and local inference provider adapters.
-# Keep real secrets in secret managers; do not commit filled credentials.
-# ==============================================================================
-
-# ------------------------------------------------------------------------------
-# 1. Local PyTorch / CUDA Engine
-# ------------------------------------------------------------------------------
-# Execution device: 'cuda', 'cpu', or 'auto' (detects RTX 5070 Ti / GPU if available)
-LOCAL_INFERENCE_DEVICE=auto
-# Model weights root directory (defaults to models/)
-LOCAL_MODEL_CACHE_DIR=models/
-
-# ------------------------------------------------------------------------------
-# 2. RunPod Serverless GPU
-# ------------------------------------------------------------------------------
-# Set RUNPOD_MOCK=0 to enable live REST calls to RunPod Serverless API
-RUNPOD_MOCK=1
-RUNPOD_API_KEY=rpa_your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=your_runpod_endpoint_id
-
-# ------------------------------------------------------------------------------
-# 3. AWS Bedrock (Foundation Models / Converse API)
-# ------------------------------------------------------------------------------
-# Set BEDROCK_MOCK=0 to enable live AWS Bedrock calls via Boto3 / SigV4
-BEDROCK_MOCK=1
-AWS_REGION=us-east-1
-# AWS credentials (or use IAM Roles / IRSA in Kubernetes / ECS)
-AWS_ACCESS_KEY_ID=AKIA_MOCK_KEY_ID
-AWS_SECRET_ACCESS_KEY=mock_secret_access_key
-# Default foundation model (e.g. Claude 3, Llama 3 70B, Titan)
-BEDROCK_DEFAULT_MODEL=anthropic.claude-3-sonnet-20240229-v1:0
-
-# ------------------------------------------------------------------------------
-# 4. AWS SageMaker (Dedicated / Async Real-Time Endpoints)
-# ------------------------------------------------------------------------------
-# Set SAGEMAKER_MOCK=0 to enable live SageMaker Runtime endpoint invocations
-SAGEMAKER_MOCK=1
-SAGEMAKER_ENDPOINT_NAME=sagemaker-llama3-70b-instruct
-"""
-    output_path.write_text(content.strip() + "\n", encoding="utf-8")
+    src = REPO_ROOT / ".env.providers.example"
+    if src.is_file() and src.resolve() != output_path.resolve():
+        output_path.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"Generated sanitized template: {output_path}")
 
 
 async def run_diagnostics() -> int:
     """Run full diagnostic check across all providers."""
+    mock_enabled = is_mock_inference_enabled()
+    global_status = "ENABLED (Mock Mode)" if mock_enabled else "DISABLED (Live Remote Execution)"
+
     print("=" * 70)
     print("  Inference Provider Configuration & Connectivity Diagnostics")
+    print(f"  Canonical Mock Flag: MOCK_PROVIDERS={1 if mock_enabled else 0} -> {global_status}")
     print("=" * 70)
 
     checks = [
         check_local_pytorch(),
-        check_runpod(),
         check_aws_bedrock(),
         check_aws_sagemaker(),
+        check_runpod(),
+        check_neocloudz(),
+        check_nebius(),
+        check_baseten(),
+        check_fal(),
+        check_runware(),
+        check_coreweave(),
+        check_wandb(),
+        check_modal(),
+        check_jarvislabs(),
+        check_beam(),
+        check_hivenet(),
+        check_wavespeed(),
+        check_vast(),
     ]
 
     for check in checks:
         prov = check["provider"]
         ready = check["ready"]
         mode = check["mode"]
+        cat = check.get("category", "General")
         status_tag = "[OK]" if ready else "[WARN]"
-        print(f"\n{status_tag} Provider: {prov} (Mode: {mode})")
+        print(f"\n{status_tag} Provider: {prov} [{cat}] (Mode: {mode})")
         for k, v in check.items():
-            if k not in ("provider", "ready", "mode"):
+            if k not in ("provider", "ready", "mode", "category"):
                 print(f"     * {k}: {v}")
 
     runtime = WorkerRuntime()
     print("\n" + "-" * 70)
-    print("  Testing Adapter Health Probes via ProviderRegistry...")
+    print("  Testing Core Adapter Health Probes via ProviderRegistry...")
     print("-" * 70)
     health_results = await runtime.registry.check_health()
     for name, res in health_results.items():

@@ -78,6 +78,18 @@ spec:
               value: {{ .Values.api.env.sqsQueueUrl | quote }}
             - name: SQS_DLQ_URL
               value: {{ .Values.api.env.sqsDlqUrl | quote }}
+            - name: RUNPOD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.secrets.providerSecretsName | quote }}
+                  key: {{ .Values.worker.secrets.runpodApiKeyKey | quote }}
+                  optional: true
+            - name: RUNPOD_ENDPOINT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.secrets.providerSecretsName | quote }}
+                  key: {{ .Values.worker.secrets.runpodEndpointIdKey | quote }}
+                  optional: true
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001

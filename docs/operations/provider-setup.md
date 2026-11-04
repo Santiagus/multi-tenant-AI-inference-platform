@@ -5,6 +5,11 @@ This guide describes how to configure, authenticate, automate, and verify both l
 - **RunPod Serverless GPU** (Dynamic burst capacity)
 - **AWS Bedrock** (Managed foundation models via Converse API)
 - **AWS SageMaker** (Dedicated / VPC-isolated endpoints)
+- **Neoclouds & Specialized AI Clouds** (NeoCloudz, Nebius, Baseten, fal.ai, Runware, Modal, JarvisLabs, etc.)
+
+> [!NOTE]
+> For the enterprise standard on bootstrapping autonomous AI coding agents, Model Context Protocol (MCP) tool synchronization, and full 17-provider `BASE_URL` routing, see the [Enterprise Developer & Agent Environment Guide](docs/operations/enterprise-agent-environment.md).
+
 
 ---
 
@@ -63,7 +68,7 @@ python3 scripts/setup_providers.py --test-prediction --provider sagemaker
 
 ## 3. How to Activate Live Calls (De-mocking)
 
-The platform defaults external cloud adapters to **safe mock mode** (`MOCK_INFERENCE=1`, or `ENABLE`/`TRUE`) so that developers and CI suites can run full lifecycle tests offline without incurring paid cloud compute bills. Testing environments strictly enforce mock inference (`ENABLE/TRUE/1`); **no real inference in test is allowed**.
+The platform defaults external cloud adapters to **safe mock mode** (`MOCK_PROVIDERS=1` / `MOCK_INFERENCE=1`, or `ENABLE`/`TRUE`) so that developers and CI suites can run full lifecycle tests offline without incurring paid cloud compute bills. Testing environments strictly enforce mock inference (`ENABLE/TRUE/1`); **no real inference in test is allowed**.
 
 > [!IMPORTANT]
 > **Local PyTorch is ALWAYS Live**: The `local_pytorch` adapter runs real neural network forward passes directly on your local GPU (e.g. NVIDIA GeForce RTX 5070 Ti) using PyTorch CUDA tensors without any mocking.
@@ -72,18 +77,18 @@ To activate live remote cloud execution for RunPod, AWS Bedrock, AWS SageMaker, 
 
 ### 3.1 Live Activation Variables
 
-| Provider | Mock Variable | Required Live Credentials / Settings | Verification Command |
+| Provider | Mock Flag (Unique Global) | Required Live Credentials / Settings | Verification Command |
 |---|---|---|---|
-| **Local PyTorch** | *None (Always Live)* | `LOCAL_INFERENCE_DEVICE=auto` | `python3 scripts/setup_providers.py --test-prediction --provider local_pytorch` |
-| **RunPod Serverless** | `MOCK_INFERENCE=0` | `RUNPOD_API_KEY="rpa_..."`<br>`RUNPOD_ENDPOINT_ID="vllm-..."` | `python3 scripts/setup_providers.py --test-prediction --provider runpod` |
-| **AWS Bedrock** | `MOCK_INFERENCE=0` | `AWS_REGION="us-east-1"`<br>`AWS_ACCESS_KEY_ID="AKIA..."`<br>`AWS_SECRET_ACCESS_KEY="..."` | `python3 scripts/setup_providers.py --test-prediction --provider bedrock` |
-| **AWS SageMaker** | `MOCK_INFERENCE=0` | `AWS_REGION="us-east-1"`<br>`SAGEMAKER_ENDPOINT_NAME="..."`<br>AWS credentials (or IAM IRSA in EKS) | `python3 scripts/setup_providers.py --test-prediction --provider sagemaker` |
+| **Local PyTorch** | *None (Always Live)* | Auto-detected (RTX 5070 Ti / CPU fallback) | `python3 scripts/setup_providers.py --test-prediction --provider local_pytorch` |
+| **RunPod Serverless** | `MOCK_PROVIDERS=0` | `RUNPOD_API_KEY="rpa_..."`<br>`RUNPOD_ENDPOINT_ID="vllm-..."` | `python3 scripts/setup_providers.py --test-prediction --provider runpod` |
+| **AWS Bedrock** | `MOCK_PROVIDERS=0` | `AWS_REGION="us-east-1"`<br>`AWS_ACCESS_KEY_ID="AKIA..."`<br>`AWS_SECRET_ACCESS_KEY="..."` | `python3 scripts/setup_providers.py --test-prediction --provider bedrock` |
+| **AWS SageMaker** | `MOCK_PROVIDERS=0` | `AWS_REGION="us-east-1"`<br>`SAGEMAKER_ENDPOINT_NAME="..."`<br>AWS credentials (or IAM IRSA in EKS) | `python3 scripts/setup_providers.py --test-prediction --provider sagemaker` |
 
 ### 3.2 Quick Live Activation Example
 Run in your shell or set in your local environment:
 ```bash
-# 0. Globally deactivate mock mode for live inference across all providers
-export MOCK_INFERENCE=0
+# 0. Globally deactivate mock mode for live inference across all external cloud providers
+export MOCK_PROVIDERS=0
 
 # 1. Configure RunPod Serverless credentials
 export RUNPOD_API_KEY="rpa_your_live_runpod_api_key"
@@ -122,10 +127,8 @@ Once live variables are exported:
   - CUDA Toolkit 12.x
   - Python virtual environment with PyTorch (`torch >= 2.0`)
 - **Configuration**:
-  ```bash
-  LOCAL_INFERENCE_DEVICE=auto   # 'cuda', 'cpu', or 'auto'
-  LOCAL_MODEL_CACHE_DIR=models/ # Relative path to model weights
-  ```
+  Hardware detection is automatic (`torch.cuda.is_available()`). Individual requests dynamically specify device or tier via `routing_preference` (`local/gpu`, `local/cpu`, `cloud`) or `parameters.device`.
+
 - **Verification**:
   ```bash
   python3 -m apps.worker.consumer --healthcheck --provider local_pytorch

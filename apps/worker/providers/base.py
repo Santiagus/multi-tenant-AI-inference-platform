@@ -30,26 +30,33 @@ def is_test_environment() -> bool:
 def is_mock_inference_enabled(default: bool = True) -> bool:
     """Check generalized inference mock flag across all providers.
 
-    Checks canonical MOCK_INFERENCE, and fallback INFERENCE_MOCK_MODE / INFERENCE_MOCK.
+    Checks canonical MOCK_PROVIDERS, MOCK_INFERENCE, and fallback INFERENCE_MOCK_MODE.
     Truthy values: 1, ENABLE, ENABLED, TRUE, YES, ON.
     Falsy values: 0, DISABLE, DISABLED, FALSE, NO, OFF.
 
     Under automated testing environments, mock inference is strictly required:
     disabling mock inference or attempting real inference raises RuntimeError.
     """
-    for var in ("MOCK_INFERENCE", "INFERENCE_MOCK_MODE", "INFERENCE_MOCK"):
+    # Check if any variable explicitly attempts to disable mock mode
+    for var in ("MOCK_PROVIDERS", "MOCK_INFERENCE", "INFERENCE_MOCK_MODE", "INFERENCE_MOCK"):
+        val = os.environ.get(var)
+        if val is not None:
+            cleaned = val.strip().lower()
+            if cleaned in FALSY_VALUES:
+                if is_test_environment():
+                    raise RuntimeError(
+                        f"Real inference in test is strictly forbidden! Environment variable {var}={val!r} "
+                        "disables mock inference during testing. Set MOCK_PROVIDERS=1 (or ENABLE/TRUE)."
+                    )
+                return False
+
+    # Check for enabled mock flags
+    for var in ("MOCK_PROVIDERS", "MOCK_INFERENCE", "INFERENCE_MOCK_MODE", "INFERENCE_MOCK"):
         val = os.environ.get(var)
         if val is not None:
             cleaned = val.strip().lower()
             if cleaned in TRUTHY_VALUES:
                 return True
-            if cleaned in FALSY_VALUES:
-                if is_test_environment():
-                    raise RuntimeError(
-                        f"Real inference in test is strictly forbidden! Environment variable {var}={val!r} "
-                        "disables mock inference during testing. Set MOCK_INFERENCE=1 (or ENABLE/TRUE)."
-                    )
-                return False
 
     # Default behavior: in test environments, mock inference is always required.
     if is_test_environment():
