@@ -2081,5 +2081,21 @@ Authorization: Bearer {{apiKey}}
   "providers": ["runpod", "vast_ai", "baseten", "fal_ai", "jarvislabs", "nebius", "runware"]
 }
 
+###
+
+# 18.5 Recommend Smart Cloud Options (Cheapest, Fastest, Balanced, Recommended)
+# Evaluates execution speed, hourly spot rates, and scale-to-zero runtime costs
+POST {{baseUrl}}/v1/finops/recommend-options
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "prompt_tokens": 128,
+  "max_new_tokens": 64
+}
+
+
 
 

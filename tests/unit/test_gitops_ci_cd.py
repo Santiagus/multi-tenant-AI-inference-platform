@@ -37,6 +37,7 @@ class TestGitOpsCiCd(unittest.TestCase):
 
         env_vars = wf.get("env", {})
         assert isinstance(env_vars, dict)
+        self.assertEqual(env_vars.get("MOCK_INFERENCE"), "1")
         self.assertEqual(env_vars.get("INFERENCE_MOCK_MODE"), "true")
 
     def test_benchmark_workflow_triggers(self) -> None:

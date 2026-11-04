@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 
 # Enforce generalized mock inference in automated test environments
+os.environ["MOCK_PROVIDERS"] = "1"
 os.environ["MOCK_INFERENCE"] = "1"
 os.environ["INFERENCE_MOCK_MODE"] = "true"
 os.environ["NODE_ENV"] = "test"

@@ -73,6 +73,7 @@ This repository is organized as an incremental monorepo:
 │   └── skills/              # Specialized domain instructions (OTel, PyTorch, K8s, etc.)
 ├── apps/                    # Application services
 │   ├── api/                 # Fastify TypeScript control plane (AuthN/Z, jobs, cost)
+│   ├── dashboard/           # React + TypeScript + React Flow product & workload dashboard
 │   └── worker/              # Python PyTorch inference worker, provider adapters & Flyte DAG
 ├── packages/                # Shared workspace libraries and contracts (placeholder for M11+)
 ├── models/                  # Domain-organized open-weight model store & lockfile manifest
@@ -115,12 +116,12 @@ Implementation proceeds in disciplined, incremental milestones. Each milestone i
 | **M04** | GPU Inference & Benchmarks | PyTorch worker, GPU telemetry, and reproducible performance harness | **Done** |
 | **M05** | Observability | OpenTelemetry distributed tracing and Grafana operational dashboards | **Done** |
 | **M06** | Kubernetes Scheduling | Helm packaging, KEDA queue autoscaling, Kueue admission, and Kyverno policies | **Done** |
-| **M07** | AWS Cloud Platform | Terraform infrastructure, least-privilege IAM, and cost guardrails | _Planned_ |
-| **M08** | Provider Policy Routing | Dynamic routing between local compute, RunPod, Bedrock, and SageMaker | _Planned_ |
-| **M09** | Multi-Tenant Security | ABAC, tenant isolation test suites, and supply chain controls | _Planned_ |
-| **M10** | GitOps & Continuous Delivery | Argo CD synchronization, environment promotion, and OIDC pipelines | _Planned_ |
-| **M11** | Product Dashboard | Workload path visualization, tenant margins, and routing inspectability | _Planned_ |
-| **M12** | Production Readiness | Comprehensive failure injection, load verification, and final evidence | _Planned_ |
+| **M07** | AWS Cloud Platform | Terraform infrastructure, least-privilege IAM, and cost guardrails | **Done** |
+| **M08** | Provider Policy Routing | Dynamic routing between local compute, RunPod, Bedrock, and SageMaker | **Done** |
+| **M09** | Multi-Tenant Security | ABAC, tenant isolation test suites, and supply chain controls | **Done** |
+| **M10** | GitOps & Continuous Delivery | Argo CD synchronization, environment promotion, and OIDC pipelines | **Done** |
+| **M11** | Product Dashboard | Workload path visualization, tenant margins, and routing inspectability | **Done** |
+| **M12** | Production Readiness | Comprehensive failure injection, load verification, and final evidence | **Done** |
 
 ---
 
@@ -178,9 +179,9 @@ This project is built using disciplined agentic pair-programming governed by:
    source scripts/init_env.sh   # or: make init
    ```
 
-2. **Option A: Start full platform & observability stack via Docker Compose**:
+2. **Option A: Start full platform, dashboards & observability stack via Docker Compose**:
    ```bash
-   # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), Fastify API, OTel Collector, Prometheus (:9090), and Grafana (:3001)
+   # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), Fastify API (:3000), Product Dashboard (:5173), OTel Collector, Prometheus (:9090), and Grafana (:3001)
    docker compose up -d --build
 
    # Verify all services are healthy
@@ -191,6 +192,7 @@ This project is built using disciplined agentic pair-programming governed by:
 
    | Service | Local URL / Endpoint | Type / Interface | Credentials / Notes |
    |---|---|---|---|
+   | **Product Dashboard** | [http://localhost:5173](http://localhost:5173) | Web UI | React + Vite + React Flow (Jobs, DLQ, Routing, FinOps, Workload Path) |
    | **Fastify API** | [http://localhost:3000](http://localhost:3000) ([`/healthz`](http://localhost:3000/healthz), [`/readyz`](http://localhost:3000/readyz)) | REST API | Control plane (`/v1/jobs`) |
    | **API Swagger UI** | [http://localhost:3000/docs](http://localhost:3000/docs) ([`/docs/json`](http://localhost:3000/docs/json)) | Web UI | OpenAPI 3.0 interactive documentation |
    | **Grafana** | [http://localhost:3001](http://localhost:3001) | Web UI | `admin` / `admin` (anonymous enabled) |
@@ -200,6 +202,7 @@ This project is built using disciplined agentic pair-programming governed by:
    | **ElasticMQ** | [http://localhost:9324](http://localhost:9324) | SQS API | SQS-compatible job queue |
    | **PostgreSQL** | `localhost:5432` | Database | `postgres` / `postgres` (DB: `platform`) |
    | **OTel Collector** | [http://localhost:4318](http://localhost:4318) (HTTP) · `localhost:4317` (gRPC) · [http://localhost:8889](http://localhost:8889) (Metrics) | Collector | OpenTelemetry ingest & export |
+   | **Argo CD** | [http://localhost:8080](http://localhost:8080) | Web UI | GitOps delivery dashboard via `make local-argocd-ui` |
 
    #### Control Plane API Reference & Interactive Documentation
 
@@ -219,25 +222,42 @@ This project is built using disciplined agentic pair-programming governed by:
    | **Kubernetes** | `GET /v1/k8s/autoscaling/status`<br/>`POST /v1/k8s/kueue/workloads`<br/>`POST /v1/k8s/kueue/workloads/:id/release` | KEDA queue metrics & Kueue batch admission hooks |
    | **AWS Cloud** | `GET /v1/cloud/aws/status`<br/>`POST /v1/cloud/aws/ephemeral/deploy`<br/>`POST /v1/cloud/aws/ephemeral/:runId/destroy`<br/>`POST /v1/cloud/aws/workflows/execute` | Cloud deployment status, ephemeral runs, and workflow triggers |
 
-3. **Option B: Local development loop (API on host with hot-reload)**:
+3. **Option B: Local development loop (API and Dashboard on host with hot-reload)**:
    ```bash
    # Start only backing infrastructure
    docker compose up -d postgres minio elasticmq
 
-   # Start Fastify API with hot-reload
+   # Terminal 1: Start Fastify API with hot-reload (http://localhost:3000)
    cd apps/api
+   pnpm dev
+
+   # Terminal 2: Start React Product Dashboard with hot-reload (http://localhost:5173)
+   cd apps/dashboard
    pnpm dev
    ```
 
-4. **Execute end-to-end workload cycles & populate Grafana dashboards**:
-   - **Interactive REST Client**: Open [`request.rest`](request.rest) in VS Code with the REST Client extension (`humao.rest-client`) to execute Use Cases 1–9 (health probes, job lifecycle, idempotency, cancellation, retries/DLQ, PyTorch inference, W3C distributed tracing, and Kubernetes KEDA/Kueue/Kyverno scheduling).
+4. **Access Frontends, Dashboards & Execute End-to-End Workloads**:
+
+   #### A. React Product Dashboard (M11)
+   Open the **Product Dashboard** at [http://localhost:5173](http://localhost:5173):
+   - **Jobs & DLQ**: Inspect async job execution lifecycle, token metrics, payload artifacts, and dead-letter queue.
+   - **GPU & Model Pricing (FinOps)**: Live cloud cost comparisons across owned GPU vs. serverless providers (RunPod, Bedrock, SageMaker).
+   - **Providers & Models**: Health status and capability catalog across local and cloud providers.
+   - **Routing Explanation**: Interactive 5-stage deterministic routing decision simulator.
+   - **Usage & Economics**: Tenant unit economics, token volume, gross profits, and margins.
+   - **Workload Path (React Flow)**: Interactive visualization of the Two-Path architecture (Path A: SQS+KEDA vs. Path B: Flyte+Kueue).
+
+   #### B. Grafana Operational Dashboards (M05, M06)
+   Open the provisioned **Grafana Dashboards** at [http://localhost:3001](http://localhost:3001) (anonymous admin login enabled):
+   - **Inference Operations (M05)**: [http://localhost:3001/d/platform-inference-operations](http://localhost:3001/d/platform-inference-operations)
+   - **Kubernetes Scheduling & Autoscaling (M06)**: [http://localhost:3001/d/platform-kubernetes-scheduling](http://localhost:3001/d/platform-kubernetes-scheduling)
+
+   #### C. Interactive API Scratchpad & Workload Simulator
+   - **Interactive REST Client**: Open [`request.rest`](request.rest) in VS Code with the REST Client extension (`humao.rest-client`) to execute Use Cases 1–18 (health probes, job lifecycle, idempotency, cancellation, retries/DLQ, PyTorch inference, W3C distributed tracing, Kubernetes scheduling, ephemeral cloud workflows, FinOps pricing, and chaos verification).
    - **Automated Workload Simulator**:
      ```bash
      make simulate-observability
      ```
-     Then open the provisioned Grafana dashboards (anonymous admin login enabled):
-     - **Inference Operations (M05)**: `http://localhost:3001/d/platform-inference-operations`
-     - **Kubernetes Scheduling & Autoscaling (M06)**: `http://localhost:3001/d/platform-kubernetes-scheduling`
 
 5. **Kubernetes Helm Packaging & Validation (M06)**:
    - Render and validate the Helm chart ([`deploy/helm/inference-platform/`](deploy/helm/inference-platform/Chart.yaml)) across local CPU ([`values-local.yaml`](deploy/helm/inference-platform/values-local.yaml)) and GPU ([`values-gpu.yaml`](deploy/helm/inference-platform/values-gpu.yaml)) profiles, KEDA scaler, Kueue batch admission, and Kyverno policies:
@@ -274,7 +294,11 @@ make ci
 
 Individual validation targets:
 ```bash
+make setup-dev              # Enterprise one-shot bootstrap (env, models, providers, mcp, hooks)
 make init                   # Initialize local Python .venv, pnpm, and workspace dependencies (with GPU extras)
+make setup-mcp              # Synchronize Model Context Protocol (MCP) server tools (.mcp.json & global)
+make check-mcp              # Verify MCP server configurations and connectivity probes
+make check-providers        # Run diagnostics across all 17 providers (Hyperscalers & Neoclouds)
 make format-check           # Check line endings, trailing whitespace, and EOF newlines
 make lint                   # Check Python, JSON, and Mermaid diagram syntax
 make typecheck              # Validate Python (mypy) and TypeScript (tsc) types
@@ -285,11 +309,15 @@ make simulate-observability # Run live workload simulator to populate Prometheus
 make benchmark-engines      # Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)
 make benchmark-inference    # Run concurrency and prompt-tier inference benchmark
 make benchmark-production-reality # Run dynamic shape churn and cold scaling production test
-make check-providers        # Run provider and hardware acceleration diagnostics
 make scan                   # Run Gitleaks and PII pattern scanning
 make handoff-check          # Validate milestone protocol compliance (.agents/README.md)
 make install-hooks          # Configure local Git repository to run pre-commit hook
 ```
+
+### Enterprise Developer & Agent Setup
+
+For full instructions on configuring autonomous AI coding agents (Antigravity, Claude Code, Cursor), synchronizing Model Context Protocol (MCP) servers, and accessing neoclouds and hyperscalers, see the [Enterprise Developer & Agent Environment Guide](docs/operations/enterprise-agent-environment.md).
+
 
 ### Pre-Commit Secret Scanning
 

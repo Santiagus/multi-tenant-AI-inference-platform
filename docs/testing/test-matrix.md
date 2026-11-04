@@ -208,6 +208,8 @@ This document tracks the verification matrix, automated test suites, and workloa
 | **TC-85** | **Open Models & Token Factory Pricing Matrix** | Integration | In-Memory / Simulated | `GET /v1/finops/model-pricing` | Returns per-million input/output/cached token rates (DeepSeek, Gemma, Qwen) and per-unit media generation pricing (megapixels, audio seconds). | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.2) |
 | **TC-86** | **Historical Pricing Trends & Update Cadence Auditing** | Integration | In-Memory / Simulated | `GET /v1/finops/pricing-history` | Returns historical price series and provider update frequency categorization (`realtime_auction` for Vast.ai 5m, `dynamic_shifts` for RunPod 1h, `scheduled` for Token Factory). | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.3) |
 | **TC-87** | **On-Demand FinOps Catalog Synchronization** | Integration | In-Memory / Simulated | `POST /v1/finops/sync` | Initiates on-demand pricing and availability refresh across all configured neocloud adapters, updating timestamps and recording sync latency. | `apps/api/tests/integration/finops-routes.test.ts`<br>`request.rest` (Cycle 18.4) |
+| **TC-88** | **Smart Cloud Option Recommendations Engine** | Integration / Unit | In-Memory / Simulated | `POST /v1/finops/recommend-options`, `computeModelCloudRecommendations` | Evaluates cheapest, fastest, balanced, and recommended execution options. Verifies FinOps powerful GPU insight (fast execution on H100 beating slower L4 on per-second runtime). | `apps/api/tests/integration/finops-routes.test.ts`<br>`apps/dashboard/tests/api-client.test.ts`<br>`request.rest` (Cycle 18.5) |
+
 
 ---
 
