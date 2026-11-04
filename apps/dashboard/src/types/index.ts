@@ -284,4 +284,43 @@ export interface PricingSyncAudit {
   syncedAt: string;
 }
 
+export type RecommendationCategory = 'cheapest' | 'fastest' | 'balanced' | 'recommended';
+
+export interface CloudOption {
+  id: string;
+  category: RecommendationCategory;
+  provider: string;
+  displayName: string;
+  hardwareOrExecution: string;
+  vramGb?: number;
+  pricingModel: string;
+  hourlyRateUsd?: number;
+  forecastedExecutionMs: number;
+  forecastedCostUsd: number;
+  forecastedCostMicrocents: number;
+  tokensPerSec: number;
+  obtainabilityLabel: string;
+  interruptionRiskTier: string;
+  finopsInsight: string;
+  routingPreference: string;
+  coldStartEstimatedMs: number;
+  isPowerfulGpuFastExecutionWin?: boolean;
+}
+
+export interface ModelCloudOptionsResponse {
+  ok: boolean;
+  modelId: string;
+  promptTokens: number;
+  maxNewTokens: number;
+  recommendations: {
+    cheapest: CloudOption;
+    fastest: CloudOption;
+    balanced: CloudOption;
+    recommended: CloudOption;
+  };
+  allOptions: CloudOption[];
+  analysisNote: string;
+}
+
+
 

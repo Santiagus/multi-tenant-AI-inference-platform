@@ -571,7 +571,15 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     assert.equal(isTestEnvironment(), true);
     assert.equal(shouldRunRealInference(), false);
 
-    // Truthy values
+    // Truthy values for MOCK_PROVIDERS
+    for (const val of ['1', 'ENABLE', 'enable', 'TRUE', 'true', 'YES', 'yes']) {
+      process.env.MOCK_PROVIDERS = val;
+      assert.equal(isMockInferenceEnabled(), true);
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Truthy values for MOCK_INFERENCE
+    delete process.env.MOCK_PROVIDERS;
     for (const val of ['1', 'ENABLE', 'enable', 'TRUE', 'true', 'YES', 'yes']) {
       process.env.MOCK_INFERENCE = val;
       assert.equal(isMockInferenceEnabled(), true);
@@ -580,7 +588,7 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
 
     // Falsy values must throw in test environment because real inference is strictly forbidden
     for (const val of ['0', 'DISABLE', 'disable', 'FALSE', 'false', 'NO', 'no']) {
-      process.env.MOCK_INFERENCE = val;
+      process.env.MOCK_PROVIDERS = val;
       assert.throws(
         () => isMockInferenceEnabled(),
         /Real inference in test is strictly forbidden/
@@ -589,6 +597,7 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     }
 
     // Reset back to enabled mock mode for tests
+    process.env.MOCK_PROVIDERS = '1';
     process.env.MOCK_INFERENCE = '1';
   });
 });

@@ -342,29 +342,39 @@ export function isTestEnvironment(): boolean {
 }
 
 export function isMockInferenceEnabled(): boolean {
-  const envVal = (
-    process.env.MOCK_INFERENCE ??
-    process.env.INFERENCE_MOCK_MODE ??
-    process.env.INFERENCE_MOCK ??
-    ''
-  )
-    .trim()
-    .toLowerCase();
+  const vars = [
+    process.env.MOCK_PROVIDERS,
+    process.env.MOCK_INFERENCE,
+    process.env.INFERENCE_MOCK_MODE,
+    process.env.INFERENCE_MOCK,
+  ];
 
   const truthy = new Set(['1', 'true', 'enable', 'enabled', 'yes', 'on']);
   const falsy = new Set(['0', 'false', 'disable', 'disabled', 'no', 'off']);
 
-  if (truthy.has(envVal)) {
-    return true;
-  }
-  if (falsy.has(envVal)) {
-    if (isTestEnvironment()) {
-      throw new Error(
-        'Real inference in test is strictly forbidden! MOCK_INFERENCE must be set to ENABLE, TRUE, or 1.'
-      );
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (falsy.has(cleaned)) {
+        if (isTestEnvironment()) {
+          throw new Error(
+            'Real inference in test is strictly forbidden! MOCK_PROVIDERS (or MOCK_INFERENCE) must be set to ENABLE, TRUE, or 1.'
+          );
+        }
+        return false;
+      }
     }
-    return false;
   }
+
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (truthy.has(cleaned)) {
+        return true;
+      }
+    }
+  }
+
   return true;
 }
 

@@ -97,5 +97,46 @@ export const finopsRoutes: FastifyPluginAsync<FinOpsRoutesOptions> = async (
       ...res,
     });
   });
+
+  // 5. Model Cloud Execution Option Recommendations (Cheapest, Fastest, Balanced, Recommended)
+  const RecommendQuerySchema = z.object({
+    model_id: z.string().optional(),
+    prompt_tokens: z.coerce.number().int().positive().optional(),
+    max_new_tokens: z.coerce.number().int().positive().optional(),
+  });
+
+  const RecommendBodySchema = z.object({
+    model_id: z.string().optional(),
+    prompt_tokens: z.number().int().positive().optional(),
+    max_new_tokens: z.number().int().positive().optional(),
+  });
+
+  const handleRecommendation = async (modelId?: string, promptTokens?: number, maxNewTokens?: number) => {
+    const [gpuSnapshots, modelSnapshots] = await Promise.all([
+      finopsRepo.getLatestGpuPricing(),
+      finopsRepo.getLatestModelPricing(),
+    ]);
+
+    const { computeModelCloudRecommendations } = await import('../domain/finops-pricing.js');
+    return computeModelCloudRecommendations({
+      modelId: modelId || 'meta-llama/Llama-3-8B-Instruct',
+      promptTokens: promptTokens ?? 128,
+      maxNewTokens: maxNewTokens ?? 64,
+      gpuSnapshots,
+      modelSnapshots,
+    });
+  };
+
+  fastify.get('/v1/finops/recommend-options', async (request, reply) => {
+    const query = RecommendQuerySchema.parse(request.query);
+    const result = await handleRecommendation(query.model_id, query.prompt_tokens, query.max_new_tokens);
+    return reply.status(200).send(result);
+  });
+
+  fastify.post('/v1/finops/recommend-options', async (request, reply) => {
+    const body = RecommendBodySchema.parse(request.body || {});
+    const result = await handleRecommendation(body.model_id, body.prompt_tokens, body.max_new_tokens);
+    return reply.status(200).send(result);
+  });
 };
 

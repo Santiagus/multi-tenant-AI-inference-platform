@@ -132,4 +132,36 @@ describe('FinOps Neocloud Pricing & Availability Intelligence Routes', () => {
     assert.ok(body.syncedProviders.includes('runpod'));
     assert.ok(body.syncedProviders.includes('vast_ai'));
   });
+
+  test('POST /v1/finops/recommend-options returns cheapest, fastest, balanced, and recommended options', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/finops/recommend-options',
+      headers: { 'x-tenant-id': 'tenant-test' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        prompt_tokens: 128,
+        max_new_tokens: 64,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.recommendations);
+    assert.ok(body.recommendations.cheapest);
+    assert.ok(body.recommendations.fastest);
+    assert.ok(body.recommendations.balanced);
+    assert.ok(body.recommendations.recommended);
+
+    // Verify fastest option has low execution ms
+    assert.ok(body.recommendations.fastest.forecastedExecutionMs > 0);
+    assert.ok(body.recommendations.fastest.tokensPerSec >= 100);
+
+    // Verify allOptions array contains multiple candidate providers
+    assert.ok(body.allOptions.length >= 4);
+    const providers = body.allOptions.map((o: any) => o.provider);
+    assert.ok(providers.includes('runpod'));
+    assert.ok(providers.includes('vast_ai'));
+  });
 });

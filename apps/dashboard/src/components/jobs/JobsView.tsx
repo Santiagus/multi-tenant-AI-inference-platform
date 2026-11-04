@@ -40,6 +40,9 @@ export function JobsView({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [modelFilter, setModelFilter] = useState<string>('ALL');
+  const [tenantFilter, setTenantFilter] = useState<string>('ALL');
+  const [providerFilter, setProviderFilter] = useState<string>('ALL');
+  const [breakdownTab, setBreakdownTab] = useState<'model' | 'tenant' | 'provider' | 'gpu'>('model');
   const [showModelStats, setShowModelStats] = useState<boolean>(true);
 
   // Global & Lifecycle Stats
@@ -151,6 +154,201 @@ export function JobsView({
       });
   }, [jobs]);
 
+  // Tenant Stats Breakdown
+  const tenantStats = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        tenantId: string;
+        total: number;
+        queued: number;
+        processing: number;
+        retrying: number;
+        succeeded: number;
+        failed: number;
+        cancelled: number;
+        totalTokens: number;
+        totalCostMicrocents: number;
+        durations: number[];
+      }
+    > = {};
+
+    for (const j of jobs) {
+      const tid = j.tenant_id || 'tenant-default';
+      if (!map[tid]) {
+        map[tid] = {
+          tenantId: tid,
+          total: 0,
+          queued: 0,
+          processing: 0,
+          retrying: 0,
+          succeeded: 0,
+          failed: 0,
+          cancelled: 0,
+          totalTokens: 0,
+          totalCostMicrocents: 0,
+          durations: [],
+        };
+      }
+      const entry = map[tid];
+      entry.total++;
+      if (j.status === 'SUCCEEDED') entry.succeeded++;
+      else if (j.status === 'FAILED') entry.failed++;
+      else if (j.status === 'CANCELLED') entry.cancelled++;
+      else if (j.status === 'PROCESSING') entry.processing++;
+      else if (j.status === 'RETRYING') entry.retrying++;
+      else if (j.status === 'QUEUED' || j.status === 'SUBMITTED') entry.queued++;
+
+      entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
+      entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
+      if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+    }
+
+    return Object.values(map)
+      .sort((a, b) => b.total - a.total)
+      .map((entry) => ({
+        ...entry,
+        avgDuration:
+          entry.durations.length > 0
+            ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
+            : 0,
+        successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
+        costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
+      }));
+  }, [jobs]);
+
+  // Provider Stats Breakdown
+  const providerStats = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        provider: string;
+        total: number;
+        succeeded: number;
+        failed: number;
+        inFlight: number;
+        totalTokens: number;
+        totalCostMicrocents: number;
+        durations: number[];
+      }
+    > = {};
+
+    for (const j of jobs) {
+      const prov =
+        j.provider ||
+        (j.routing_preference.includes('local')
+          ? 'local_pytorch'
+          : j.routing_preference.includes('runpod')
+            ? 'runpod'
+            : j.routing_preference.includes('bedrock')
+              ? 'bedrock'
+              : j.routing_preference.includes('sagemaker')
+                ? 'sagemaker'
+                : 'local_pytorch');
+
+      if (!map[prov]) {
+        map[prov] = {
+          provider: prov,
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          inFlight: 0,
+          totalTokens: 0,
+          totalCostMicrocents: 0,
+          durations: [],
+        };
+      }
+      const entry = map[prov];
+      entry.total++;
+      if (j.status === 'SUCCEEDED') entry.succeeded++;
+      else if (j.status === 'FAILED') entry.failed++;
+      else if (['QUEUED', 'PROCESSING', 'RETRYING', 'SUBMITTED'].includes(j.status)) entry.inFlight++;
+
+      entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
+      entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
+      if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+    }
+
+    return Object.values(map)
+      .sort((a, b) => b.total - a.total)
+      .map((entry) => ({
+        ...entry,
+        avgDuration:
+          entry.durations.length > 0
+            ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
+            : 0,
+        successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
+        costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
+      }));
+  }, [jobs]);
+
+  // GPU Hardware Stats Breakdown
+  const gpuStats = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        hardware: string;
+        total: number;
+        succeeded: number;
+        failed: number;
+        totalTokens: number;
+        totalCostMicrocents: number;
+        durations: number[];
+      }
+    > = {};
+
+    for (const j of jobs) {
+      const hw =
+        (j.result as any)?.hardware ||
+        (j.result as any)?.device ||
+        (j.routing_preference.includes('cpu')
+          ? 'CPU Fallback'
+          : j.routing_preference.includes('local')
+            ? 'NVIDIA GeForce RTX 5070 Ti (16GB)'
+            : j.provider === 'runpod'
+              ? 'NVIDIA H100 SXM5 (80GB)'
+              : j.provider === 'vast_ai'
+                ? 'NVIDIA GeForce RTX 5090 (32GB)'
+                : j.provider === 'baseten'
+                  ? 'NVIDIA L4 (24GB)'
+                  : j.model_id.includes('TinyLlama')
+                    ? 'NVIDIA GeForce RTX 5070 Ti (16GB)'
+                    : 'Cloud / Serverless GPU');
+
+      if (!map[hw]) {
+        map[hw] = {
+          hardware: hw,
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          totalTokens: 0,
+          totalCostMicrocents: 0,
+          durations: [],
+        };
+      }
+      const entry = map[hw];
+      entry.total++;
+      if (j.status === 'SUCCEEDED') entry.succeeded++;
+      else if (j.status === 'FAILED') entry.failed++;
+
+      entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
+      entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
+      if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+    }
+
+    return Object.values(map)
+      .sort((a, b) => b.total - a.total)
+      .map((entry) => ({
+        ...entry,
+        avgDuration:
+          entry.durations.length > 0
+            ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
+            : 0,
+        successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
+        costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
+      }));
+  }, [jobs]);
+
   // Filtered jobs list
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
@@ -166,16 +364,34 @@ export function JobsView({
       if (modelFilter !== 'ALL' && job.model_id !== modelFilter) {
         return false;
       }
+      if (tenantFilter !== 'ALL' && (job.tenant_id || 'tenant-default') !== tenantFilter) {
+        return false;
+      }
+      if (providerFilter !== 'ALL') {
+        const prov =
+          job.provider ||
+          (job.routing_preference.includes('local')
+            ? 'local_pytorch'
+            : job.routing_preference.includes('runpod')
+              ? 'runpod'
+              : job.routing_preference.includes('bedrock')
+                ? 'bedrock'
+                : job.routing_preference.includes('sagemaker')
+                  ? 'sagemaker'
+                  : 'local_pytorch');
+        if (prov !== providerFilter) return false;
+      }
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const matchesId = job.job_id.toLowerCase().includes(query);
         const matchesModel = job.model_id.toLowerCase().includes(query);
         const matchesProvider = (job.provider || '').toLowerCase().includes(query);
-        return matchesId || matchesModel || matchesProvider;
+        const matchesTenant = (job.tenant_id || '').toLowerCase().includes(query);
+        return matchesId || matchesModel || matchesProvider || matchesTenant;
       }
       return true;
     });
-  }, [jobs, statusFilter, modelFilter, searchQuery]);
+  }, [jobs, statusFilter, modelFilter, tenantFilter, providerFilter, searchQuery]);
 
   // Model table sort
   const [modelSortKey, setModelSortKey] = useState<string>('total');
@@ -277,7 +493,7 @@ export function JobsView({
         />
       </div>
 
-      {/* Stats per Model Section */}
+      {/* Multi-Dimensional Job Intelligence Breakdown Section */}
       <div
         style={{
           backgroundColor: '#0f172a',
@@ -289,30 +505,81 @@ export function JobsView({
       >
         <div
           style={{
-            padding: '14px 20px',
+            padding: '12px 20px',
             borderBottom: '1px solid #1e293b',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             backgroundColor: '#131d35',
+            flexWrap: 'wrap',
+            gap: '12px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
-              📊 Stats per Model
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginRight: '6px' }}>
+              📊 Aggregations:
             </span>
-            <span
+            <button
+              onClick={() => setBreakdownTab('model')}
               style={{
-                fontSize: '11px',
-                padding: '2px 8px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                color: '#a5b4fc',
+                backgroundColor: breakdownTab === 'model' ? '#3b82f6' : '#1e293b',
+                color: breakdownTab === 'model' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                fontSize: '12px',
                 fontWeight: 600,
+                cursor: 'pointer',
               }}
             >
-              {modelStats.length} models active
-            </span>
+              Models ({modelStats.length})
+            </button>
+            <button
+              onClick={() => setBreakdownTab('tenant')}
+              style={{
+                backgroundColor: breakdownTab === 'tenant' ? '#3b82f6' : '#1e293b',
+                color: breakdownTab === 'tenant' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Tenants ({tenantStats.length})
+            </button>
+            <button
+              onClick={() => setBreakdownTab('provider')}
+              style={{
+                backgroundColor: breakdownTab === 'provider' ? '#3b82f6' : '#1e293b',
+                color: breakdownTab === 'provider' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Providers ({providerStats.length})
+            </button>
+            <button
+              onClick={() => setBreakdownTab('gpu')}
+              style={{
+                backgroundColor: breakdownTab === 'gpu' ? '#3b82f6' : '#1e293b',
+                color: breakdownTab === 'gpu' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              GPU Hardware ({gpuStats.length})
+            </button>
+
             {modelFilter !== 'ALL' && (
               <span
                 style={{
@@ -327,19 +594,58 @@ export function JobsView({
                   gap: '6px',
                 }}
               >
-                Filtered by: {modelFilter}
+                Model: {modelFilter.split('/').pop()}
                 <button
                   onClick={() => setModelFilter('ALL')}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#38bdf8',
-                    cursor: 'pointer',
-                    fontWeight: 700,
-                    padding: 0,
-                    fontSize: '12px',
-                  }}
-                  title="Clear model filter"
+                  style={{ background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', fontWeight: 700, padding: 0 }}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {tenantFilter !== 'ALL' && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                  color: '#10b981',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                Tenant: {tenantFilter}
+                <button
+                  onClick={() => setTenantFilter('ALL')}
+                  style={{ background: 'none', border: 'none', color: '#10b981', cursor: 'pointer', fontWeight: 700, padding: 0 }}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
+            {providerFilter !== 'ALL' && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                  color: '#c084fc',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                Provider: {providerFilter}
+                <button
+                  onClick={() => setProviderFilter('ALL')}
+                  style={{ background: 'none', border: 'none', color: '#c084fc', cursor: 'pointer', fontWeight: 700, padding: 0 }}
                 >
                   ✕
                 </button>
@@ -363,75 +669,29 @@ export function JobsView({
 
         {showModelStats && (
           <div style={{ overflowX: 'auto' }}>
-            {modelStats.length === 0 ? (
-              <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
-                No model traffic recorded yet. Enqueue inference jobs to populate real-time model telemetry.
-              </div>
-            ) : (
+            {breakdownTab === 'model' && (
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
-                    <SortableHeader
-                      column="modelId"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
+                    <SortableHeader column="modelId" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Model ID
                     </SortableHeader>
-                    <SortableHeader
-                      column="total"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
+                    <SortableHeader column="total" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Total Jobs
                     </SortableHeader>
-                    <SortableHeader
-                      column="inFlight"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
-                      In Flight (Queued / Retrying)
+                    <SortableHeader column="inFlight" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
+                      In Flight
                     </SortableHeader>
-                    <SortableHeader
-                      column="successRate"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
-                      Success / Failure Rate
+                    <SortableHeader column="successRate" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
+                      Success / Fail
                     </SortableHeader>
-                    <SortableHeader
-                      column="avgDuration"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
+                    <SortableHeader column="avgDuration" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Avg Latency
                     </SortableHeader>
-                    <SortableHeader
-                      column="totalTokens"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
+                    <SortableHeader column="totalTokens" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Total Tokens
                     </SortableHeader>
-                    <SortableHeader
-                      column="costUsd"
-                      currentSortKey={modelSortKey}
-                      currentSortDir={modelSortDir}
-                      onSort={handleModelSort}
-                      style={{ padding: '10px 16px' }}
-                    >
+                    <SortableHeader column="costUsd" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Compute Cost ($)
                     </SortableHeader>
                     <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
@@ -441,48 +701,18 @@ export function JobsView({
                   {sortedModelStats.map((m) => {
                     const isSelected = modelFilter === m.modelId;
                     return (
-                      <tr
-                        key={m.modelId}
-                        style={{
-                          borderBottom: '1px solid #1e293b',
-                          backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-                        }}
-                      >
-                        <td style={{ padding: '10px 16px', fontWeight: 600, color: '#f8fafc', fontFamily: 'monospace' }}>
-                          {m.modelId}
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>
-                          {m.total}
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#fbbf24' }}>
-                          {m.queued + m.processing + m.retrying > 0 ? (
-                            <span>
-                              {m.queued} queued · {m.processing} processing {m.retrying > 0 && `· ${m.retrying} retrying`}
-                            </span>
-                          ) : (
-                            <span style={{ color: '#64748b' }}>0</span>
-                          )}
-                        </td>
+                      <tr key={m.modelId} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent' }}>
+                        <td style={{ padding: '10px 16px', fontWeight: 600, color: '#f8fafc', fontFamily: 'monospace' }}>{m.modelId}</td>
+                        <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{m.total}</td>
+                        <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{m.queued + m.processing + m.retrying}</td>
                         <td style={{ padding: '10px 16px' }}>
                           <span style={{ color: '#34d399', fontWeight: 600 }}>{m.succeeded} ok</span>
-                          {m.failed > 0 && (
-                            <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>
-                              / {m.failed} fail
-                            </span>
-                          )}
-                          <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>
-                            ({m.successRate}%)
-                          </span>
+                          {m.failed > 0 && <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>/ {m.failed} fail</span>}
+                          <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({m.successRate}%)</span>
                         </td>
-                        <td style={{ padding: '10px 16px', color: '#94a3b8' }}>
-                          {m.avgDuration > 0 ? `${m.avgDuration} ms` : '—'}
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>
-                          {m.totalTokens.toLocaleString()}
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>
-                          ${m.costUsd}
-                        </td>
+                        <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{m.avgDuration > 0 ? `${m.avgDuration} ms` : '—'}</td>
+                        <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{m.totalTokens.toLocaleString()}</td>
+                        <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${m.costUsd}</td>
                         <td style={{ padding: '10px 16px', textAlign: 'right' }}>
                           <button
                             onClick={() => setModelFilter(isSelected ? 'ALL' : m.modelId)}
@@ -503,6 +733,144 @@ export function JobsView({
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            )}
+
+            {breakdownTab === 'tenant' && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Tenant ID</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Jobs</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>In Flight</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Compute Spend ($)</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tenantStats.map((t) => {
+                    const isSelected = tenantFilter === t.tenantId;
+                    return (
+                      <tr key={t.tenantId} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(16, 185, 129, 0.1)' : 'transparent' }}>
+                        <td style={{ padding: '10px 16px', fontWeight: 600, color: '#10b981', fontFamily: 'monospace' }}>{t.tenantId}</td>
+                        <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{t.total}</td>
+                        <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{t.queued + t.processing + t.retrying}</td>
+                        <td style={{ padding: '10px 16px' }}>
+                          <span style={{ color: '#34d399', fontWeight: 600 }}>{t.succeeded} ok</span>
+                          {t.failed > 0 && <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>/ {t.failed} fail</span>}
+                          <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({t.successRate}%)</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{t.avgDuration > 0 ? `${t.avgDuration} ms` : '—'}</td>
+                        <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{t.totalTokens.toLocaleString()}</td>
+                        <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${t.costUsd}</td>
+                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                          <button
+                            onClick={() => setTenantFilter(isSelected ? 'ALL' : t.tenantId)}
+                            style={{
+                              backgroundColor: isSelected ? '#10b981' : '#1e293b',
+                              color: isSelected ? '#ffffff' : '#94a3b8',
+                              border: `1px solid ${isSelected ? '#10b981' : '#334155'}`,
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {isSelected ? '✓ Filtered' : 'Filter'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {breakdownTab === 'provider' && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Provider Name</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Jobs</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>In Flight</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Cost ($)</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providerStats.map((p) => {
+                    const isSelected = providerFilter === p.provider;
+                    return (
+                      <tr key={p.provider} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.1)' : 'transparent' }}>
+                        <td style={{ padding: '10px 16px', fontWeight: 700, color: '#c084fc' }}>{p.provider.toUpperCase()}</td>
+                        <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{p.total}</td>
+                        <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{p.inFlight}</td>
+                        <td style={{ padding: '10px 16px' }}>
+                          <span style={{ color: '#34d399', fontWeight: 600 }}>{p.succeeded} ok</span>
+                          {p.failed > 0 && <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>/ {p.failed} fail</span>}
+                          <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({p.successRate}%)</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{p.avgDuration > 0 ? `${p.avgDuration} ms` : '—'}</td>
+                        <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{p.totalTokens.toLocaleString()}</td>
+                        <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${p.costUsd}</td>
+                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                          <button
+                            onClick={() => setProviderFilter(isSelected ? 'ALL' : p.provider)}
+                            style={{
+                              backgroundColor: isSelected ? '#a855f7' : '#1e293b',
+                              color: isSelected ? '#ffffff' : '#94a3b8',
+                              border: `1px solid ${isSelected ? '#a855f7' : '#334155'}`,
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {isSelected ? '✓ Filtered' : 'Filter'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {breakdownTab === 'gpu' && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Hardware / GPU Type</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Workload Count</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Cost ($)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gpuStats.map((g) => (
+                    <tr key={g.hardware} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '10px 16px', fontWeight: 600, color: '#38bdf8' }}>{g.hardware}</td>
+                      <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{g.total}</td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{ color: '#34d399', fontWeight: 600 }}>{g.succeeded} ok</span>
+                        {g.failed > 0 && <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>/ {g.failed} fail</span>}
+                      </td>
+                      <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{g.avgDuration > 0 ? `${g.avgDuration} ms` : '—'}</td>
+                      <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{g.totalTokens.toLocaleString()}</td>
+                      <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${g.costUsd}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
@@ -586,6 +954,56 @@ export function JobsView({
               {modelStats.map((m) => (
                 <option key={m.modelId} value={m.modelId}>
                   {m.modelId.split('/').pop() || m.modelId} ({m.total})
+                </option>
+              ))}
+            </select>
+          )}
+
+          {tenantStats.length > 1 && (
+            <select
+              value={tenantFilter}
+              onChange={(e) => setTenantFilter(e.target.value)}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#f8fafc',
+                border: '1px solid #334155',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                outline: 'none',
+                cursor: 'pointer',
+                maxWidth: '180px',
+              }}
+            >
+              <option value="ALL">All Tenants ({tenantStats.length})</option>
+              {tenantStats.map((t) => (
+                <option key={t.tenantId} value={t.tenantId}>
+                  {t.tenantId} ({t.total})
+                </option>
+              ))}
+            </select>
+          )}
+
+          {providerStats.length > 1 && (
+            <select
+              value={providerFilter}
+              onChange={(e) => setProviderFilter(e.target.value)}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#f8fafc',
+                border: '1px solid #334155',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                outline: 'none',
+                cursor: 'pointer',
+                maxWidth: '180px',
+              }}
+            >
+              <option value="ALL">All Providers ({providerStats.length})</option>
+              {providerStats.map((p) => (
+                <option key={p.provider} value={p.provider}>
+                  {p.provider.toUpperCase()} ({p.total})
                 </option>
               ))}
             </select>

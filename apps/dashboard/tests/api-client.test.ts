@@ -274,6 +274,9 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
 
       await client.syncPricing();
       assert.equal(capturedUrls[3], 'http://test.local/v1/finops/sync');
+
+      await client.getCloudRecommendations({ model_id: 'meta-llama/Llama-3-8B-Instruct' });
+      assert.equal(capturedUrls[4], 'http://test.local/v1/finops/recommend-options');
     } finally {
       globalThis.fetch = originalFetch;
     }

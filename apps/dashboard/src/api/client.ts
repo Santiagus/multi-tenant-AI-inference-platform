@@ -261,6 +261,17 @@ export class PlatformApiClient {
   }> {
     return this.request('/v1/finops/sync', { method: 'POST' });
   }
+
+  async getCloudRecommendations(payload: {
+    model_id?: string;
+    prompt_tokens?: number;
+    max_new_tokens?: number;
+  }): Promise<import('../types').ModelCloudOptionsResponse> {
+    return this.request('/v1/finops/recommend-options', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
 }
 
 export const apiClient = new PlatformApiClient();
