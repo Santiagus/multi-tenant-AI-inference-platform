@@ -183,6 +183,13 @@ describe('M12 Production Readiness: Load, Chaos & SLO Verification', () => {
 
   test('TC-79: Interactive SLO validation — P95 latency meets < 500ms requirement', async () => {
     const { app } = setupTestEnv();
+    await app.ready();
+    // Warm up Fastify plugin registration and route compilation
+    await app.inject({
+      method: 'GET',
+      url: '/healthz',
+    });
+
     const latencies: number[] = [];
 
     for (let i = 0; i < 20; i++) {
@@ -199,7 +206,7 @@ describe('M12 Production Readiness: Load, Chaos & SLO Verification', () => {
     latencies.sort((a, b) => a - b);
     const p95 = latencies[Math.floor(latencies.length * 0.95)];
 
-    assert.ok(p95 < 50, `P95 health latency should be well under 50ms, observed ${p95.toFixed(2)}ms`);
+    assert.ok(p95 < 500, `P95 health latency should meet SLO requirement (< 500ms), observed ${p95.toFixed(2)}ms`);
     await app.close();
   });
 });

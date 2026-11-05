@@ -137,6 +137,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
         else if (url.startsWith('/v1/k8s')) s.tags = ['Kubernetes'];
         else if (url.startsWith('/v1/cloud/aws')) s.tags = ['AWS Cloud'];
         else if (url.startsWith('/v1/gitops')) s.tags = ['GitOps'];
+        else if (url.startsWith('/v1/finops')) s.tags = ['Provider Routing'];
       }
 
       // Pre-fill x-tenant-id header default so Try-It-Out works immediately without typing

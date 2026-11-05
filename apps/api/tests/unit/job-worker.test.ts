@@ -346,7 +346,13 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
       input: { prompt: 'Polled by background daemon' },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    for (let i = 0; i < 50; i++) {
+      const currentJobs = await jobService.listJobs('tenant-1');
+      if (currentJobs[0]?.status === JobStatus.SUCCEEDED) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await worker.stop();
     assert.equal(worker.isRunning(), false);
 
