@@ -15,16 +15,19 @@ interface SubmitJobModalProps {
 }
 
 const POPULAR_MODELS = [
-  { id: 'meta-llama/Llama-3-8B-Instruct', label: 'Llama 3 8B Instruct (Text / General)' },
-  { id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', label: 'TinyLlama 1.1B Chat (Low Latency)' },
-  { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (AWS Bedrock / Proprietary)' },
-  { id: 'runwayml/stable-diffusion-v1-5', label: 'Stable Diffusion v1.5 (Image Gen)' },
-  { id: 'stabilityai/stable-diffusion-xl-base-1.0', label: 'SDXL Base 1.0 (High-Res Image)' },
-  { id: 'openai/whisper-large-v3', label: 'Whisper Large v3 (Audio Speech-to-Text)' },
-  { id: 'mistralai/Mistral-7B-Instruct-v0.2', label: 'Mistral 7B Instruct v0.2 (Text)' },
+  { id: 'meta-llama/Llama-3-8B-Instruct', label: 'Llama 3 8B Instruct (Text / General)', purpose: 'text_to_text' },
+  { id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', label: 'TinyLlama 1.1B Chat (Low Latency)', purpose: 'text_to_text' },
+  { id: 'mistralai/Mistral-7B-Instruct-v0.2', label: 'Mistral 7B Instruct v0.2 (Text)', purpose: 'text_to_text' },
+  { id: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek-R1 Distill 70B (Code & Reasoning)', purpose: 'code_reasoning' },
+  { id: 'runwayml/stable-diffusion-v1-5', label: 'Stable Diffusion v1.5 (Image Gen)', purpose: 'text_to_image' },
+  { id: 'stabilityai/stable-diffusion-xl-base-1.0', label: 'SDXL Base 1.0 (High-Res Image)', purpose: 'text_to_image' },
+  { id: 'THUDM/CogVideoX-5b', label: 'CogVideoX 5B (Text-to-Video)', purpose: 'text_to_video' },
+  { id: 'openai/whisper-large-v3', label: 'Whisper Large v3 (Audio Speech-to-Text)', purpose: 'speech_to_text' },
+  { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (AWS Bedrock / Proprietary)', purpose: 'text_to_text' },
 ];
 
 export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProps) {
+  const [purposeFilter, setPurposeFilter] = useState<string>('all');
   const [modelId, setModelId] = useState(POPULAR_MODELS[0].id);
   const [customModel, setCustomModel] = useState('');
   const [prompt, setPrompt] = useState('Explain how multi-tenant AI inference routing protects gross margin.');
@@ -33,6 +36,11 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
   const [maxRetries, setMaxRetries] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const filteredPopularModels = POPULAR_MODELS.filter((m) => {
+    if (purposeFilter !== 'all' && m.purpose !== purposeFilter) return false;
+    return true;
+  });
 
   // Smart Cloud Option Recommendations
   const [recommendations, setRecommendations] = useState<ModelCloudOptionsResponse | null>(null);
@@ -183,6 +191,47 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
             </div>
           )}
 
+          {/* Purpose Filter Pills */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
+              Model Purpose Filter:
+            </label>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'text_to_text', label: '💬 Text LLM' },
+                { id: 'text_to_image', label: '🎨 Image Gen' },
+                { id: 'text_to_video', label: '🎬 Video' },
+                { id: 'speech_to_text', label: '🎙️ Audio' },
+                { id: 'code_reasoning', label: '⚡ Code' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setPurposeFilter(p.id);
+                    const matching = POPULAR_MODELS.filter((m) => p.id === 'all' || m.purpose === p.id);
+                    if (matching.length > 0 && !matching.some((m) => m.id === modelId)) {
+                      setModelId(matching[0].id);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: purposeFilter === p.id ? '#3b82f620' : '#1e293b',
+                    color: purposeFilter === p.id ? '#38bdf8' : '#94a3b8',
+                    border: `1px solid ${purposeFilter === p.id ? '#38bdf8' : '#334155'}`,
+                    borderRadius: '16px',
+                    padding: '3px 10px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Model Selection */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px', marginBottom: '14px' }}>
             <div>
@@ -206,7 +255,7 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
                   outline: 'none',
                 }}
               >
-                {POPULAR_MODELS.map((m) => (
+                {filteredPopularModels.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.label}
                   </option>

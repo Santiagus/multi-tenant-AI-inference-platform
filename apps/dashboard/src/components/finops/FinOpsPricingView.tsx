@@ -8,9 +8,13 @@ import type {
 } from '../../types';
 import { StatCard } from '../common/StatCard';
 import { StatusBadge } from '../common/Badge';
+import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
+import { ProviderFleetBar } from './ProviderFleetBar';
+import { HistoricalPriceChart } from './HistoricalPriceChart';
+import { ModelRecommendationStudio } from './ModelRecommendationStudio';
 
 export function FinOpsPricingView() {
-  const [activeSubTab, setActiveSubTab] = useState<'gpus' | 'models' | 'vram_matrix' | 'history'>('gpus');
+  const [activeSubTab, setActiveSubTab] = useState<'gpus' | 'recommendations' | 'vram_matrix' | 'models' | 'history'>('gpus');
   const [gpuPricing, setGpuPricing] = useState<GpuPricingItem[]>([]);
   const [modelPricing, setModelPricing] = useState<ModelPricingItem[]>([]);
   const [historySummaries, setHistorySummaries] = useState<PricingHistorySummary[]>([]);
@@ -19,12 +23,35 @@ export function FinOpsPricingView() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  // Filters & Sorting
+  // Filters
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [selectedPricingModel, setSelectedPricingModel] = useState<string>('all');
   const [selectedExecutionType, setSelectedExecutionType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [gpuSortBy, setGpuSortBy] = useState<'price_asc' | 'vram_price_asc' | 'vram_desc' | 'obtainability_desc'>('price_asc');
+
+  // Table Sorting State (SortableHeader)
+  const [gpuSortKey, setGpuSortKey] = useState<string>('normalizedHourlyUsd');
+  const [gpuSortDir, setGpuSortDir] = useState<SortDirection>('asc');
+  const [modelSortKey, setModelSortKey] = useState<string>('modelName');
+  const [modelSortDir, setModelSortDir] = useState<SortDirection>('asc');
+
+  const handleGpuSort = (col: string) => {
+    if (gpuSortKey === col) {
+      setGpuSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setGpuSortKey(col);
+      setGpuSortDir(col === 'hardwareDisplayName' || col === 'provider' ? 'asc' : 'asc');
+    }
+  };
+
+  const handleModelSort = (col: string) => {
+    if (modelSortKey === col) {
+      setModelSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setModelSortKey(col);
+      setModelSortDir(col === 'modelName' || col === 'provider' ? 'asc' : 'asc');
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -163,9 +190,9 @@ export function FinOpsPricingView() {
     });
   }, [modelPricing]);
 
-  // Filtered GPU list with sorting
+  // Filtered GPU list
   const filteredGpus = useMemo(() => {
-    const list = gpuPricing.filter((item) => {
+    return gpuPricing.filter((item) => {
       if (selectedProvider !== 'all' && item.provider !== selectedProvider) return false;
       if (selectedPricingModel !== 'all' && item.pricingModel !== selectedPricingModel) return false;
       if (searchQuery) {
@@ -177,17 +204,16 @@ export function FinOpsPricingView() {
       }
       return true;
     });
+  }, [gpuPricing, selectedProvider, selectedPricingModel, searchQuery]);
 
-    return [...list].sort((a, b) => {
-      if (gpuSortBy === 'price_asc') return a.normalizedHourlyUsd - b.normalizedHourlyUsd;
-      if (gpuSortBy === 'vram_price_asc') {
-        return a.normalizedHourlyUsd / a.vramGb - b.normalizedHourlyUsd / b.vramGb;
-      }
-      if (gpuSortBy === 'vram_desc') return b.vramGb - a.vramGb;
-      if (gpuSortBy === 'obtainability_desc') return b.obtainabilityScore - a.obtainabilityScore;
-      return 0;
+  // Sorted GPU list via SortableHeader
+  const sortedGpus = useMemo(() => {
+    return genericSort(filteredGpus, gpuSortKey, gpuSortDir, (item, key) => {
+      if (key === 'vramPrice') return item.normalizedHourlyUsd / item.vramGb;
+      if (key === 'hourlyPrice') return item.normalizedHourlyUsd;
+      return (item as unknown as Record<string, unknown>)[key];
     });
-  }, [gpuPricing, selectedProvider, selectedPricingModel, searchQuery, gpuSortBy]);
+  }, [filteredGpus, gpuSortKey, gpuSortDir]);
 
   // Filtered Models list
   const filteredModels = useMemo(() => {
@@ -204,6 +230,16 @@ export function FinOpsPricingView() {
       return true;
     });
   }, [modelPricing, selectedProvider, selectedExecutionType, searchQuery]);
+
+  // Sorted Models list via SortableHeader
+  const sortedModels = useMemo(() => {
+    return genericSort(filteredModels, modelSortKey, modelSortDir, (item, key) => {
+      if (key === 'inputPrice') return item.inputPricePerMillionUsd ?? item.perUnitUsd ?? 999;
+      if (key === 'outputPrice') return item.outputPricePerMillionUsd ?? 999;
+      if (key === 'cachedPrice') return item.cachedPricePerMillionUsd ?? 999;
+      return (item as unknown as Record<string, unknown>)[key];
+    });
+  }, [filteredModels, modelSortKey, modelSortDir]);
 
   return (
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
@@ -330,6 +366,13 @@ export function FinOpsPricingView() {
         />
       </div>
 
+      {/* Provider Fleet & Real-Time Sync Status Bar */}
+      <ProviderFleetBar
+        syncAudits={syncAudits}
+        onRefreshSync={handleSync}
+        isSyncing={isSyncing}
+      />
+
       {isLoading && gpuPricing.length === 0 && (
         <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '14px' }}>
           Loading real-time pricing intelligence from neocloud provider catalogs...
@@ -360,7 +403,23 @@ export function FinOpsPricingView() {
             whiteSpace: 'nowrap',
           }}
         >
-          GPU Availability & Pricing ({gpuPricing.length})
+          GPU Availability &amp; Pricing ({gpuPricing.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab('recommendations')}
+          style={{
+            padding: '12px 18px',
+            backgroundColor: 'transparent',
+            border: 'none',
+            borderBottom: activeSubTab === 'recommendations' ? '2px solid #8b5cf6' : '2px solid transparent',
+            color: activeSubTab === 'recommendations' ? '#f8fafc' : '#94a3b8',
+            fontWeight: 600,
+            fontSize: '14px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          🎯 Purpose &amp; Model Studio
         </button>
         <button
           onClick={() => setActiveSubTab('vram_matrix')}
@@ -376,7 +435,7 @@ export function FinOpsPricingView() {
             whiteSpace: 'nowrap',
           }}
         >
-          ⭐ Best Value & VRAM Matrix
+          ⭐ Best Value &amp; VRAM Matrix
         </button>
         <button
           onClick={() => setActiveSubTab('models')}
@@ -392,7 +451,7 @@ export function FinOpsPricingView() {
             whiteSpace: 'nowrap',
           }}
         >
-          Open Models & Token Factory ({modelPricing.length})
+          Open Models &amp; Token Factory ({modelPricing.length})
         </button>
         <button
           onClick={() => setActiveSubTab('history')}
@@ -408,7 +467,7 @@ export function FinOpsPricingView() {
             whiteSpace: 'nowrap',
           }}
         >
-          Pricing History & Update Cadence ({historySummaries.length})
+          📈 Pricing History &amp; Fluctuations ({historySummaries.length})
         </button>
       </div>
 
@@ -471,49 +530,26 @@ export function FinOpsPricingView() {
         </div>
 
         {activeSubTab === 'gpus' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Pricing Model:</label>
-              <select
-                value={selectedPricingModel}
-                onChange={(e) => setSelectedPricingModel(e.target.value)}
-                style={{
-                  backgroundColor: '#1e293b',
-                  color: '#f8fafc',
-                  border: '1px solid #334155',
-                  borderRadius: '6px',
-                  padding: '8px 12px',
-                  fontSize: '13px',
-                }}
-              >
-                <option value="all">All Models</option>
-                <option value="on_demand">On-Demand</option>
-                <option value="spot_bid">Spot / Preemptible</option>
-                <option value="serverless">Serverless Micro-metered</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Sort By:</label>
-              <select
-                value={gpuSortBy}
-                onChange={(e: any) => setGpuSortBy(e.target.value)}
-                style={{
-                  backgroundColor: '#1e293b',
-                  color: '#f8fafc',
-                  border: '1px solid #334155',
-                  borderRadius: '6px',
-                  padding: '8px 12px',
-                  fontSize: '13px',
-                }}
-              >
-                <option value="price_asc">Lowest Hourly Price ($/hr)</option>
-                <option value="vram_price_asc">Lowest $/GB VRAM ($/GB-hr)</option>
-                <option value="vram_desc">Highest VRAM (GB)</option>
-                <option value="obtainability_desc">Highest Availability Score</option>
-              </select>
-            </div>
-          </>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Pricing Model:</label>
+            <select
+              value={selectedPricingModel}
+              onChange={(e) => setSelectedPricingModel(e.target.value)}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#f8fafc',
+                border: '1px solid #334155',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                fontSize: '13px',
+              }}
+            >
+              <option value="all">All Models</option>
+              <option value="on_demand">On-Demand</option>
+              <option value="spot_bid">Spot / Preemptible</option>
+              <option value="serverless">Serverless Micro-metered</option>
+            </select>
+          </div>
         )}
 
         {activeSubTab === 'models' && (
@@ -540,6 +576,14 @@ export function FinOpsPricingView() {
         )}
       </div>
 
+      {/* SUBTAB: Model Recommendation & Hardware Studio */}
+      {activeSubTab === 'recommendations' && (
+        <ModelRecommendationStudio
+          gpuPricing={gpuPricing}
+          modelPricing={modelPricing}
+        />
+      )}
+
       {/* TAB A: GPU Availability & Pricing */}
       {activeSubTab === 'gpus' && (
         <div
@@ -554,19 +598,91 @@ export function FinOpsPricingView() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
                 <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Provider</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Hardware Chip</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>VRAM</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Price ($/hr)</th>
-                  <th style={{ padding: '14px 16px', color: '#06b6d4', fontWeight: 600 }}>Cost / GB VRAM</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Pricing Model</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Availability</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Risk Tier</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Commitment</th>
+                  <SortableHeader
+                    column="provider"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Provider
+                  </SortableHeader>
+                  <SortableHeader
+                    column="hardwareDisplayName"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Hardware Chip
+                  </SortableHeader>
+                  <SortableHeader
+                    column="vramGb"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    VRAM (GB)
+                  </SortableHeader>
+                  <SortableHeader
+                    column="hourlyPrice"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Price ($/hr)
+                  </SortableHeader>
+                  <SortableHeader
+                    column="vramPrice"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px', color: '#06b6d4' }}
+                  >
+                    Cost / GB VRAM
+                  </SortableHeader>
+                  <SortableHeader
+                    column="pricingModel"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Pricing Model
+                  </SortableHeader>
+                  <SortableHeader
+                    column="obtainabilityScore"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Availability
+                  </SortableHeader>
+                  <SortableHeader
+                    column="interruptionRiskTier"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Risk Tier
+                  </SortableHeader>
+                  <SortableHeader
+                    column="commitment"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Commitment
+                  </SortableHeader>
                 </tr>
               </thead>
               <tbody>
-                {filteredGpus.map((item, idx) => {
+                {sortedGpus.map((item, idx) => {
                   const vramRate = item.normalizedHourlyUsd / item.vramGb;
                   const isTopVramValue = vramRate <= 0.015;
                   return (
@@ -898,19 +1014,83 @@ export function FinOpsPricingView() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
                 <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Provider</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Model ID & Name</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Developer</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Execution Type</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Input Rate</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Output Rate</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Cached Input</th>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Context Window</th>
+                  <SortableHeader
+                    column="provider"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Provider
+                  </SortableHeader>
+                  <SortableHeader
+                    column="modelName"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Model ID &amp; Name
+                  </SortableHeader>
+                  <SortableHeader
+                    column="developer"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Developer
+                  </SortableHeader>
+                  <SortableHeader
+                    column="executionType"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Execution Type
+                  </SortableHeader>
+                  <SortableHeader
+                    column="inputPrice"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px', color: '#10b981' }}
+                  >
+                    Input Rate
+                  </SortableHeader>
+                  <SortableHeader
+                    column="outputPrice"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px', color: '#60a5fa' }}
+                  >
+                    Output Rate
+                  </SortableHeader>
+                  <SortableHeader
+                    column="cachedPrice"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Cached Input
+                  </SortableHeader>
+                  <SortableHeader
+                    column="contextLength"
+                    currentSortKey={modelSortKey}
+                    currentSortDir={modelSortDir}
+                    onSort={handleModelSort}
+                    style={{ padding: '14px 16px' }}
+                  >
+                    Context Window
+                  </SortableHeader>
                   <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredModels.map((item, idx) => (
+                {sortedModels.map((item, idx) => (
                   <tr
                     key={item.id}
                     style={{
@@ -982,13 +1162,16 @@ export function FinOpsPricingView() {
         </div>
       )}
 
-      {/* TAB C: Pricing History & Update Cadence */}
+      {/* TAB D: Pricing History & Update Cadence */}
       {activeSubTab === 'history' && (
         <div>
+          {/* Interactive Historical Price SVG Line Chart */}
+          <HistoricalPriceChart summaries={historySummaries} />
+
           {/* Provider Update Frequency Cards */}
           <div style={{ marginBottom: '24px' }}>
             <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
-              Provider Pricing Update Cadence & Telemetry
+              Provider Pricing Update Cadence &amp; Telemetry
             </h3>
             <div
               style={{
@@ -1049,100 +1232,6 @@ export function FinOpsPricingView() {
                   >
                     <span>Expected Interval: ~{(audit.estimatedUpdateIntervalSec / 60).toFixed(0)} mins</span>
                     <span>Records: {audit.recordsCount}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Historical Trend Series */}
-          <div
-            style={{
-              backgroundColor: '#0f172a',
-              borderRadius: '12px',
-              border: '1px solid #1e293b',
-              padding: '20px',
-            }}
-          >
-            <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-              Historical Price Fluctuations (7 Days Time-Series)
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {historySummaries.map((summary) => (
-                <div
-                  key={summary.itemId}
-                  style={{
-                    border: '1px solid #1e293b',
-                    borderRadius: '8px',
-                    padding: '16px',
-                    backgroundColor: '#1e293b20',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: '12px',
-                    }}
-                  >
-                    <div>
-                      <div style={{ color: '#f8fafc', fontWeight: 600, fontSize: '14px' }}>
-                        {summary.displayName}
-                      </div>
-                      <div style={{ color: '#94a3b8', fontSize: '12px' }}>
-                        Cadence: {summary.updateCadence} (polling every ~{summary.estimatedUpdateFrequencyMinutes} mins)
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ color: '#10b981', fontWeight: 700, fontSize: '15px' }}>
-                        ${summary.latestPriceUsd}
-                      </div>
-                      <div
-                        style={{
-                          color: summary.priceChange24hPct < 0 ? '#34d399' : '#f87171',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {summary.priceChange24hPct >= 0 ? '+' : ''}
-                        {summary.priceChange24hPct}% (24h)
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Sparkline-like data point preview */}
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-                      gap: '8px',
-                    }}
-                  >
-                    {summary.history.slice(-6).map((pt, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          backgroundColor: '#0f172a',
-                          border: '1px solid #334155',
-                          borderRadius: '6px',
-                          padding: '6px 10px',
-                          fontSize: '11px',
-                        }}
-                      >
-                        <div style={{ color: '#64748b' }}>
-                          {new Date(pt.recordedAt).toLocaleDateString([], {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                          })}
-                        </div>
-                        <div style={{ color: '#38bdf8', fontWeight: 600 }}>${pt.priceUsd}</div>
-                        {pt.spotPriceUsd && (
-                          <div style={{ color: '#34d399', fontSize: '10px' }}>Spot: ${pt.spotPriceUsd}</div>
-                        )}
-                      </div>
-                    ))}
                   </div>
                 </div>
               ))}

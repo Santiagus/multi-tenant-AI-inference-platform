@@ -24,6 +24,68 @@ interface JobsViewProps {
   isProcessingWorker: boolean;
 }
 
+export const ALL_PLATFORM_PROVIDERS = [
+  { id: 'local_pytorch', name: 'Local PyTorch' },
+  { id: 'runpod', name: 'RunPod' },
+  { id: 'vast_ai', name: 'Vast.ai' },
+  { id: 'baseten', name: 'Baseten' },
+  { id: 'nebius', name: 'Nebius' },
+  { id: 'jarvislabs', name: 'JarvisLabs' },
+  { id: 'fal', name: 'fal.ai' },
+  { id: 'runware', name: 'Runware' },
+  { id: 'bedrock', name: 'AWS Bedrock' },
+  { id: 'sagemaker', name: 'AWS SageMaker' },
+];
+
+export function getJobExecutionMode(j: JobItem): string {
+  if (j.execution_mode) return j.execution_mode;
+  if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') return 'local';
+  if (j.provider === 'jarvislabs') return 'token_factory';
+  if (j.provider === 'baseten') return 'serverless';
+  if (j.provider === 'runware' || j.provider === 'fal') return 'pay_per_call';
+  if (j.provider === 'runpod' || j.provider === 'vast_ai') return 'spot';
+  return 'on_demand';
+}
+
+export function getJobHardware(j: JobItem): string {
+  if ((j.result as any)?.hardware) return (j.result as any).hardware;
+  if ((j.result as any)?.device) return (j.result as any).device;
+  if (j.hardware) return j.hardware;
+
+  if (j.routing_preference.includes('cpu')) return 'CPU Xeon/EPYC Fallback';
+  if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') {
+    return 'NVIDIA GeForce RTX 5070 Ti (16GB)';
+  }
+  if (j.provider === 'runpod') {
+    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek')) {
+      return 'NVIDIA H100 SXM5 (80GB)';
+    }
+    return 'NVIDIA GeForce RTX 4090 (24GB)';
+  }
+  if (j.provider === 'vast_ai') {
+    return 'NVIDIA GeForce RTX 5090 Blackwell (32GB)';
+  }
+  if (j.provider === 'baseten') {
+    return 'NVIDIA L4 Tensor Core (24GB)';
+  }
+  if (j.provider === 'nebius') {
+    return 'NVIDIA H200 SXM (141GB HBM3e)';
+  }
+  if (j.provider === 'jarvislabs') {
+    return 'Token Factory MaaS (Serverless Cluster)';
+  }
+  if (j.provider === 'fal' || j.provider === 'runware') {
+    return 'Distributed Tensor Core Pipeline (Media Engine)';
+  }
+  if (j.provider === 'bedrock') {
+    return 'AWS Bedrock Managed Neural Cluster';
+  }
+  if (j.provider === 'sagemaker') {
+    return 'AWS Inferentia2 / G5 Tensor Cluster';
+  }
+  return 'NVIDIA H100 SXM5 (80GB)';
+}
+
 export function JobsView({
   jobs,
   dlqMessages,
@@ -42,6 +104,7 @@ export function JobsView({
   const [modelFilter, setModelFilter] = useState<string>('ALL');
   const [tenantFilter, setTenantFilter] = useState<string>('ALL');
   const [providerFilter, setProviderFilter] = useState<string>('ALL');
+  const [modeFilter, setModeFilter] = useState<string>('ALL');
   const [breakdownTab, setBreakdownTab] = useState<'model' | 'tenant' | 'provider' | 'gpu'>('model');
   const [showModelStats, setShowModelStats] = useState<boolean>(true);
 
@@ -298,22 +361,7 @@ export function JobsView({
     > = {};
 
     for (const j of jobs) {
-      const hw =
-        (j.result as any)?.hardware ||
-        (j.result as any)?.device ||
-        (j.routing_preference.includes('cpu')
-          ? 'CPU Fallback'
-          : j.routing_preference.includes('local')
-            ? 'NVIDIA GeForce RTX 5070 Ti (16GB)'
-            : j.provider === 'runpod'
-              ? 'NVIDIA H100 SXM5 (80GB)'
-              : j.provider === 'vast_ai'
-                ? 'NVIDIA GeForce RTX 5090 (32GB)'
-                : j.provider === 'baseten'
-                  ? 'NVIDIA L4 (24GB)'
-                  : j.model_id.includes('TinyLlama')
-                    ? 'NVIDIA GeForce RTX 5070 Ti (16GB)'
-                    : 'Cloud / Serverless GPU');
+      const hw = getJobHardware(j);
 
       if (!map[hw]) {
         map[hw] = {
@@ -361,6 +409,12 @@ export function JobsView({
           return false;
         }
       }
+      if (modeFilter !== 'ALL') {
+        const mode = getJobExecutionMode(job);
+        if (mode !== modeFilter) {
+          return false;
+        }
+      }
       if (modelFilter !== 'ALL' && job.model_id !== modelFilter) {
         return false;
       }
@@ -391,7 +445,7 @@ export function JobsView({
       }
       return true;
     });
-  }, [jobs, statusFilter, modelFilter, tenantFilter, providerFilter, searchQuery]);
+  }, [jobs, statusFilter, modeFilter, modelFilter, tenantFilter, providerFilter, searchQuery]);
 
   // Model table sort
   const [modelSortKey, setModelSortKey] = useState<string>('total');
@@ -424,12 +478,17 @@ export function JobsView({
       setJobSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setJobSortKey(col);
-      setJobSortDir(col === 'job_id' || col === 'model_id' || col === 'status' || col === 'provider' ? 'asc' : 'desc');
+      setJobSortDir(
+        col === 'job_id' || col === 'model_id' || col === 'status' || col === 'provider' || col === 'mode'
+          ? 'asc'
+          : 'desc'
+      );
     }
   };
 
   const sortedJobs = useMemo(() => {
     return genericSort(filteredJobs, jobSortKey, jobSortDir, (item, key) => {
+      if (key === 'mode') return getJobExecutionMode(item);
       if (key === 'progress') return item.progress_pct ?? (item.status === 'SUCCEEDED' ? 100 : 0);
       if (key === 'tokens') {
         const inTok = item.usage?.prompt_tokens ?? 0;
@@ -984,30 +1043,59 @@ export function JobsView({
             </select>
           )}
 
-          {providerStats.length > 1 && (
-            <select
-              value={providerFilter}
-              onChange={(e) => setProviderFilter(e.target.value)}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer',
-                maxWidth: '180px',
-              }}
-            >
-              <option value="ALL">All Providers ({providerStats.length})</option>
-              {providerStats.map((p) => (
-                <option key={p.provider} value={p.provider}>
-                  {p.provider.toUpperCase()} ({p.total})
+          <select
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value)}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #334155',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              outline: 'none',
+              cursor: 'pointer',
+              maxWidth: '180px',
+            }}
+          >
+            <option value="ALL">All Modes</option>
+            <option value="spot">Spot / Preemptible</option>
+            <option value="on_demand">On-Demand</option>
+            <option value="serverless">Serverless</option>
+            <option value="token_factory">Token Factory</option>
+            <option value="pay_per_call">Pay-Per-Call</option>
+            <option value="local">Local Dedicated</option>
+          </select>
+
+          <select
+            value={providerFilter}
+            onChange={(e) => setProviderFilter(e.target.value)}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #334155',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              outline: 'none',
+              cursor: 'pointer',
+              maxWidth: '180px',
+            }}
+          >
+            <option value="ALL">All Providers</option>
+            {ALL_PLATFORM_PROVIDERS.map((p) => {
+              const count = jobs.filter(
+                (j) =>
+                  (j.provider || (j.routing_preference.includes('local') ? 'local_pytorch' : 'runpod')) ===
+                  p.id
+              ).length;
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.name} {count > 0 ? `(${count})` : ''}
                 </option>
-              ))}
-            </select>
-          )}
+              );
+            })}
+          </select>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1117,7 +1205,16 @@ export function JobsView({
                   onSort={handleJobSort}
                   style={{ padding: '14px 16px' }}
                 >
-                  Provider Placement
+                  Provider &amp; Hardware
+                </SortableHeader>
+                <SortableHeader
+                  column="mode"
+                  currentSortKey={jobSortKey}
+                  currentSortDir={jobSortDir}
+                  onSort={handleJobSort}
+                  style={{ padding: '14px 16px' }}
+                >
+                  Mode
                 </SortableHeader>
                 <SortableHeader
                   column="progress"
@@ -1161,13 +1258,13 @@ export function JobsView({
             <tbody>
               {isLoading && jobs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     Loading inference jobs...
                   </td>
                 </tr>
               ) : sortedJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     No inference jobs match the current filters. Click "+ Submit Job" to enqueue one.
                   </td>
                 </tr>
@@ -1178,6 +1275,8 @@ export function JobsView({
                   const totalTok = (job.usage?.total_tokens ?? (inTok + outTok));
                   const costUsd = ((job.usage?.cost_microcents ?? 0) / 100_000_000).toFixed(5);
                   const progressPct = job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0);
+                  const mode = getJobExecutionMode(job);
+                  const hardware = getJobHardware(job);
 
                   return (
                     <tr
@@ -1201,17 +1300,54 @@ export function JobsView({
                         {job.model_id}
                       </td>
                       <td style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span
+                            style={{
+                              fontSize: '12px',
+                              padding: '2px 8px',
+                              borderRadius: '5px',
+                              backgroundColor: job.provider ? 'rgba(56, 189, 248, 0.1)' : 'rgba(100, 116, 139, 0.1)',
+                              color: job.provider ? '#38bdf8' : '#64748b',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {job.provider ? job.provider.toUpperCase() : 'AUTO'}
+                          </span>
+                        </div>
+                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px' }}>
+                          {hardware}
+                        </div>
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
                         <span
                           style={{
-                            fontSize: '12px',
-                            padding: '3px 8px',
-                            borderRadius: '6px',
-                            backgroundColor: job.provider ? 'rgba(56, 189, 248, 0.1)' : 'rgba(100, 116, 139, 0.1)',
-                            color: job.provider ? '#38bdf8' : '#64748b',
-                            fontWeight: 600,
+                            fontSize: '11px',
+                            padding: '2px 7px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                            backgroundColor:
+                              mode === 'spot'
+                                ? 'rgba(16, 185, 129, 0.15)'
+                                : mode === 'serverless'
+                                  ? 'rgba(6, 182, 212, 0.15)'
+                                  : mode === 'token_factory'
+                                    ? 'rgba(139, 92, 246, 0.15)'
+                                    : mode === 'local'
+                                      ? 'rgba(148, 163, 184, 0.15)'
+                                      : 'rgba(59, 130, 246, 0.15)',
+                            color:
+                              mode === 'spot'
+                                ? '#34d399'
+                                : mode === 'serverless'
+                                  ? '#22d3ee'
+                                  : mode === 'token_factory'
+                                    ? '#c084fc'
+                                    : mode === 'local'
+                                      ? '#cbd5e1'
+                                      : '#60a5fa',
                           }}
                         >
-                          {job.provider || 'auto'}
+                          {mode.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
                       <td style={{ padding: '14px 16px', minWidth: '110px' }}>

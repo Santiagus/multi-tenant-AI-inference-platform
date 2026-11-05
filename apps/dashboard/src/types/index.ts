@@ -55,6 +55,8 @@ export interface JobItem {
   routing_preference: RoutingPreference;
   priority: number;
   provider: string | null;
+  execution_mode?: 'on_demand' | 'spot' | 'serverless' | 'token_factory' | 'local' | string;
+  hardware?: string;
   retry_count: number;
   max_retries?: number;
   created_at: string;
@@ -321,6 +323,52 @@ export interface ModelCloudOptionsResponse {
   allOptions: CloudOption[];
   analysisNote: string;
 }
+
+export type PricingModalityBadge = 'on_demand' | 'spot' | 'serverless' | 'token_factory' | 'pay_per_call' | 'local';
+
+export interface ProviderFleetStatus {
+  provider: string;
+  displayName: string;
+  isHealthy: boolean;
+  syncStatus: 'live' | 'syncing' | 'stale';
+  lastSyncedAt: string;
+  updateCadenceCategory: 'realtime_auction' | 'dynamic_shifts' | 'scheduled';
+  updateFrequencyDescription: string;
+  estimatedUpdateIntervalSec: number;
+  allowedPricingModels: PricingModalityBadge[];
+  availableCreditsUsd: number | null;
+  creditType: 'prepaid_credits' | 'postpaid_invoice' | 'zero_commitment';
+  interruptionRiskTier: string;
+  interruptionNoticeWindow: string;
+}
+
+export type ModelPurpose =
+  | 'all'
+  | 'text_to_text'
+  | 'text_to_image'
+  | 'text_to_video'
+  | 'speech_to_text'
+  | 'code_reasoning';
+
+export type ModelWeightType = 'open' | 'proprietary';
+
+export interface CuratedModelDefinition {
+  id: string;
+  name: string;
+  developer: string;
+  purpose: ModelPurpose;
+  weightType: ModelWeightType;
+  minVramGb: number;
+  weightsSizeGb: number;
+  defaultProvider: string;
+  storageCostMonthlyUsd: number;
+  coldStartSec: number;
+  cacheTtlMinutes: number;
+  recommendedGpuSku: string;
+  cheapestGpuSku: string;
+  description: string;
+}
+
 
 
 
