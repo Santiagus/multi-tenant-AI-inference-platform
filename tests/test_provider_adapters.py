@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from unittest import mock
 
 from apps.worker.consumer import WorkerRuntime, run_cli
 from apps.worker.contracts import InferenceError, InferenceRequest
@@ -320,9 +321,9 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
     def test_generalized_mock_flag_parsing(self) -> None:
         """Verify unique MOCK_PROVIDERS and MOCK_INFERENCE flags accept 1, ENABLE, TRUE, YES."""
         for truthy in ("1", "ENABLE", "enable", "TRUE", "true", "YES", "yes"):
-            with unittest.mock.patch.dict(os.environ, {"MOCK_PROVIDERS": truthy}):
+            with mock.patch.dict(os.environ, {"MOCK_PROVIDERS": truthy}):
                 self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_PROVIDERS={truthy}")
-            with unittest.mock.patch.dict(os.environ, {"MOCK_INFERENCE": truthy}):
+            with mock.patch.dict(os.environ, {"MOCK_INFERENCE": truthy}):
                 self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_INFERENCE={truthy}")
 
     def test_real_inference_forbidden_during_test_execution(self) -> None:
@@ -336,7 +337,7 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
 
         # Disabling mock inference via env during test execution must raise RuntimeError
         for falsy in ("0", "DISABLE", "disable", "FALSE", "false", "NO", "no"):
-            with unittest.mock.patch.dict(os.environ, {"MOCK_INFERENCE": falsy}):
+            with mock.patch.dict(os.environ, {"MOCK_INFERENCE": falsy}):
                 with self.assertRaises(RuntimeError) as ctx:
                     is_mock_inference_enabled()
                 self.assertIn("Real inference in test is strictly forbidden", str(ctx.exception))
@@ -361,7 +362,7 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
         }
         cleaned_env["MOCK_PROVIDERS"] = "1"
 
-        with unittest.mock.patch.dict(os.environ, cleaned_env, clear=True):
+        with mock.patch.dict(os.environ, cleaned_env, clear=True):
             rp = RunPodAdapter(endpoint_id="rp-test")
             self.assertTrue(rp.mock_mode)
 
