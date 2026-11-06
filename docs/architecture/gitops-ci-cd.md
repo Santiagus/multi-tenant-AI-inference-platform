@@ -145,8 +145,8 @@ To avoid unnecessary cloud compute expenditure:
    - Benchmarks are triggered strictly on-demand via `workflow_dispatch` in `.github/workflows/benchmark.yml`.
    - Automated recurring cron schedules (`schedule:`) are prohibited and enforced by static analysis in `scripts/validate_gitops.py`.
 2. **Zero Paid Cloud Inference in CI/CD**:
-   - All tests in CI/CD run with `INFERENCE_MOCK_MODE=true`, `BEDROCK_MOCK=1`, `SAGEMAKER_MOCK=1`, and `RUNPOD_MOCK=1`.
-   - The provider adapters (`BedrockAdapter`, `SageMakerAdapter`, `RunPodAdapter`) automatically default to mock execution when `CI=true` or `INFERENCE_MOCK_MODE=true` is set.
+   - All tests in CI/CD run with generalized mock inference enabled (`MOCK_INFERENCE=1` / `INFERENCE_MOCK_MODE=true`).
+   - The provider adapters (`BedrockAdapter`, `SageMakerAdapter`, `RunPodAdapter`) automatically default to mock execution when `MOCK_INFERENCE=1` (or `ENABLE`/`TRUE`) is set; real inference is strictly forbidden during tests.
    - Local PyTorch testing runs in lightweight synthetic mode (`tier=1`, zero weight downloads).
 
 ---

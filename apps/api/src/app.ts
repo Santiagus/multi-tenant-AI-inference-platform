@@ -24,10 +24,15 @@ import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { finopsRoutes } from './routes/finops.js';
 import { securityRoutes } from './routes/security.js';
 import { gitOpsRoutes } from './routes/gitops.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
+import {
+  type IFinOpsPricingRepository,
+  InMemoryFinOpsPricingRepository,
+} from './infrastructure/db/finops-pricing-repository.js';
 import { SlidingWindowRateLimiter } from './domain/security.js';
 import { ENDPOINT_OPENAPI_CONFIGS } from './infrastructure/openapi/endpoint-schemas.js';
 
@@ -47,6 +52,7 @@ export interface AppDependencies {
   awsController?: AwsPlatformController;
   routerController?: ProviderRouterController;
   gitOpsController?: GitOpsController;
+  finopsRepo?: IFinOpsPricingRepository;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -131,6 +137,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
         else if (url.startsWith('/v1/k8s')) s.tags = ['Kubernetes'];
         else if (url.startsWith('/v1/cloud/aws')) s.tags = ['AWS Cloud'];
         else if (url.startsWith('/v1/gitops')) s.tags = ['GitOps'];
+        else if (url.startsWith('/v1/finops')) s.tags = ['Provider Routing'];
       }
 
       // Pre-fill x-tenant-id header default so Try-It-Out works immediately without typing
@@ -241,9 +248,16 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     storageClient: deps.storageClient,
   });
 
+  const finopsRepo = deps.finopsRepo ?? new InMemoryFinOpsPricingRepository();
+
   app.register(analyticsRoutes, {
     jobService,
     routerController,
+  });
+
+  app.register(finopsRoutes, {
+    finopsRepo,
+    metrics,
   });
 
   app.register(gitOpsRoutes, {

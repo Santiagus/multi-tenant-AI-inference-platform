@@ -86,3 +86,16 @@ code, pre, .font-mono {
   background: var(--bg-surface-hover);
 }
 
+/* Jobs Status Grid (Optimized for 1200x1920 portrait & single-row view) */
+.jobs-status-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .jobs-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}
+

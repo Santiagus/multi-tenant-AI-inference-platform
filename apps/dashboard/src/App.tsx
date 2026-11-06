@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { Navigation, type ActiveTab } from './components/Navigation';
 import { JobsView } from './components/jobs/JobsView';
 import { ProvidersView } from './components/providers/ProvidersView';
+import { FinOpsPricingView } from './components/finops/FinOpsPricingView';
 import { RoutingView } from './components/routing/RoutingView';
 import { EconomicsView } from './components/economics/EconomicsView';
 import { WorkloadPathView } from './components/flow/WorkloadPathView';
@@ -159,6 +160,8 @@ export function App() {
             onToggleHealth={handleToggleProviderHealth}
           />
         )}
+
+        {activeTab === 'pricing' && <FinOpsPricingView />}
 
         {activeTab === 'routing' && <RoutingView />}
 

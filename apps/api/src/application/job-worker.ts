@@ -332,20 +332,61 @@ export type CommandRunner = (
   onProgress?: (progress: JobProgress) => void
 ) => Promise<{ stdout: string; stderr: string }>;
 
+export function isTestEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' ||
+    process.env.ENV === 'test' ||
+    process.env.CI === 'true' ||
+    process.env.GITHUB_ACTIONS === 'true'
+  );
+}
+
+export function isMockInferenceEnabled(): boolean {
+  const vars = [
+    process.env.MOCK_PROVIDERS,
+    process.env.MOCK_INFERENCE,
+    process.env.INFERENCE_MOCK_MODE,
+    process.env.INFERENCE_MOCK,
+  ];
+
+  const truthy = new Set(['1', 'true', 'enable', 'enabled', 'yes', 'on']);
+  const falsy = new Set(['0', 'false', 'disable', 'disabled', 'no', 'off']);
+
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (falsy.has(cleaned)) {
+        if (isTestEnvironment()) {
+          throw new Error(
+            'Real inference in test is strictly forbidden! MOCK_PROVIDERS (or MOCK_INFERENCE) must be set to ENABLE, TRUE, or 1.'
+          );
+        }
+        return false;
+      }
+    }
+  }
+
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (truthy.has(cleaned)) {
+        return true;
+      }
+    }
+  }
+
+  return true;
+}
+
 export function shouldRunRealInference(): boolean {
+  // Real inference is strictly forbidden in test execution
+  if (isTestEnvironment()) {
+    return false;
+  }
   if (process.env.FORCE_REAL_INFERENCE === 'true' || process.env.FORCE_REAL_INFERENCE === '1') {
     return true;
   }
-  if (
-    process.env.CI === 'true' ||
-    process.env.GITHUB_ACTIONS === 'true' ||
-    process.env.NODE_ENV === 'test' ||
-    process.env.MOCK_INFERENCE === 'true' ||
-    process.env.MOCK_INFERENCE === '1'
-  ) {
-    return false;
-  }
-  return true;
+  return !isMockInferenceEnabled();
 }
 
 const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
@@ -497,6 +538,16 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
 
       return resolve({ stdout: JSON.stringify(simulatedEnvelope), stderr: '' });
     });
+  }
+
+  if (isTestEnvironment()) {
+    return Promise.reject(
+      new InferenceExecutionError(
+        'Real inference is strictly forbidden during testing. Mock inference must be ENABLE/TRUE/1.',
+        'REAL_INFERENCE_FORBIDDEN_IN_TEST',
+        false
+      )
+    );
   }
 
   return new Promise((resolve, reject) => {

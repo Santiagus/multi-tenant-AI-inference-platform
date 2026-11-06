@@ -73,6 +73,12 @@ variable "kinesis_stream_name" {
   type        = string
 }
 
+variable "provider_secrets_arn" {
+  description = "Optional AWS Secrets Manager secret ARN containing external neocloud provider keys"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Common cost-allocation and governance tags"
   type        = map(string)
@@ -144,6 +150,16 @@ resource "aws_ecs_task_definition" "typescript_api" {
           value = var.kinesis_stream_name
         }
       ]
+      secrets = var.provider_secrets_arn != "" ? [
+        {
+          name      = "RUNPOD_API_KEY"
+          valueFrom = "${var.provider_secrets_arn}:RUNPOD_API_KEY::"
+        },
+        {
+          name      = "RUNPOD_ENDPOINT_ID"
+          valueFrom = "${var.provider_secrets_arn}:RUNPOD_ENDPOINT_ID::"
+        }
+      ] : []
     }
   ])
 

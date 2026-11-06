@@ -1,0 +1,55 @@
+{
+  "mcpServers": {
+    "runpod": {
+      "serverUrl": "https://mcp.runpod.io/",
+      "headers": {
+        "Authorization": "Bearer rpa_your_runpod_api_key_here"
+      },
+      "disabled": false
+    },
+    "runware": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@runware/mcp"
+      ],
+      "env": {
+        "RUNWARE_API_KEY": "your_runware_api_key_here"
+      }
+    },
+    "nebius": {
+      "command": "uvx",
+      "args": [
+        "--with",
+        "pydantic<2.10",
+        "--refresh-package",
+        "nebius-mcp-server",
+        "nebius-mcp-server@git+https://github.com/nebius/mcp-server@main"
+      ],
+      "env": {
+        "SAFE_MODE": "true"
+      }
+    },
+    "baseten": {
+      "serverUrl": "https://api.baseten.co/mcp",
+      "headers": {
+        "Authorization": "Bearer your_baseten_api_key_here"
+      },
+      "disabled": false
+    },
+    "wandb": {
+      "serverUrl": "https://mcp.withwandb.com/mcp",
+      "headers": {
+        "Authorization": "Bearer wandb_v1_your_api_key_here"
+      },
+      "disabled": false
+    },
+    "fal": {
+      "serverUrl": "https://mcp.fal.ai/mcp-relay",
+      "headers": {
+        "Authorization": "Key fal_sk_your_key_here"
+      },
+      "disabled": false
+    }
+  }
+}

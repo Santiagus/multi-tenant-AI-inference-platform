@@ -125,7 +125,19 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             <div>
               <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Provider Placement</div>
               <div style={{ fontSize: '12px', color: job.provider ? '#34d399' : '#94a3b8', fontWeight: 600 }}>
-                {job.provider || 'Pending dispatch'}
+                {job.provider ? job.provider.toUpperCase() : 'Pending dispatch'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Execution Modality</div>
+              <div style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 700 }}>
+                {(job.execution_mode || (job.routing_preference.includes('local') ? 'local' : job.provider === 'jarvislabs' ? 'token_factory' : job.provider === 'baseten' ? 'serverless' : job.provider === 'runpod' || job.provider === 'vast_ai' ? 'spot' : 'on_demand')).replace('_', ' ').toUpperCase()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Hardware Infrastructure</div>
+              <div style={{ fontSize: '12px', color: '#f8fafc', fontWeight: 600 }}>
+                {job.hardware || (job.result as any)?.hardware || (job.routing_preference.includes('local') ? 'NVIDIA GeForce RTX 5070 Ti (16GB)' : job.provider === 'runpod' ? 'NVIDIA H100 SXM5 (80GB)' : job.provider === 'vast_ai' ? 'NVIDIA GeForce RTX 5090 Blackwell (32GB)' : job.provider === 'baseten' ? 'NVIDIA L4 Tensor Core (24GB)' : 'Cloud / Serverless GPU')}
               </div>
             </div>
             <div>

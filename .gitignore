@@ -2,6 +2,12 @@
 .env
 .env.*
 !.env.example
+!.env.providers.example
+
+# Model Context Protocol (MCP) active configs
+.mcp.json
+!.mcp.example.json
+
 *.pem
 *.key
 *.pfx
