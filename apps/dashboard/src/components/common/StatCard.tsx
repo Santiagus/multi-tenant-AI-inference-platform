@@ -6,6 +6,7 @@ interface StatCardProps {
   trendPositive?: boolean;
   accentColor?: string;
   onClick?: () => void;
+  active?: boolean;
 }
 
 export function StatCard({
@@ -16,32 +17,35 @@ export function StatCard({
   trendPositive,
   accentColor = '#6366f1',
   onClick,
+  active = false,
 }: StatCardProps) {
   return (
     <div
       onClick={onClick}
       style={{
-        backgroundColor: '#0f172a',
+        backgroundColor: active ? '#172033' : '#0f172a',
         borderRadius: '12px',
-        padding: '20px',
-        border: '1px solid #1e293b',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+        padding: subtext || trend ? '20px' : '16px 20px',
+        border: active ? `1px solid ${accentColor}` : '1px solid #1e293b',
+        boxShadow: active
+          ? `0 0 0 1px ${accentColor}40, 0 4px 6px -1px rgba(0, 0, 0, 0.1)`
+          : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
         cursor: onClick ? 'pointer' : 'default',
-        transition: 'transform 0.15s ease, border-color 0.15s ease',
+        transition: 'transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease',
       }}
       onMouseEnter={(e) => {
-        if (onClick) {
+        if (onClick && !active) {
           e.currentTarget.style.borderColor = accentColor;
           e.currentTarget.style.transform = 'translateY(-2px)';
         }
       }}
       onMouseLeave={(e) => {
-        if (onClick) {
+        if (onClick && !active) {
           e.currentTarget.style.borderColor = '#1e293b';
           e.currentTarget.style.transform = 'translateY(0)';
         }
@@ -63,9 +67,9 @@ export function StatCard({
             fontSize: '12px',
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
-            color: '#94a3b8',
+            color: active ? '#f8fafc' : '#94a3b8',
             fontWeight: 600,
-            marginBottom: '8px',
+            marginBottom: subtext || trend ? '8px' : '4px',
           }}
         >
           {label}

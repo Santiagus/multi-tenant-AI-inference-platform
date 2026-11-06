@@ -535,19 +535,55 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
       },
     ];
 
-    // 4. Historical Pricing Data & Cadence Curves (7 Days History)
+    // 4. Historical Pricing Data & Cadence Curves (7 Days History across Providers)
     this.historySummaries = [
+      // H100 SXM5 multi-provider comparison
       {
         provider: 'runpod',
         itemType: 'gpu',
         itemId: 'nvidia-h100-sxm',
-        displayName: 'NVIDIA H100 SXM5 80GB (RunPod Secure vs Spot)',
+        displayName: 'NVIDIA H100 SXM5 80GB (RunPod Secure & Community)',
         updateCadence: 'Hourly dynamic availability shifts',
         estimatedUpdateFrequencyMinutes: 60,
-        latestPriceUsd: 1.99,
+        latestPriceUsd: 2.99,
         priceChange24hPct: -4.3,
-        history: this.generatePoints(1.99, 0.15, 7, 4),
+        history: this.generatePoints(2.99, 0.20, 7, 4, 1.99),
       },
+      {
+        provider: 'nebius',
+        itemType: 'gpu',
+        itemId: 'nvidia-h100-sxm',
+        displayName: 'NVIDIA H100 SXM5 80GB (Nebius Preemptible & On-Demand)',
+        updateCadence: 'Dynamic Neocloud Datacenter Sync (~5 min)',
+        estimatedUpdateFrequencyMinutes: 5,
+        latestPriceUsd: 2.85,
+        priceChange24hPct: -2.1,
+        history: this.generatePoints(2.85, 0.15, 7, 4, 1.85),
+      },
+      {
+        provider: 'coreweave',
+        itemType: 'gpu',
+        itemId: 'nvidia-h100-sxm',
+        displayName: 'NVIDIA H100 SXM5 80GB (CoreWeave Interruptible & Reserved)',
+        updateCadence: 'Kubernetes cloud virtual server sync (~5 min)',
+        estimatedUpdateFrequencyMinutes: 5,
+        latestPriceUsd: 3.15,
+        priceChange24hPct: 0.0,
+        history: this.generatePoints(3.15, 0.12, 7, 4, 2.05),
+      },
+      {
+        provider: 'sagemaker',
+        itemType: 'gpu',
+        itemId: 'nvidia-h100-sxm',
+        displayName: 'NVIDIA H100 SXM5 80GB (AWS SageMaker Spot / On-Demand)',
+        updateCadence: 'AWS EC2 Pricing API hourly schedule',
+        estimatedUpdateFrequencyMinutes: 60,
+        latestPriceUsd: 3.67,
+        priceChange24hPct: 1.2,
+        history: this.generatePoints(3.67, 0.25, 7, 4, 2.20),
+      },
+
+      // RTX 5090 Blackwell multi-provider comparison
       {
         provider: 'vast_ai',
         itemType: 'gpu',
@@ -555,21 +591,82 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
         displayName: 'NVIDIA RTX 5090 (Vast.ai Real-time Spot Auction)',
         updateCadence: 'Real-time auction bid updates every 5-10 minutes',
         estimatedUpdateFrequencyMinutes: 5,
-        latestPriceUsd: 0.24,
+        latestPriceUsd: 0.55,
         priceChange24hPct: -11.1,
-        history: this.generatePoints(0.24, 0.04, 7, 12),
+        history: this.generatePoints(0.55, 0.05, 7, 12, 0.34),
       },
+      {
+        provider: 'runpod',
+        itemType: 'gpu',
+        itemId: 'nvidia-rtx-5090',
+        displayName: 'NVIDIA RTX 5090 (RunPod Community Spot)',
+        updateCadence: 'Live spot auction rebalance (~2 min)',
+        estimatedUpdateFrequencyMinutes: 2,
+        latestPriceUsd: 0.69,
+        priceChange24hPct: -5.4,
+        history: this.generatePoints(0.69, 0.06, 7, 12, 0.48),
+      },
+
+      // L4 Serverless multi-provider comparison
       {
         provider: 'baseten',
         itemType: 'gpu',
         itemId: 'nvidia-l4',
-        displayName: 'NVIDIA L4 Serverless (Baseten Truss)',
+        displayName: 'NVIDIA L4 Serverless (Baseten Micro-metered)',
         updateCadence: 'Fixed tier published schedule (monthly cadence)',
         estimatedUpdateFrequencyMinutes: 1440,
         latestPriceUsd: 0.85,
         priceChange24hPct: 0.0,
-        history: this.generatePoints(0.85, 0.0, 7, 2),
+        history: this.generatePoints(0.85, 0.04, 7, 4, 0.50),
       },
+      {
+        provider: 'nebius',
+        itemType: 'gpu',
+        itemId: 'nvidia-l4',
+        displayName: 'NVIDIA L4 (Nebius Studio Preemptible)',
+        updateCadence: 'Dynamic Neocloud sync (~5 min)',
+        estimatedUpdateFrequencyMinutes: 5,
+        latestPriceUsd: 0.75,
+        priceChange24hPct: -1.5,
+        history: this.generatePoints(0.75, 0.03, 7, 4, 0.45),
+      },
+
+      // RTX 4090 multi-provider comparison
+      {
+        provider: 'vast_ai',
+        itemType: 'gpu',
+        itemId: 'nvidia-rtx-4090',
+        displayName: 'NVIDIA RTX 4090 (Vast.ai Unregulated Auction)',
+        updateCadence: 'Real-time spot auction (~1 min)',
+        estimatedUpdateFrequencyMinutes: 1,
+        latestPriceUsd: 0.45,
+        priceChange24hPct: -8.2,
+        history: this.generatePoints(0.45, 0.04, 7, 12, 0.28),
+      },
+      {
+        provider: 'runpod',
+        itemType: 'gpu',
+        itemId: 'nvidia-rtx-4090',
+        displayName: 'NVIDIA RTX 4090 (RunPod Secure / Community)',
+        updateCadence: 'Live spot auction (~2 min)',
+        estimatedUpdateFrequencyMinutes: 2,
+        latestPriceUsd: 0.59,
+        priceChange24hPct: -3.0,
+        history: this.generatePoints(0.59, 0.04, 7, 12, 0.39),
+      },
+      {
+        provider: 'hivenet',
+        itemType: 'gpu',
+        itemId: 'nvidia-rtx-4090',
+        displayName: 'NVIDIA RTX 4090 (Hivenet Elastic P2P Grid)',
+        updateCadence: 'Real-time P2P heartbeat (~1 min)',
+        estimatedUpdateFrequencyMinutes: 1,
+        latestPriceUsd: 0.40,
+        priceChange24hPct: -6.5,
+        history: this.generatePoints(0.40, 0.05, 7, 12, 0.25),
+      },
+
+      // DeepSeek V4.1 Flash multi-provider comparison
       {
         provider: 'jarvislabs',
         itemType: 'model',
@@ -577,9 +674,20 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
         displayName: 'DeepSeek V4.1 Flash (JarvisLabs Token Factory Input/1M)',
         updateCadence: 'Weekly model efficiency revision',
         estimatedUpdateFrequencyMinutes: 720,
-        latestPriceUsd: 0.07,
+        latestPriceUsd: 0.14,
         priceChange24hPct: -12.5,
-        history: this.generatePoints(0.07, 0.01, 7, 2),
+        history: this.generatePoints(0.14, 0.01, 7, 4, 0.07),
+      },
+      {
+        provider: 'nebius',
+        itemType: 'model',
+        itemId: 'deepseek-v4.1-flash',
+        displayName: 'DeepSeek V4.1 Flash (Nebius Studio MaaS)',
+        updateCadence: 'Daily Studio Token Factory rates',
+        estimatedUpdateFrequencyMinutes: 1440,
+        latestPriceUsd: 0.15,
+        priceChange24hPct: 0.0,
+        history: this.generatePoints(0.15, 0.01, 7, 4, 0.08),
       },
     ];
   }
@@ -588,7 +696,8 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
     basePrice: number,
     variance: number,
     days: number,
-    pointsPerDay: number
+    pointsPerDay: number,
+    baseSpotPrice?: number
   ): PricingHistoryPoint[] {
     const points: PricingHistoryPoint[] = [];
     const totalPoints = days * pointsPerDay;
@@ -598,13 +707,14 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
     for (let i = totalPoints; i >= 0; i--) {
       const time = new Date(nowMs - i * intervalMs).toISOString();
       const randomNoise = (Math.sin(i * 0.5) + Math.cos(i * 0.2)) * (variance / 2);
-      const price = Math.max(0.01, +(basePrice + randomNoise).toFixed(4));
-      const spot = Math.max(0.01, +(price * 0.65).toFixed(4));
+      const onDemand = Math.max(0.01, +(basePrice + randomNoise * 0.5).toFixed(4));
+      const targetSpot = baseSpotPrice ?? +(basePrice * 0.65);
+      const spot = Math.max(0.01, +(targetSpot + randomNoise).toFixed(4));
       points.push({
         recordedAt: time,
-        priceUsd: price,
+        priceUsd: onDemand,
         spotPriceUsd: spot,
-        availability: price > basePrice ? 'Medium' : 'High',
+        availability: spot < targetSpot ? 'High' : 'Medium',
       });
     }
     return points;

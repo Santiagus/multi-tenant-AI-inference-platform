@@ -230,6 +230,14 @@ export interface GpuPricingItem {
   isAvailable: boolean;
   commitment: string;
   recordedAt: string;
+  // HW performance benchmark & cost-efficiency
+  tokensPerSec?: number;
+  costPerMillionTokensUsd?: number;
+  tokensPerDollar?: number;
+  availabilitySourceUrl?: string;
+  availabilityCalculationDetails?: string;
+  riskTierCalculationDetails?: string;
+  riskTierDocUrl?: string;
 }
 
 export type ModelExecutionType = 'token_factory' | 'serverless_endpoint' | 'pay_per_call';
@@ -326,6 +334,14 @@ export interface ModelCloudOptionsResponse {
 
 export type PricingModalityBadge = 'on_demand' | 'spot' | 'serverless' | 'token_factory' | 'pay_per_call' | 'local';
 
+export interface SpotPolicyInfo {
+  noticeWindowMinutes: number; // e.g. 0, 2, 7 (or 0.5 for 30s)
+  noticeWindowLabel: string; // e.g. '2m grace', '0m instant', '30s SIGTERM'
+  pricingType: 'floating_bid' | 'fixed_discount' | 'dynamic_fixed' | 'guaranteed';
+  pricingTypeLabel: 'Floating Bid' | 'Fixed Discount' | 'Dynamic Fixed' | 'Guaranteed';
+  description: string;
+}
+
 export interface ProviderFleetStatus {
   provider: string;
   displayName: string;
@@ -340,6 +356,15 @@ export interface ProviderFleetStatus {
   creditType: 'prepaid_credits' | 'postpaid_invoice' | 'zero_commitment';
   interruptionRiskTier: string;
   interruptionNoticeWindow: string;
+  // Provider links & policies
+  websiteUrl?: string;
+  pricingUrl?: string;
+  spotPricingUrl?: string;
+  billingUrl?: string;
+  syncDocUrl?: string;
+  cadenceDocUrl?: string;
+  cadenceExplanation?: string;
+  spotPolicy?: SpotPolicyInfo;
 }
 
 export type ModelPurpose =

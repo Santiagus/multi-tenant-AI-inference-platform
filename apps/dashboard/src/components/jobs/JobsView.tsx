@@ -31,8 +31,12 @@ export const ALL_PLATFORM_PROVIDERS = [
   { id: 'baseten', name: 'Baseten' },
   { id: 'nebius', name: 'Nebius' },
   { id: 'jarvislabs', name: 'JarvisLabs' },
+  { id: 'coreweave', name: 'CoreWeave Forge' },
   { id: 'fal', name: 'fal.ai' },
   { id: 'runware', name: 'Runware' },
+  { id: 'hivenet', name: 'Hivenet' },
+  { id: 'wavespeed', name: 'WaveSpeed' },
+  { id: 'neocloudz', name: 'NeoCloudz' },
   { id: 'bedrock', name: 'AWS Bedrock' },
   { id: 'sagemaker', name: 'AWS SageMaker' },
 ];
@@ -41,9 +45,9 @@ export function getJobExecutionMode(j: JobItem): string {
   if (j.execution_mode) return j.execution_mode;
   if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') return 'local';
   if (j.provider === 'jarvislabs') return 'token_factory';
-  if (j.provider === 'baseten') return 'serverless';
+  if (j.provider === 'baseten' || j.provider === 'wavespeed') return 'serverless';
   if (j.provider === 'runware' || j.provider === 'fal') return 'pay_per_call';
-  if (j.provider === 'runpod' || j.provider === 'vast_ai') return 'spot';
+  if (j.provider === 'runpod' || j.provider === 'vast_ai' || j.provider === 'coreweave' || j.provider === 'hivenet') return 'spot';
   return 'on_demand';
 }
 
@@ -402,7 +406,11 @@ export function JobsView({
     return jobs.filter((job) => {
       if (statusFilter !== 'ALL') {
         if (statusFilter === 'IN_FLIGHT') {
-          if (!['QUEUED', 'PROCESSING', 'RETRYING', 'SUBMITTED'].includes(job.status)) {
+          if (!['PROCESSING', 'RETRYING'].includes(job.status)) {
+            return false;
+          }
+        } else if (statusFilter === 'QUEUED') {
+          if (!['QUEUED', 'SUBMITTED'].includes(job.status)) {
             return false;
           }
         } else if (job.status !== statusFilter) {
@@ -503,52 +511,52 @@ export function JobsView({
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* Top Stat Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+      {/* Top Stat Cards - 1-row layout for 1200x1920 portrait & single-row view */}
+      <div
+        className="jobs-status-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+          gap: '12px',
+        }}
+      >
         <StatCard
-          label="Total Jobs"
-          value={stats.total}
-          subtext="Tenant lifecycle volume"
-          accentColor="#6366f1"
-          onClick={() => {
-            setStatusFilter('ALL');
-            setModelFilter('ALL');
-          }}
+          label="Failed"
+          value={stats.failed}
+          accentColor="#ef4444"
+          active={statusFilter === 'FAILED'}
+          onClick={() => setStatusFilter(statusFilter === 'FAILED' ? 'ALL' : 'FAILED')}
         />
         <StatCard
           label="Queued"
           value={stats.queued}
-          subtext={`${stats.inFlight} total in flight`}
           accentColor="#f59e0b"
-          onClick={() => setStatusFilter('QUEUED')}
+          active={statusFilter === 'QUEUED'}
+          onClick={() => setStatusFilter(statusFilter === 'QUEUED' ? 'ALL' : 'QUEUED')}
         />
         <StatCard
-          label="In Flight / Active"
+          label="In Flight"
           value={stats.processing + stats.retrying}
-          subtext={`${stats.processing} processing · ${stats.retrying} retrying`}
-          accentColor="#818cf8"
-          onClick={() => setStatusFilter('IN_FLIGHT')}
+          accentColor="#38bdf8"
+          active={statusFilter === 'IN_FLIGHT'}
+          onClick={() => setStatusFilter(statusFilter === 'IN_FLIGHT' ? 'ALL' : 'IN_FLIGHT')}
         />
         <StatCard
           label="Succeeded"
           value={stats.succeeded}
-          subtext={`${stats.totalTokens.toLocaleString()} tokens inferred`}
           accentColor="#10b981"
-          onClick={() => setStatusFilter('SUCCEEDED')}
+          active={statusFilter === 'SUCCEEDED'}
+          onClick={() => setStatusFilter(statusFilter === 'SUCCEEDED' ? 'ALL' : 'SUCCEEDED')}
         />
         <StatCard
-          label="Failed"
-          value={stats.failed}
-          subtext={`Infra cost: $${stats.costUsd}`}
-          accentColor="#ef4444"
-          onClick={() => setStatusFilter('FAILED')}
-        />
-        <StatCard
-          label="Dead-Letter Queue"
-          value={stats.dlqCount}
-          subtext="Exhausted max retries"
-          accentColor="#ec4899"
-          onClick={() => setIsDlqModalOpen(true)}
+          label="Total"
+          value={stats.total}
+          accentColor="#6366f1"
+          active={statusFilter === 'ALL'}
+          onClick={() => {
+            setStatusFilter('ALL');
+            setModelFilter('ALL');
+          }}
         />
       </div>
 
@@ -984,12 +992,12 @@ export function JobsView({
             }}
           >
             <option value="ALL">All Statuses ({stats.total})</option>
-            <option value="IN_FLIGHT">In Flight &amp; Active ({stats.inFlight})</option>
+            <option value="FAILED">Failed ({stats.failed})</option>
             <option value="QUEUED">Queued ({stats.queued})</option>
+            <option value="IN_FLIGHT">In Flight ({stats.processing + stats.retrying})</option>
+            <option value="SUCCEEDED">Succeeded ({stats.succeeded})</option>
             <option value="PROCESSING">Processing ({stats.processing})</option>
             <option value="RETRYING">Retrying ({stats.retrying})</option>
-            <option value="SUCCEEDED">Succeeded ({stats.succeeded})</option>
-            <option value="FAILED">Failed ({stats.failed})</option>
             <option value="CANCELLED">Cancelled ({stats.cancelled})</option>
           </select>
 

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { getJobExecutionMode, getJobHardware, ALL_PLATFORM_PROVIDERS } from '../src/components/jobs/JobsView';
 import { DEFAULT_PROVIDER_FLEET } from '../src/components/finops/ProviderFleetBar';
 import { CATALOG_MODELS } from '../src/components/finops/ModelRecommendationStudio';
-import type { JobItem, PricingHistoryPoint } from '../src/types';
+import { getTradingSession } from '../src/components/finops/HistoricalPriceChart';
+import { getGpuPerformance } from '../src/components/finops/FinOpsPricingView';
+import type { JobItem, PricingHistoryPoint, GpuPricingItem } from '../src/types';
 
 describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
   it('detects execution modality correctly across all job profiles', () => {
@@ -77,8 +79,8 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     assert.match(getJobHardware({ ...baseJob, routing_preference: 'local/cpu' }), /CPU/);
   });
 
-  it('registers all 10 enterprise neocloud and on-prem providers', () => {
-    assert.equal(ALL_PLATFORM_PROVIDERS.length, 10);
+  it('registers all 14 enterprise neocloud and on-prem providers', () => {
+    assert.equal(ALL_PLATFORM_PROVIDERS.length, 14);
     const providerIds = ALL_PLATFORM_PROVIDERS.map((p) => p.id);
     assert.ok(providerIds.includes('local_pytorch'));
     assert.ok(providerIds.includes('runpod'));
@@ -86,8 +88,12 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     assert.ok(providerIds.includes('baseten'));
     assert.ok(providerIds.includes('nebius'));
     assert.ok(providerIds.includes('jarvislabs'));
+    assert.ok(providerIds.includes('coreweave'));
     assert.ok(providerIds.includes('fal'));
     assert.ok(providerIds.includes('runware'));
+    assert.ok(providerIds.includes('hivenet'));
+    assert.ok(providerIds.includes('wavespeed'));
+    assert.ok(providerIds.includes('neocloudz'));
     assert.ok(providerIds.includes('bedrock'));
     assert.ok(providerIds.includes('sagemaker'));
   });
@@ -95,23 +101,31 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
 
 describe('Provider Fleet & Real-Time Sync Telemetry', () => {
   it('contains expected sync cadences, pricing models, and credit quotas', () => {
-    assert.equal(DEFAULT_PROVIDER_FLEET.length, 10);
+    assert.equal(DEFAULT_PROVIDER_FLEET.length, 14);
 
     const runpod = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'runpod')!;
     assert.equal(runpod.updateCadenceCategory, 'realtime_auction');
     assert.ok(runpod.allowedPricingModels.includes('spot'));
     assert.ok(runpod.allowedPricingModels.includes('on_demand'));
     assert.ok(runpod.allowedPricingModels.includes('serverless'));
-    assert.equal(runpod.availableCreditsUsd, 142.5);
+    assert.equal(runpod.availableCreditsUsd, 15.0);
     assert.match(runpod.interruptionNoticeWindow, /2-min/);
+    assert.equal(runpod.spotPolicy?.noticeWindowMinutes, 2);
+    assert.equal(runpod.spotPolicy?.pricingType, 'floating_bid');
 
     const vast = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'vast_ai')!;
     assert.equal(vast.updateCadenceCategory, 'realtime_auction');
     assert.match(vast.interruptionNoticeWindow, /outbid/);
+    assert.equal(vast.spotPolicy?.noticeWindowMinutes, 0);
+    assert.equal(vast.spotPolicy?.pricingType, 'floating_bid');
 
     const baseten = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'baseten')!;
     assert.ok(baseten.allowedPricingModels.includes('serverless'));
     assert.equal(baseten.availableCreditsUsd, 250);
+
+    const coreweave = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'coreweave')!;
+    assert.equal(coreweave.spotPolicy?.noticeWindowMinutes, 2);
+    assert.equal(coreweave.spotPolicy?.pricingType, 'fixed_discount');
 
     const bedrock = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'bedrock')!;
     assert.equal(bedrock.creditType, 'postpaid_invoice');
@@ -164,6 +178,86 @@ describe('Model Purpose & Hardware Sizing Studio Logic', () => {
     const spotPrices = mockHistory.map((h) => h.spotPriceUsd!);
     const spotMin = Math.min(...spotPrices);
     assert.equal(spotMin, 1.69);
+  });
+
+  it('detects global trading sessions accurately based on UTC timestamp', () => {
+    // 04:00 UTC -> Asia
+    const asia = getTradingSession('2026-11-05T04:00:00Z');
+    assert.equal(asia.name, 'Asia');
+    assert.equal(asia.flag, '🇯🇵');
+
+    // 11:00 UTC -> Europe
+    const europe = getTradingSession('2026-11-05T11:00:00Z');
+    assert.equal(europe.name, 'Europe');
+    assert.equal(europe.flag, '🇪🇺');
+
+    // 18:00 UTC -> USA
+    const usa = getTradingSession('2026-11-05T18:00:00Z');
+    assert.equal(usa.name, 'USA');
+    assert.equal(usa.flag, '🇺🇸');
+
+    // 23:00 UTC -> OffPeak
+    const offPeak = getTradingSession('2026-11-05T23:00:00Z');
+    assert.equal(offPeak.name, 'OffPeak');
+    assert.equal(offPeak.flag, '🌙');
+  });
+
+  it('computes hardware throughput and cost-efficiency metrics accurately', () => {
+    const mockGpu: GpuPricingItem = {
+      id: 'g-1',
+      provider: 'runpod',
+      hardwareSkuId: 'nvidia-h100-sxm',
+      hardwareDisplayName: 'NVIDIA H100 SXM5 80GB',
+      vramGb: 80,
+      zone: 'us-east-1',
+      pricingModel: 'spot_bid',
+      rateMicrocents: 199000000,
+      billingUnit: 'hour',
+      normalizedHourlyMicrocents: 199000000,
+      normalizedHourlyUsd: 1.99,
+      obtainabilityScore: 0.85,
+      obtainabilityLabel: 'High',
+      interruptionRiskTier: '<5%',
+      isAvailable: true,
+      commitment: '$0 Pay-as-you-go',
+      recordedAt: new Date().toISOString(),
+    };
+
+    const perf = getGpuPerformance(mockGpu);
+    assert.equal(perf.tokensPerSec, 180);
+    // 180 tok/s * 3600 sec/hr = 648,000 tok/hr
+    // tokensPerDollar = 648,000 / 1.99 = 325,628
+    assert.ok(perf.tokensPerDollar > 320000);
+    // costPerMillion = (1.99 / 648,000) * 1,000,000 = $3.07
+    assert.ok(perf.costPerMillion > 3.0 && perf.costPerMillion < 3.2);
+
+    // Cheap consumer GPU high-efficiency validation (RTX 4090 spot at $0.34/hr, 85 tok/s)
+    const cheapGpu: GpuPricingItem = {
+      ...mockGpu,
+      hardwareSkuId: 'nvidia-rtx-4090',
+      normalizedHourlyUsd: 0.34,
+    };
+    const cheapPerf = getGpuPerformance(cheapGpu);
+    assert.equal(cheapPerf.tokensPerSec, 85);
+    // 85 * 3600 / 0.34 = 900,000 tokens per dollar
+    assert.equal(cheapPerf.tokensPerDollar, 900000);
+    assert.ok(cheapPerf.costPerMillion < 1.2);
+  });
+
+  it('validates all provider source links and spot preemption policies', () => {
+    for (const p of DEFAULT_PROVIDER_FLEET) {
+      assert.ok(p.websiteUrl, `Provider ${p.provider} must have websiteUrl`);
+      assert.ok(p.pricingUrl, `Provider ${p.provider} must have pricingUrl`);
+      assert.ok(p.billingUrl, `Provider ${p.provider} must have billingUrl`);
+      assert.ok(p.syncDocUrl, `Provider ${p.provider} must have syncDocUrl`);
+      assert.ok(p.cadenceExplanation, `Provider ${p.provider} must describe cadence explanation`);
+
+      if (p.allowedPricingModels.includes('spot')) {
+        assert.ok(p.spotPolicy, `Spot-supporting provider ${p.provider} must specify spotPolicy`);
+        assert.ok(p.spotPolicy!.noticeWindowLabel, `Provider ${p.provider} must have notice window label`);
+        assert.ok(['floating_bid', 'fixed_discount', 'dynamic_fixed', 'guaranteed'].includes(p.spotPolicy!.pricingType));
+      }
+    }
   });
 });
 

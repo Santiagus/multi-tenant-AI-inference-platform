@@ -13,6 +13,157 @@ import { ProviderFleetBar } from './ProviderFleetBar';
 import { HistoricalPriceChart } from './HistoricalPriceChart';
 import { ModelRecommendationStudio } from './ModelRecommendationStudio';
 
+export const HARDWARE_BENCHMARK_THROUGHPUT: Record<
+  string,
+  {
+    tokensPerSec: number;
+    architecture: string;
+    description: string;
+  }
+> = {
+  'nvidia-h100-sxm': {
+    tokensPerSec: 180,
+    architecture: 'Hopper Tensor Core',
+    description: '180 tok/s on Llama-3-8B FP16/FP8 Tensor Cores',
+  },
+  'nvidia-h200-sxm': {
+    tokensPerSec: 210,
+    architecture: 'Hopper Ultra HBM3e',
+    description: '210 tok/s with 141GB high-bandwidth memory',
+  },
+  'nvidia-a100-80gb': {
+    tokensPerSec: 95,
+    architecture: 'Ampere Tensor Core',
+    description: '95 tok/s enterprise standard model inference',
+  },
+  'nvidia-rtx-5090': {
+    tokensPerSec: 140,
+    architecture: 'Blackwell Architecture',
+    description: '140 tok/s next-gen consumer flagship compute',
+  },
+  'nvidia-rtx-4090': {
+    tokensPerSec: 85,
+    architecture: 'Ada Lovelace 24GB',
+    description: '85 tok/s cost-performance champion',
+  },
+  'nvidia-a6000-ada': {
+    tokensPerSec: 80,
+    architecture: 'Ada Lovelace 48GB',
+    description: '80 tok/s workstation-grade large context',
+  },
+  'nvidia-l4': {
+    tokensPerSec: 45,
+    architecture: 'Ada Lovelace Serverless',
+    description: '45 tok/s energy-efficient micro-metered serverless',
+  },
+  'nvidia-a10g': {
+    tokensPerSec: 40,
+    architecture: 'Ampere G5 Cloud',
+    description: '40 tok/s AWS G5 cloud baseline',
+  },
+  'nvidia-rtx-5070-ti': {
+    tokensPerSec: 38,
+    architecture: 'Blackwell Workstation',
+    description: '38 tok/s dedicated local zero-cloud workstation',
+  },
+  'aws-inferentia2': {
+    tokensPerSec: 110,
+    architecture: 'AWS NeuronCore-v2',
+    description: '110 tok/s cost-optimized AWS custom silicon',
+  },
+};
+
+export const PROVIDER_CONSOLE_LINKS: Record<
+  string,
+  {
+    capacityUrl: string;
+    spotPolicyUrl: string;
+  }
+> = {
+  runpod: {
+    capacityUrl: 'https://www.runpod.io/console/gpu-cloud',
+    spotPolicyUrl: 'https://docs.runpod.io/pods/pricing#spot-instances',
+  },
+  vast_ai: {
+    capacityUrl: 'https://cloud.vast.ai/create/',
+    spotPolicyUrl: 'https://vast.ai/docs/overview/pricing#interruptible-instances',
+  },
+  baseten: {
+    capacityUrl: 'https://app.baseten.co/',
+    spotPolicyUrl: 'https://docs.baseten.co/deploying-models/autoscaling',
+  },
+  nebius: {
+    capacityUrl: 'https://console.nebius.com/',
+    spotPolicyUrl: 'https://docs.nebius.com/compute/pricing#preemptible-vms',
+  },
+  jarvislabs: {
+    capacityUrl: 'https://jarvislabs.ai/dashboard/',
+    spotPolicyUrl: 'https://jarvislabs.ai/docs/faq/',
+  },
+  coreweave: {
+    capacityUrl: 'https://cloud.coreweave.com/',
+    spotPolicyUrl: 'https://docs.coreweave.com/coreweave-kubernetes-service-cks/interruptible-virtual-servers',
+  },
+  fal: {
+    capacityUrl: 'https://fal.ai/models',
+    spotPolicyUrl: 'https://fal.ai/pricing',
+  },
+  runware: {
+    capacityUrl: 'https://runware.ai/',
+    spotPolicyUrl: 'https://runware.ai/pricing',
+  },
+  hivenet: {
+    capacityUrl: 'https://app.hivenet.com/',
+    spotPolicyUrl: 'https://www.hivenet.com/technology',
+  },
+  wavespeed: {
+    capacityUrl: 'https://wavespeed.ai/dashboard',
+    spotPolicyUrl: 'https://wavespeed.ai/pricing',
+  },
+  neocloudz: {
+    capacityUrl: 'https://portal.neocloudz.com/',
+    spotPolicyUrl: 'https://neocloudz.com/pricing',
+  },
+  bedrock: {
+    capacityUrl: 'https://console.aws.amazon.com/bedrock/',
+    spotPolicyUrl: 'https://aws.amazon.com/bedrock/pricing/',
+  },
+  sagemaker: {
+    capacityUrl: 'https://console.aws.amazon.com/sagemaker/',
+    spotPolicyUrl: 'https://aws.amazon.com/ec2/spot/pricing/',
+  },
+  local_pytorch: {
+    capacityUrl: '#local-hardware',
+    spotPolicyUrl: '#local-hardware',
+  },
+};
+
+export function getGpuPerformance(item: GpuPricingItem) {
+  const bench = HARDWARE_BENCHMARK_THROUGHPUT[item.hardwareSkuId] || {
+    tokensPerSec: Math.max(25, Math.round(item.vramGb * 2.2)),
+    architecture: 'Tensor Core Compute',
+    description: `${Math.round(item.vramGb * 2.2)} tok/s baseline`,
+  };
+
+  const tokensPerSec = item.tokensPerSec || bench.tokensPerSec;
+  const costPerMillion =
+    tokensPerSec > 0
+      ? (item.normalizedHourlyUsd / (tokensPerSec * 3600)) * 1_000_000
+      : 999;
+  const tokensPerDollar =
+    item.normalizedHourlyUsd > 0
+      ? Math.round((tokensPerSec * 3600) / item.normalizedHourlyUsd)
+      : 0;
+
+  return {
+    tokensPerSec,
+    costPerMillion,
+    tokensPerDollar,
+    architecture: bench.architecture,
+    description: bench.description,
+  };
+}
+
 export function FinOpsPricingView() {
   const [activeSubTab, setActiveSubTab] = useState<'gpus' | 'recommendations' | 'vram_matrix' | 'models' | 'history'>('gpus');
   const [gpuPricing, setGpuPricing] = useState<GpuPricingItem[]>([]);
@@ -40,7 +191,11 @@ export function FinOpsPricingView() {
       setGpuSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setGpuSortKey(col);
-      setGpuSortDir(col === 'hardwareDisplayName' || col === 'provider' ? 'asc' : 'asc');
+      setGpuSortDir(
+        col === 'throughput' || col === 'costEfficiency' || col === 'obtainabilityScore'
+          ? 'desc'
+          : 'asc'
+      );
     }
   };
 
@@ -211,6 +366,8 @@ export function FinOpsPricingView() {
     return genericSort(filteredGpus, gpuSortKey, gpuSortDir, (item, key) => {
       if (key === 'vramPrice') return item.normalizedHourlyUsd / item.vramGb;
       if (key === 'hourlyPrice') return item.normalizedHourlyUsd;
+      if (key === 'throughput') return getGpuPerformance(item).tokensPerSec;
+      if (key === 'costEfficiency') return getGpuPerformance(item).tokensPerDollar;
       return (item as unknown as Record<string, unknown>)[key];
     });
   }, [filteredGpus, gpuSortKey, gpuSortDir]);
@@ -522,10 +679,17 @@ export function FinOpsPricingView() {
             <option value="runpod">RunPod</option>
             <option value="vast_ai">Vast.ai</option>
             <option value="baseten">Baseten</option>
-            <option value="nebius">Nebius</option>
+            <option value="nebius">Nebius AI Studio</option>
             <option value="jarvislabs">JarvisLabs</option>
+            <option value="coreweave">CoreWeave Forge</option>
             <option value="fal">fal.ai</option>
             <option value="runware">Runware</option>
+            <option value="hivenet">Hivenet</option>
+            <option value="wavespeed">WaveSpeed</option>
+            <option value="neocloudz">NeoCloudz</option>
+            <option value="bedrock">AWS Bedrock</option>
+            <option value="sagemaker">AWS SageMaker</option>
+            <option value="local_pytorch">Local PyTorch</option>
           </select>
         </div>
 
@@ -623,7 +787,7 @@ export function FinOpsPricingView() {
                     onSort={handleGpuSort}
                     style={{ padding: '14px 16px' }}
                   >
-                    VRAM (GB)
+                    VRAM
                   </SortableHeader>
                   <SortableHeader
                     column="hourlyPrice"
@@ -633,6 +797,24 @@ export function FinOpsPricingView() {
                     style={{ padding: '14px 16px' }}
                   >
                     Price ($/hr)
+                  </SortableHeader>
+                  <SortableHeader
+                    column="throughput"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px', color: '#c084fc' }}
+                  >
+                    HW Throughput (8B Ref)
+                  </SortableHeader>
+                  <SortableHeader
+                    column="costEfficiency"
+                    currentSortKey={gpuSortKey}
+                    currentSortDir={gpuSortDir}
+                    onSort={handleGpuSort}
+                    style={{ padding: '14px 16px', color: '#34d399' }}
+                  >
+                    Cost-Efficiency (Tokens / $)
                   </SortableHeader>
                   <SortableHeader
                     column="vramPrice"
@@ -659,7 +841,7 @@ export function FinOpsPricingView() {
                     onSort={handleGpuSort}
                     style={{ padding: '14px 16px' }}
                   >
-                    Availability
+                    Availability &amp; Source
                   </SortableHeader>
                   <SortableHeader
                     column="interruptionRiskTier"
@@ -668,7 +850,7 @@ export function FinOpsPricingView() {
                     onSort={handleGpuSort}
                     style={{ padding: '14px 16px' }}
                   >
-                    Risk Tier
+                    Risk Tier &amp; Policy
                   </SortableHeader>
                   <SortableHeader
                     column="commitment"
@@ -685,6 +867,17 @@ export function FinOpsPricingView() {
                 {sortedGpus.map((item, idx) => {
                   const vramRate = item.normalizedHourlyUsd / item.vramGb;
                   const isTopVramValue = vramRate <= 0.015;
+                  const perf = getGpuPerformance(item);
+                  const links = PROVIDER_CONSOLE_LINKS[item.provider.toLowerCase()] || {
+                    capacityUrl: '#',
+                    spotPolicyUrl: '#',
+                  };
+
+                  const isUltraValue = perf.tokensPerDollar >= 1_000_000;
+                  const isTopEfficiency = !isUltraValue && perf.tokensPerDollar >= 800_000;
+                  const isSweetSpot = !isUltraValue && !isTopEfficiency && perf.tokensPerDollar >= 500_000;
+                  const isMaxThroughput = perf.tokensPerSec >= 180;
+
                   return (
                     <tr
                       key={item.id}
@@ -694,24 +887,117 @@ export function FinOpsPricingView() {
                       }}
                     >
                       <td style={{ padding: '14px 16px', fontWeight: 600, color: '#f8fafc' }}>
-                        <span
+                        <a
+                          href={links.capacityUrl}
+                          target={links.capacityUrl.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          title={`View ${item.provider.toUpperCase()} GPU console`}
                           style={{
                             backgroundColor: '#3b82f620',
                             color: '#60a5fa',
                             padding: '3px 8px',
                             borderRadius: '4px',
                             fontSize: '12px',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
                           }}
                         >
                           {item.provider.toUpperCase()}
-                        </span>
+                          {links.capacityUrl.startsWith('http') && <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>}
+                        </a>
                       </td>
                       <td style={{ padding: '14px 16px', color: '#f1f5f9', fontWeight: 500 }}>
-                        {item.hardwareDisplayName}
+                        <div style={{ fontWeight: 600 }}>{item.hardwareDisplayName}</div>
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>{perf.architecture}</div>
                       </td>
                       <td style={{ padding: '14px 16px', color: '#94a3b8' }}>{item.vramGb} GB</td>
                       <td style={{ padding: '14px 16px', color: '#10b981', fontWeight: 700, fontSize: '14px' }}>
                         ${item.normalizedHourlyUsd.toFixed(3)}
+                      </td>
+                      {/* HW Performance in Tokens/sec */}
+                      <td style={{ padding: '14px 16px' }}>
+                        <div
+                          title={perf.description}
+                          style={{ cursor: 'help' }}
+                        >
+                          <div style={{ color: '#c084fc', fontWeight: 700, fontSize: '13px' }}>
+                            {perf.tokensPerSec} tok/s
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                            FP16 / FP8 Tensor
+                          </div>
+                        </div>
+                      </td>
+                      {/* Cost-Efficiency: Tokens per Dollar & $/1M tokens */}
+                      <td style={{ padding: '14px 16px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ color: '#34d399', fontWeight: 700, fontSize: '13px' }}>
+                              {(perf.tokensPerDollar / 1000).toFixed(0)}K tok/$
+                            </span>
+                            {isUltraValue && (
+                              <span
+                                style={{
+                                  backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                                  color: '#34d399',
+                                  fontSize: '9px',
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                🚀 ULTRA VALUE
+                              </span>
+                            )}
+                            {isTopEfficiency && (
+                              <span
+                                style={{
+                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                                  color: '#10b981',
+                                  fontSize: '9px',
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                🏆 TOP EFFICIENCY
+                              </span>
+                            )}
+                            {isSweetSpot && (
+                              <span
+                                style={{
+                                  backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                                  color: '#38bdf8',
+                                  fontSize: '9px',
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                ⚡ SWEET SPOT
+                              </span>
+                            )}
+                            {isMaxThroughput && !isUltraValue && !isTopEfficiency && (
+                              <span
+                                style={{
+                                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                  color: '#f87171',
+                                  fontSize: '9px',
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                🔥 MAX SPEED
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                            ${perf.costPerMillion.toFixed(2)} / 1M tokens
+                          </div>
+                        </div>
                       </td>
                       <td style={{ padding: '14px 16px', color: '#06b6d4', fontWeight: 600 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -748,8 +1034,13 @@ export function FinOpsPricingView() {
                           {item.pricingModel.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
+                      {/* Availability Score with Tooltip and Capacity Link */}
                       <td style={{ padding: '14px 16px' }}>
-                        <span
+                        <a
+                          href={links.capacityUrl}
+                          target={links.capacityUrl.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          title={`Availability Calculation: Obtainability Score = (Available Instances / Total Capacity Pool) × (1 - Queue Saturation). ${(item.obtainabilityScore * 100).toFixed(0)}% instant placement probability in ${item.zone}. Click to inspect live capacity.`}
                           style={{
                             backgroundColor:
                               item.obtainabilityLabel === 'High'
@@ -767,13 +1058,37 @@ export function FinOpsPricingView() {
                             borderRadius: '4px',
                             fontSize: '12px',
                             fontWeight: 600,
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            cursor: 'pointer',
                           }}
                         >
                           {item.obtainabilityLabel} ({(item.obtainabilityScore * 100).toFixed(0)}%)
-                        </span>
+                          <span style={{ fontSize: '9px', opacity: 0.8 }}>↗</span>
+                        </a>
                       </td>
-                      <td style={{ padding: '14px 16px', color: '#94a3b8', fontSize: '12px' }}>
-                        {item.interruptionRiskTier}
+                      {/* Risk Tier with Tooltip and Spot Policy Link */}
+                      <td style={{ padding: '14px 16px', fontSize: '12px' }}>
+                        <a
+                          href={links.spotPolicyUrl}
+                          target={links.spotPolicyUrl.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          title={`Interruption Risk Profile: ${item.interruptionRiskTier} based on 30-day preemption frequency. Click to inspect provider spot eviction policy & notice window.`}
+                          style={{
+                            color: item.interruptionRiskTier === 'guaranteed' ? '#38bdf8' : '#f59e0b',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            borderBottom: '1px dotted currentColor',
+                          }}
+                        >
+                          {item.interruptionRiskTier}
+                          <span style={{ fontSize: '9px', opacity: 0.8 }}>↗</span>
+                        </a>
                       </td>
                       <td style={{ padding: '14px 16px', color: '#64748b', fontSize: '12px' }}>
                         {item.commitment}
