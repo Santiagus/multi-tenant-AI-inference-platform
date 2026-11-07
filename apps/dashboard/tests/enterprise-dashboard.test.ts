@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getJobExecutionMode, getJobHardware, ALL_PLATFORM_PROVIDERS } from '../src/components/jobs/JobsView';
+import {
+  getJobExecutionMode,
+  getJobHardware,
+  formatHardwareName,
+  formatModelName,
+  formatTimeAgo,
+  getProviderBadgeLabel,
+  ALL_PLATFORM_PROVIDERS,
+} from '../src/components/jobs/JobsView';
 import { DEFAULT_PROVIDER_FLEET } from '../src/components/finops/ProviderFleetBar';
 import { CATALOG_MODELS } from '../src/components/finops/ModelRecommendationStudio';
 import { getTradingSession } from '../src/components/finops/HistoricalPriceChart';
@@ -77,6 +85,86 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
 
     // CPU Fallback
     assert.match(getJobHardware({ ...baseJob, routing_preference: 'local/cpu' }), /CPU/);
+  });
+
+  it('formats hardware names into compact representations without redundant descriptions', () => {
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5070 Ti (16GB)'), 'RTX 5070 Ti');
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 4090 (24GB)'), 'RTX 4090');
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5090 Blackwell (32GB)'), 'RTX 5090 Blackwell');
+    assert.equal(formatHardwareName('NVIDIA H100 SXM5 (80GB)'), 'H100 SXM5');
+    assert.equal(formatHardwareName('NVIDIA H200 SXM (141GB HBM3e)'), 'H200 SXM');
+    assert.equal(formatHardwareName('NVIDIA L4 Tensor Core (24GB)'), 'L4 Tensor Core');
+    assert.equal(formatHardwareName('CPU Xeon/EPYC Fallback'), 'CPU Fallback');
+  });
+
+  it('formats model names by removing company/creator namespace', () => {
+    assert.equal(formatModelName('meta-llama/Llama-3-8B-Instruct'), 'Llama-3-8B-Instruct');
+    assert.equal(formatModelName('deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'), 'DeepSeek-R1-Distill-Qwen-14B');
+    assert.equal(formatModelName('black-forest-labs/FLUX.1-schnell'), 'FLUX.1-schnell');
+    assert.equal(formatModelName('anthropic.claude-3-sonnet-20240229-v1:0'), 'claude-3-sonnet-20240229-v1:0');
+    assert.equal(formatModelName('simple-model'), 'simple-model');
+  });
+
+  it('formats relative elapsed time since job submission cleanly', () => {
+    const now = Date.now();
+    assert.equal(formatTimeAgo(new Date(now - 2000).toISOString()), 'just now');
+    assert.equal(formatTimeAgo(new Date(now - 35000).toISOString()), '35s ago');
+    assert.equal(formatTimeAgo(new Date(now - 120000).toISOString()), '2m ago');
+    assert.equal(formatTimeAgo(new Date(now - 7200000).toISOString()), '2h ago');
+    assert.equal(formatTimeAgo(new Date(now - 172800000).toISOString()), '2d ago');
+  });
+
+  it('resolves AUTO provider badges dynamically indicating target picked', () => {
+    const baseJob: JobItem = {
+      job_id: 'job-12345678-abcd',
+      tenant_id: 't-1',
+      status: 'SUCCEEDED',
+      model_id: 'meta-llama/Llama-3-8B-Instruct',
+      correlation_id: null,
+      trace_id: null,
+      traceparent: null,
+      routing_preference: 'auto',
+      priority: 5,
+      provider: 'local_pytorch',
+      retry_count: 0,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      duration_ms: 120,
+    };
+
+    // Auto local GPU
+    const gpuAuto = getProviderBadgeLabel(baseJob);
+    assert.equal(gpuAuto.isAuto, true);
+    assert.equal(gpuAuto.label, 'AUTO (local/GPU)');
+
+    // Auto local CPU with execution engine
+    const cpuAuto = getProviderBadgeLabel({
+      ...baseJob,
+      routing_preference: 'auto',
+      provider: 'local_cpu_worker',
+      result: { metadata: { engine_executed: 'torchscript' } },
+    });
+    assert.equal(cpuAuto.isAuto, true);
+    assert.equal(cpuAuto.label, 'AUTO (local/CPU/torchscript)');
+
+    // Auto routed to RunPod
+    const runpodAuto = getProviderBadgeLabel({
+      ...baseJob,
+      routing_preference: 'auto',
+      provider: 'runpod',
+    });
+    assert.equal(runpodAuto.isAuto, true);
+    assert.equal(runpodAuto.label, 'AUTO (runpod)');
+
+    // Explicit provider routing (non-AUTO)
+    const explicitLocal = getProviderBadgeLabel({
+      ...baseJob,
+      routing_preference: 'local/gpu',
+      provider: 'local_pytorch',
+    });
+    assert.equal(explicitLocal.isAuto, false);
+    assert.equal(explicitLocal.label, 'LOCAL_PYTORCH');
   });
 
   it('registers all 14 enterprise neocloud and on-prem providers', () => {

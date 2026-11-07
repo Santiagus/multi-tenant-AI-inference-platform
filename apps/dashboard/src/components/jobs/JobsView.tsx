@@ -51,43 +51,107 @@ export function getJobExecutionMode(j: JobItem): string {
   return 'on_demand';
 }
 
-export function getJobHardware(j: JobItem): string {
-  if ((j.result as any)?.hardware) return (j.result as any).hardware;
-  if ((j.result as any)?.device) return (j.result as any).device;
-  if (j.hardware) return j.hardware;
+export function formatHardwareName(hw: string): string {
+  if (!hw) return '';
+  return hw
+    .replace(/^NVIDIA\s+(GeForce\s+)?/i, '')
+    .replace(/\s*\(\d+GB[^\)]*\)/gi, '')
+    .replace(/Token Factory MaaS.*/i, 'Token Factory')
+    .replace(/Distributed Tensor Core Pipeline.*/i, 'Tensor Core Pipeline')
+    .replace(/AWS Bedrock Managed Neural Cluster/i, 'AWS Bedrock')
+    .replace(/AWS Inferentia2 \/ G5 Tensor Cluster/i, 'Inferentia2 / G5')
+    .replace(/CPU Xeon\/EPYC Fallback/i, 'CPU Fallback')
+    .trim();
+}
 
-  if (j.routing_preference.includes('cpu')) return 'CPU Xeon/EPYC Fallback';
-  if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') {
-    return 'NVIDIA GeForce RTX 5070 Ti (16GB)';
+export function formatModelName(modelId: string): string {
+  if (!modelId) return '';
+  const afterSlash = modelId.split('/').pop() || modelId;
+  return afterSlash.replace(/^(anthropic|meta|amazon|mistral)\./i, '');
+}
+
+export function formatTimeAgo(dateString: string): string {
+  const diffMs = Date.now() - new Date(dateString).getTime();
+  if (isNaN(diffMs)) return '—';
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+export function getProviderBadgeLabel(j: JobItem): { label: string; isAuto: boolean } {
+  const isAuto = !j.provider || j.routing_preference?.toLowerCase() === 'auto';
+  if (!isAuto && j.provider) {
+    return { label: j.provider.toUpperCase(), isAuto: false };
   }
-  if (j.provider === 'runpod') {
-    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek')) {
-      return 'NVIDIA H100 SXM5 (80GB)';
+
+  const prov = j.provider;
+  const metadata = ((j.result as any)?.metadata || (j.result as any) || {}) as Record<string, unknown>;
+  const engine = (metadata.engine_executed || metadata.engine || 'torchscript') as string;
+  const hw = getJobHardware(j);
+  const isCpu =
+    j.routing_preference.includes('cpu') ||
+    prov === 'local_cpu_worker' ||
+    metadata.device === 'cpu' ||
+    hw.toLowerCase().includes('cpu');
+
+  if (!prov && (j.status === 'QUEUED' || j.status === 'SUBMITTED')) {
+    if (j.model_id.includes('claude') || j.model_id.startsWith('anthropic.')) {
+      return { label: 'AUTO (bedrock)', isAuto: true };
     }
-    return 'NVIDIA GeForce RTX 4090 (24GB)';
+    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek')) {
+      return { label: 'AUTO (runpod)', isAuto: true };
+    }
+    return { label: isCpu ? `AUTO (local/CPU/${engine})` : 'AUTO (local/GPU)', isAuto: true };
   }
-  if (j.provider === 'vast_ai') {
-    return 'NVIDIA GeForce RTX 5090 Blackwell (32GB)';
+
+  if (prov === 'local_pytorch' || prov === 'local_cpu_worker' || prov === 'local' || !prov) {
+    if (isCpu) {
+      return { label: `AUTO (local/CPU/${engine})`, isAuto: true };
+    }
+    return { label: 'AUTO (local/GPU)', isAuto: true };
   }
-  if (j.provider === 'baseten') {
-    return 'NVIDIA L4 Tensor Core (24GB)';
+
+  return { label: `AUTO (${prov})`, isAuto: true };
+}
+
+export function getJobHardware(j: JobItem): string {
+  let hw = '';
+  if ((j.result as any)?.hardware) hw = (j.result as any).hardware;
+  else if ((j.result as any)?.device) hw = (j.result as any).device;
+  else if (j.hardware) hw = j.hardware;
+  else if (j.routing_preference.includes('cpu')) hw = 'CPU Fallback';
+  else if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') {
+    hw = 'RTX 5070 Ti';
+  } else if (j.provider === 'runpod') {
+    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek')) {
+      hw = 'H100 SXM5';
+    } else {
+      hw = 'RTX 4090';
+    }
+  } else if (j.provider === 'vast_ai') {
+    hw = 'RTX 5090 Blackwell';
+  } else if (j.provider === 'baseten') {
+    hw = 'L4 Tensor Core';
+  } else if (j.provider === 'nebius') {
+    hw = 'H200 SXM';
+  } else if (j.provider === 'jarvislabs') {
+    hw = 'Token Factory';
+  } else if (j.provider === 'fal' || j.provider === 'runware') {
+    hw = 'Tensor Core Pipeline';
+  } else if (j.provider === 'bedrock') {
+    hw = 'AWS Bedrock';
+  } else if (j.provider === 'sagemaker') {
+    hw = 'Inferentia2 / G5';
+  } else {
+    hw = 'H100 SXM5';
   }
-  if (j.provider === 'nebius') {
-    return 'NVIDIA H200 SXM (141GB HBM3e)';
-  }
-  if (j.provider === 'jarvislabs') {
-    return 'Token Factory MaaS (Serverless Cluster)';
-  }
-  if (j.provider === 'fal' || j.provider === 'runware') {
-    return 'Distributed Tensor Core Pipeline (Media Engine)';
-  }
-  if (j.provider === 'bedrock') {
-    return 'AWS Bedrock Managed Neural Cluster';
-  }
-  if (j.provider === 'sagemaker') {
-    return 'AWS Inferentia2 / G5 Tensor Cluster';
-  }
-  return 'NVIDIA H100 SXM5 (80GB)';
+  return formatHardwareName(hw);
 }
 
 export function JobsView({
@@ -111,6 +175,20 @@ export function JobsView({
   const [modeFilter, setModeFilter] = useState<string>('ALL');
   const [breakdownTab, setBreakdownTab] = useState<'model' | 'tenant' | 'provider' | 'gpu'>('model');
   const [showModelStats, setShowModelStats] = useState<boolean>(true);
+  const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
+
+  const toggleExpandJobId = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // Global & Lifecycle Stats
   const stats = useMemo(() => {
@@ -1176,7 +1254,7 @@ export function JobsView({
         }}
       >
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
             <thead>
               <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
                 <SortableHeader
@@ -1184,7 +1262,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Status
                 </SortableHeader>
@@ -1193,7 +1271,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Job ID
                 </SortableHeader>
@@ -1202,7 +1280,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Model
                 </SortableHeader>
@@ -1211,7 +1289,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Provider &amp; Hardware
                 </SortableHeader>
@@ -1220,7 +1298,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Mode
                 </SortableHeader>
@@ -1229,7 +1307,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Progress
                 </SortableHeader>
@@ -1238,16 +1316,16 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
-                  Latency
+                  Duration
                 </SortableHeader>
                 <SortableHeader
                   column="cost"
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Tokens &amp; Cost
                 </SortableHeader>
@@ -1256,23 +1334,22 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '14px 16px' }}
+                  style={{ padding: '10px 10px' }}
                 >
                   Submitted
                 </SortableHeader>
-                <th style={{ padding: '14px 16px', fontWeight: 600, textAlign: 'right' }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && jobs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     Loading inference jobs...
                   </td>
                 </tr>
               ) : sortedJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     No inference jobs match the current filters. Click "+ Submit Job" to enqueue one.
                   </td>
                 </tr>
@@ -1285,6 +1362,8 @@ export function JobsView({
                   const progressPct = job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0);
                   const mode = getJobExecutionMode(job);
                   const hardware = getJobHardware(job);
+                  const { label: providerBadge, isAuto } = getProviderBadgeLabel(job);
+                  const isIdExpanded = expandedJobIds.has(job.job_id);
 
                   return (
                     <tr
@@ -1298,41 +1377,66 @@ export function JobsView({
                       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#1e293b')}
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
-                      <td style={{ padding: '14px 16px' }}>
+                      <td style={{ padding: '10px 10px' }}>
                         <StatusBadge status={job.status} size="sm" />
                       </td>
-                      <td style={{ padding: '14px 16px', fontFamily: 'monospace', color: '#818cf8', fontSize: '12px' }}>
-                        {job.job_id.slice(0, 8)}...
+                      <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontSize: '12px' }}>
+                        <button
+                          type="button"
+                          onClick={(e) => toggleExpandJobId(job.job_id, e)}
+                          title={isIdExpanded ? 'Click to collapse' : 'Click to view full ID'}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            padding: 0,
+                            margin: 0,
+                            fontFamily: 'inherit',
+                            fontSize: 'inherit',
+                            color: '#818cf8',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            textDecoration: 'underline',
+                            textDecorationStyle: 'dotted',
+                            textUnderlineOffset: '2px',
+                          }}
+                        >
+                          {isIdExpanded ? job.job_id : job.job_id.slice(0, 8)}
+                        </button>
                       </td>
-                      <td style={{ padding: '14px 16px', fontWeight: 600, color: '#f8fafc' }}>
-                        {job.model_id}
+                      <td
+                        style={{ padding: '10px 10px', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap' }}
+                        title={job.model_id}
+                      >
+                        {formatModelName(job.model_id)}
                       </td>
-                      <td style={{ padding: '14px 16px' }}>
+                      <td style={{ padding: '10px 10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span
                             style={{
-                              fontSize: '12px',
-                              padding: '2px 8px',
-                              borderRadius: '5px',
-                              backgroundColor: job.provider ? 'rgba(56, 189, 248, 0.1)' : 'rgba(100, 116, 139, 0.1)',
-                              color: job.provider ? '#38bdf8' : '#64748b',
+                              fontSize: '11px',
+                              padding: '2px 7px',
+                              borderRadius: '4px',
+                              backgroundColor: isAuto ? 'rgba(99, 102, 241, 0.15)' : 'rgba(56, 189, 248, 0.1)',
+                              color: isAuto ? '#818cf8' : '#38bdf8',
                               fontWeight: 700,
+                              whiteSpace: 'nowrap',
                             }}
                           >
-                            {job.provider ? job.provider.toUpperCase() : 'AUTO'}
+                            {providerBadge}
                           </span>
                         </div>
-                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px' }}>
+                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px', whiteSpace: 'nowrap' }}>
                           {hardware}
                         </div>
                       </td>
-                      <td style={{ padding: '14px 16px' }}>
+                      <td style={{ padding: '10px 10px' }}>
                         <span
                           style={{
                             fontSize: '11px',
                             padding: '2px 7px',
                             borderRadius: '4px',
                             fontWeight: 700,
+                            whiteSpace: 'nowrap',
                             backgroundColor:
                               mode === 'spot'
                                 ? 'rgba(16, 185, 129, 0.15)'
@@ -1358,9 +1462,9 @@ export function JobsView({
                           {mode.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
-                      <td style={{ padding: '14px 16px', minWidth: '110px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ flex: 1, height: '6px', backgroundColor: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
+                      <td style={{ padding: '10px 10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{ width: '40px', height: '5px', backgroundColor: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
                             <div
                               style={{
                                 width: `${progressPct}%`,
@@ -1369,44 +1473,28 @@ export function JobsView({
                               }}
                             />
                           </div>
-                          <span style={{ fontSize: '11px', color: '#94a3b8', width: '28px' }}>{progressPct}%</span>
+                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{progressPct}%</span>
                         </div>
                       </td>
-                      <td style={{ padding: '14px 16px', color: '#e2e8f0', fontSize: '12px' }}>
+                      <td style={{ padding: '10px 10px', color: '#e2e8f0', fontSize: '12px', whiteSpace: 'nowrap' }}>
                         {job.duration_ms !== null ? `${job.duration_ms} ms` : '—'}
                       </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px' }}>
+                      <td style={{ padding: '10px 10px', fontSize: '12px' }}>
                         {totalTok > 0 ? (
-                          <div>
-                            <span style={{ color: '#f8fafc', fontWeight: 600 }}>{totalTok} tok</span>
-                            <span style={{ color: '#94a3b8', marginLeft: '6px' }}>(${costUsd})</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                            <span style={{ color: '#f8fafc', fontWeight: 600 }}>{totalTok.toLocaleString()} tok</span>
+                            <span style={{ color: '#94a3b8', fontSize: '11px' }}>(${costUsd})</span>
                           </div>
                         ) : (
                           <span style={{ color: '#64748b' }}>—</span>
                         )}
                       </td>
-                      <td style={{ padding: '14px 16px', color: '#94a3b8', fontSize: '12px' }}>
-                        {new Date(job.created_at).toLocaleTimeString()}
-                      </td>
-                      <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedJob(job);
-                          }}
-                          style={{
-                            backgroundColor: '#334155',
-                            color: '#f8fafc',
-                            border: 'none',
-                            padding: '4px 10px',
-                            borderRadius: '6px',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Inspect ↗
-                        </button>
+                      <td
+                        style={{ padding: '10px 10px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                        title={new Date(job.created_at).toLocaleString()}
+                      >
+                        <div style={{ color: '#e2e8f0', fontWeight: 500 }}>{formatTimeAgo(job.created_at)}</div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>{new Date(job.created_at).toLocaleTimeString()}</div>
                       </td>
                     </tr>
                   );

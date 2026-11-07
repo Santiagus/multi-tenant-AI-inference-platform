@@ -325,6 +325,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
                     cost_microcents: job.costMicrocents ?? 0,
                   }
                 : undefined,
+            result: job.outputPayload ?? undefined,
             error:
               job.errorCode || job.errorMessage
                 ? {
