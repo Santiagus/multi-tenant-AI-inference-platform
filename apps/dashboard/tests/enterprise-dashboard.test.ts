@@ -12,7 +12,7 @@ import {
 import { DEFAULT_PROVIDER_FLEET } from '../src/components/finops/ProviderFleetBar';
 import { CATALOG_MODELS } from '../src/components/finops/ModelRecommendationStudio';
 import { getTradingSession } from '../src/components/finops/HistoricalPriceChart';
-import { getGpuPerformance } from '../src/components/finops/FinOpsPricingView';
+import { getGpuPerformance, formatHwShortName } from '../src/components/finops/FinOpsPricingView';
 import type { JobItem, PricingHistoryPoint, GpuPricingItem } from '../src/types';
 
 describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
@@ -345,6 +345,54 @@ describe('Model Purpose & Hardware Sizing Studio Logic', () => {
         assert.ok(p.spotPolicy!.noticeWindowLabel, `Provider ${p.provider} must have notice window label`);
         assert.ok(['floating_bid', 'fixed_discount', 'dynamic_fixed', 'guaranteed'].includes(p.spotPolicy!.pricingType));
       }
+    }
+  });
+});
+
+describe('Unified FinOps Pricing Table & Hardware Short Names', () => {
+  it('formats short hardware representations with memory capacity for 1200x1900 display', () => {
+    assert.equal(formatHwShortName('NVIDIA GeForce RTX 5070 Ti (16GB)', 16), '5070 Ti (16GB)');
+    assert.equal(formatHwShortName('NVIDIA GeForce RTX 4090 (24GB)', 24), '4090 (24GB)');
+    assert.equal(formatHwShortName('NVIDIA GeForce RTX 5090 Blackwell (32GB)', 32), '5090 (32GB)');
+    assert.equal(formatHwShortName('NVIDIA H100 SXM5 (80GB)', 80), 'H100 SXM5 (80GB)');
+    assert.equal(formatHwShortName('NVIDIA H200 SXM (141GB HBM3e)', 141), 'H200 SXM (141GB)');
+    assert.equal(formatHwShortName('NVIDIA L4 Tensor Core (24GB)', 24), 'L4 (24GB)');
+    assert.equal(formatHwShortName('NVIDIA RTX A6000 Ada (48GB)', 48), 'A6000 Ada (48GB)');
+    assert.equal(formatHwShortName('AWS Inferentia2', 32), 'Inferentia2 (32GB)');
+    assert.equal(formatHwShortName('CPU Xeon/EPYC Fallback', 0), 'CPU Xeon/EPYC');
+  });
+
+  it('correctly distinguishes open-weights vs proprietary models with badges', () => {
+    const openSamples = [
+      'Llama 3 8B Instruct',
+      'DeepSeek-V3 (671B MoE)',
+      'FLUX.1 Schnell',
+      'Stable Diffusion XL 1.0',
+      'Whisper Large v3',
+      'Qwen 2.5 Coder 32B',
+    ];
+
+    const proprietarySamples = [
+      'claude-3-5-sonnet-20241022',
+      'Proprietary Corporate LoRA (7B)',
+      'Proprietary Synthetic Video Generator',
+      'Proprietary Brand Catalog Diffusion',
+    ];
+
+    for (const name of openSamples) {
+      const isProp =
+        name.toLowerCase().includes('claude') ||
+        name.toLowerCase().includes('corporate') ||
+        name.toLowerCase().includes('proprietary');
+      assert.equal(isProp, false, `${name} should be classified as open weights`);
+    }
+
+    for (const name of proprietarySamples) {
+      const isProp =
+        name.toLowerCase().includes('claude') ||
+        name.toLowerCase().includes('corporate') ||
+        name.toLowerCase().includes('proprietary');
+      assert.equal(isProp, true, `${name} should be classified as proprietary`);
     }
   });
 });

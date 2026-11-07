@@ -421,6 +421,7 @@ export function ProviderFleetBar({
   onRefreshSync,
   isSyncing = false,
 }: ProviderFleetBarProps) {
+  const [isTableVisible, setIsTableVisible] = useState(false);
   const [selectedProviderDetail, setSelectedProviderDetail] = useState<ProviderFleetStatus | null>(null);
 
   // Merge dynamic sync audits with baseline providers
@@ -449,8 +450,8 @@ export function ProviderFleetBar({
         backgroundColor: '#0f172a',
         borderRadius: '12px',
         border: '1px solid #1e293b',
-        padding: '18px 20px',
-        marginBottom: '24px',
+        padding: '14px 18px',
+        marginBottom: '20px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
       }}
     >
@@ -462,9 +463,8 @@ export function ProviderFleetBar({
           alignItems: 'center',
           flexWrap: 'wrap',
           gap: '12px',
-          marginBottom: '16px',
-          paddingBottom: '12px',
-          borderBottom: '1px solid #1e293b',
+          paddingBottom: isTableVisible ? '12px' : '0',
+          borderBottom: isTableVisible ? '1px solid #1e293b' : 'none',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -478,52 +478,54 @@ export function ProviderFleetBar({
             }}
           />
           <div>
-            <span style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>
-              Multi-Cloud Provider Fleet &amp; Real-Time Sync Status
-            </span>
-            <span
-              style={{
-                marginLeft: '10px',
-                fontSize: '12px',
-                color: '#94a3b8',
-              }}
-            >
-              {providers.length} Managed Inference Engines Active
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>
+                Multi-Cloud Provider Fleet &amp; Real-Time Sync Status
+              </span>
+              <span
+                style={{
+                  fontSize: '12px',
+                  color: '#94a3b8',
+                }}
+              >
+                ({providers.length} Managed Inference Engines Active)
+              </span>
+            </div>
             {/* Connected Observability Exporter Badge */}
-            <a
-              href="https://wandb.ai/"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Weights & Biases (Weave) is configured via WANDB_API_KEY in .env as the live OpenTelemetry trace and prompt evaluation sink."
-              style={{
-                marginLeft: '12px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                backgroundColor: 'rgba(245, 158, 11, 0.12)',
-                color: '#fbbf24',
-                border: '1px solid rgba(245, 158, 11, 0.3)',
-                borderRadius: '4px',
-                padding: '2px 8px',
-                fontSize: '11px',
-                fontWeight: 600,
-                textDecoration: 'none',
-              }}
-            >
-              📊 W&amp;B Weave Tracing ↗
-            </a>
+            <div style={{ marginTop: '3px' }}>
+              <a
+                href="https://wandb.ai/"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Weights & Biases (Weave) is configured via WANDB_API_KEY in .env as the live OpenTelemetry trace and prompt evaluation sink."
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                  color: '#fbbf24',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  borderRadius: '4px',
+                  padding: '1px 6px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                }}
+              >
+                📊 W&amp;B Weave Tracing ↗
+              </a>
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>
+            <div style={{ fontSize: '10px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>
               Neocloud Prepaid Pool
             </div>
-            <div style={{ fontSize: '14px', fontWeight: 700, color: '#34d399' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#34d399' }}>
               ${totalPrepaidCredits.toFixed(2)}{' '}
-              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 400 }}>+ AWS Postpaid</span>
+              <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 400 }}>+ AWS Postpaid</span>
             </div>
           </div>
 
@@ -531,302 +533,330 @@ export function ProviderFleetBar({
             <button
               onClick={onRefreshSync}
               disabled={isSyncing}
+              title="Trigger live pricing synchronization with all 14 neocloud catalogs"
               style={{
                 backgroundColor: '#1e293b',
                 color: '#38bdf8',
                 border: '1px solid #0284c7',
-                borderRadius: '8px',
-                padding: '6px 12px',
+                borderRadius: '6px',
+                padding: '6px 10px',
                 fontSize: '12px',
                 fontWeight: 600,
                 cursor: isSyncing ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '5px',
                 transition: 'all 0.15s ease',
               }}
             >
-              <span style={{ display: 'inline-block', transform: isSyncing ? 'rotate(180deg)' : 'none', transition: 'transform 0.5s' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  transform: isSyncing ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.5s',
+                }}
+              >
                 ↻
               </span>
               {isSyncing ? 'Syncing...' : 'Sync Fleet'}
             </button>
           )}
+
+          {/* Collapsible Table Toggle Button */}
+          <button
+            onClick={() => setIsTableVisible((prev) => !prev)}
+            title={isTableVisible ? 'Hide provider fleet table' : 'Show provider fleet table'}
+            style={{
+              backgroundColor: isTableVisible ? '#334155' : '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #475569',
+              borderRadius: '6px',
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>{isTableVisible ? '▲ Hide Fleet Table' : `▼ Show Fleet Table (${providers.length})`}</span>
+          </button>
         </div>
       </div>
 
-      {/* Provider Fleet Grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-          gap: '12px',
-        }}
-      >
-        {providers.map((p) => {
-          const isSelected = selectedProviderDetail?.provider === p.provider;
-          const cadenceColor =
-            p.updateCadenceCategory === 'realtime_auction'
-              ? '#10b981'
-              : p.updateCadenceCategory === 'dynamic_shifts'
-                ? '#38bdf8'
-                : '#a78bfa';
+      {/* Provider Fleet Table (collapsible / can be hidden) */}
+      {isTableVisible && (
+        <div style={{ marginTop: '14px', overflowX: 'auto' }}>
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              textAlign: 'left',
+              fontSize: '12px',
+              backgroundColor: '#0f172a',
+              borderRadius: '8px',
+              overflow: 'hidden',
+              border: '1px solid #1e293b',
+            }}
+          >
+            <thead>
+              <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Provider</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Sync Status</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Update Cadence</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Supported Modalities</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Preemption &amp; Spot Policy</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Balance / Account</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Verified Portals</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providers.map((p, idx) => {
+                const isSelected = selectedProviderDetail?.provider === p.provider;
+                const cadenceColor =
+                  p.updateCadenceCategory === 'realtime_auction'
+                    ? '#10b981'
+                    : p.updateCadenceCategory === 'dynamic_shifts'
+                      ? '#38bdf8'
+                      : '#a78bfa';
 
-          return (
-            <div
-              key={p.provider}
-              onClick={() => setSelectedProviderDetail(isSelected ? null : p)}
-              style={{
-                backgroundColor: isSelected ? 'rgba(56, 189, 248, 0.08)' : '#1e293b40',
-                border: `1px solid ${isSelected ? '#38bdf8' : '#334155'}`,
-                borderRadius: '8px',
-                padding: '12px',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                if (!isSelected) e.currentTarget.style.borderColor = '#475569';
-              }}
-              onMouseLeave={(e) => {
-                if (!isSelected) e.currentTarget.style.borderColor = '#334155';
-              }}
-            >
-              {/* Row 1: Provider Name (Link to Homepage) and Cadence Badge (Link with Tooltip) */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span
+                return (
+                  <tr
+                    key={p.provider}
+                    onClick={() => setSelectedProviderDetail(isSelected ? null : p)}
                     style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: p.isHealthy ? '#10b981' : '#f87171',
-                    }}
-                  />
-                  {p.websiteUrl ? (
-                    <a
-                      href={p.websiteUrl}
-                      target={p.websiteUrl.startsWith('http') ? '_blank' : '_self'}
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={`Visit ${p.displayName} official portal`}
-                      style={{
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        color: '#f8fafc',
-                        textDecoration: 'none',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '3px',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = '#38bdf8')}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = '#f8fafc')}
-                    >
-                      {p.displayName}
-                      {p.websiteUrl.startsWith('http') && <span style={{ fontSize: '10px', color: '#64748b' }}>↗</span>}
-                    </a>
-                  ) : (
-                    <span style={{ fontWeight: 700, fontSize: '13px', color: '#f8fafc' }}>
-                      {p.displayName}
-                    </span>
-                  )}
-                </div>
-
-                {/* Cadence Category Badge with Link and Tooltip */}
-                <a
-                  href={p.cadenceDocUrl || p.websiteUrl || '#'}
-                  target={p.cadenceDocUrl?.startsWith('http') ? '_blank' : '_self'}
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  title={p.cadenceExplanation || `${p.updateCadenceCategory.replace('_', ' ')} update cadence model`}
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    backgroundColor: `${cadenceColor}20`,
-                    color: cadenceColor,
-                    textTransform: 'uppercase',
-                    textDecoration: 'none',
-                    border: `1px solid ${cadenceColor}40`,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '2px',
-                  }}
-                >
-                  {p.updateCadenceCategory.replace('_', ' ')}
-                  <span style={{ fontSize: '9px', opacity: 0.7 }}>ℹ</span>
-                </a>
-              </div>
-
-              {/* Row 2: Allowed Pricing Modalities Badges with Direct Links */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
-                {p.allowedPricingModels.map((mode) => {
-                  const targetUrl =
-                    mode === 'spot'
-                      ? p.spotPricingUrl || p.pricingUrl
-                      : p.pricingUrl || p.websiteUrl;
-
-                  const badgeColor =
-                    mode === 'spot'
-                      ? '#34d399'
-                      : mode === 'serverless'
-                        ? '#22d3ee'
-                        : mode === 'token_factory'
-                          ? '#c084fc'
-                          : mode === 'pay_per_call'
-                            ? '#fbbf24'
-                            : '#cbd5e1';
-
-                  const badgeBg =
-                    mode === 'spot'
-                      ? 'rgba(16, 185, 129, 0.15)'
-                      : mode === 'serverless'
-                        ? 'rgba(6, 182, 212, 0.15)'
-                        : mode === 'token_factory'
-                          ? 'rgba(139, 92, 246, 0.15)'
-                          : mode === 'pay_per_call'
-                            ? 'rgba(245, 158, 11, 0.15)'
-                            : 'rgba(148, 163, 184, 0.15)';
-
-                  return (
-                    <a
-                      key={mode}
-                      href={targetUrl || '#'}
-                      target={targetUrl?.startsWith('http') ? '_blank' : '_self'}
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={`View ${p.displayName} ${mode.replace('_', ' ')} pricing information`}
-                      style={{
-                        fontSize: '10px',
-                        padding: '1px 5px',
-                        borderRadius: '3px',
-                        backgroundColor: badgeBg,
-                        color: badgeColor,
-                        fontWeight: 600,
-                        textDecoration: 'none',
-                        border: `1px solid ${badgeColor}30`,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '2px',
-                      }}
-                    >
-                      {mode.replace('_', ' ')}
-                      <span style={{ fontSize: '8px', opacity: 0.6 }}>↗</span>
-                    </a>
-                  );
-                })}
-              </div>
-
-              {/* Row 3: Spot Policy Banner (Notice window timing & Bid vs Fixed) */}
-              {p.spotPolicy && (
-                <div
-                  title={`Spot Preemption Policy: ${p.spotPolicy.description}`}
-                  style={{
-                    backgroundColor: 'rgba(30, 41, 59, 0.8)',
-                    border: '1px solid #334155',
-                    borderRadius: '4px',
-                    padding: '3px 6px',
-                    fontSize: '10px',
-                    color: '#94a3b8',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '8px',
-                  }}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                    <span style={{ color: '#f59e0b', fontWeight: 700 }}>⚡ Spot:</span>
-                    <strong style={{ color: '#f8fafc' }}>{p.spotPolicy.noticeWindowLabel}</strong>
-                  </span>
-                  <span
-                    style={{
-                      padding: '1px 4px',
-                      borderRadius: '3px',
-                      fontSize: '9px',
-                      fontWeight: 700,
-                      backgroundColor:
-                        p.spotPolicy.pricingType === 'floating_bid'
-                          ? 'rgba(245, 158, 11, 0.15)'
-                          : 'rgba(16, 185, 129, 0.15)',
-                      color:
-                        p.spotPolicy.pricingType === 'floating_bid' ? '#fbbf24' : '#34d399',
+                      borderBottom: '1px solid #1e293b',
+                      backgroundColor: isSelected
+                        ? 'rgba(56, 189, 248, 0.08)'
+                        : idx % 2 === 0
+                          ? 'transparent'
+                          : '#1e293b20',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.15s ease',
                     }}
                   >
-                    {p.spotPolicy.pricingTypeLabel}
-                  </span>
-                </div>
-              )}
+                    {/* Provider Name + Health Indicator */}
+                    <td style={{ padding: '10px 12px', fontWeight: 700, color: '#f8fafc' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          style={{
+                            width: '7px',
+                            height: '7px',
+                            borderRadius: '50%',
+                            backgroundColor: p.isHealthy ? '#10b981' : '#f87171',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <a
+                          href={p.websiteUrl || '#'}
+                          target={p.websiteUrl?.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title={`Visit ${p.displayName} official portal`}
+                          style={{
+                            color: '#38bdf8',
+                            textDecoration: 'none',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                          }}
+                        >
+                          {p.displayName}
+                          {p.websiteUrl?.startsWith('http') && <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>}
+                        </a>
+                      </div>
+                    </td>
 
-              {/* Row 4: Credits and Polling Info with Direct Links */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: '11px',
-                  color: '#94a3b8',
-                }}
-              >
-                <div>
-                  {p.availableCreditsUsd !== null ? (
-                    <a
-                      href={p.billingUrl || '#'}
-                      target={p.billingUrl?.startsWith('http') ? '_blank' : '_self'}
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title={`Open ${p.displayName} billing & prepaid credits console`}
-                      style={{
-                        color: '#34d399',
-                        fontWeight: 600,
-                        textDecoration: 'none',
-                        borderBottom: '1px dotted #34d399',
-                      }}
-                    >
-                      ${p.availableCreditsUsd.toFixed(2)} credits ↗
-                    </a>
-                  ) : p.creditType === 'postpaid_invoice' ? (
-                    <a
-                      href={p.billingUrl || '#'}
-                      target={p.billingUrl?.startsWith('http') ? '_blank' : '_self'}
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      title="Open AWS Direct Invoice Billing Console"
-                      style={{
-                        color: '#60a5fa',
-                        fontWeight: 500,
-                        textDecoration: 'none',
-                        borderBottom: '1px dotted #60a5fa',
-                      }}
-                    >
-                      Direct AWS Invoice ↗
-                    </a>
-                  ) : (
-                    <span style={{ color: '#94a3b8' }}>$0 Local HW</span>
-                  )}
-                </div>
+                    {/* Sync Status & Polling Frequency */}
+                    <td style={{ padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span
+                          style={{
+                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                            color: '#34d399',
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {p.syncStatus}
+                        </span>
+                        <span style={{ color: '#64748b', fontSize: '11px' }}>
+                          ~{Math.round(p.estimatedUpdateIntervalSec / 60)}m polling
+                        </span>
+                      </div>
+                    </td>
 
-                <div>
-                  <a
-                    href={p.syncDocUrl || p.websiteUrl || '#'}
-                    target={p.syncDocUrl?.startsWith('http') ? '_blank' : '_self'}
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    title={`View ${p.displayName} telemetry API documentation and rate limits`}
-                    style={{
-                      color: '#64748b',
-                      textDecoration: 'none',
-                      borderBottom: '1px dotted #64748b',
-                    }}
-                  >
-                    ~{Math.round(p.estimatedUpdateIntervalSec / 60)}m polling ↗
-                  </a>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                    {/* Update Cadence Badge */}
+                    <td style={{ padding: '10px 12px' }}>
+                      <a
+                        href={p.cadenceDocUrl || p.websiteUrl || '#'}
+                        target={p.cadenceDocUrl?.startsWith('http') ? '_blank' : '_self'}
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={p.cadenceExplanation || `${p.updateCadenceCategory} update cadence model`}
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: `${cadenceColor}20`,
+                          color: cadenceColor,
+                          textTransform: 'uppercase',
+                          textDecoration: 'none',
+                          border: `1px solid ${cadenceColor}40`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                        }}
+                      >
+                        {p.updateCadenceCategory.replace('_', ' ')}
+                        <span style={{ fontSize: '8px', opacity: 0.8 }}>ℹ</span>
+                      </a>
+                    </td>
+
+                    {/* Allowed Pricing Modalities */}
+                    <td style={{ padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {p.allowedPricingModels.map((mode) => (
+                          <span
+                            key={mode}
+                            style={{
+                              fontSize: '10px',
+                              padding: '1px 5px',
+                              borderRadius: '3px',
+                              backgroundColor:
+                                mode === 'spot'
+                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  : mode === 'serverless'
+                                    ? 'rgba(6, 182, 212, 0.15)'
+                                    : mode === 'token_factory'
+                                      ? 'rgba(139, 92, 246, 0.15)'
+                                      : 'rgba(148, 163, 184, 0.15)',
+                              color:
+                                mode === 'spot'
+                                  ? '#34d399'
+                                  : mode === 'serverless'
+                                    ? '#22d3ee'
+                                    : mode === 'token_factory'
+                                      ? '#c084fc'
+                                      : '#cbd5e1',
+                              fontWeight: 600,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            {mode.replace('_', ' ')}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+
+                    {/* Preemption Policy */}
+                    <td style={{ padding: '10px 12px' }}>
+                      {p.spotPolicy ? (
+                        <a
+                          href={p.spotPricingUrl || p.pricingUrl || '#'}
+                          target={p.spotPricingUrl?.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title={p.spotPolicy.description}
+                          style={{
+                            fontSize: '11px',
+                            color: '#fbbf24',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                        >
+                          <strong>{p.spotPolicy.noticeWindowLabel}</strong>
+                          <span style={{ color: '#94a3b8', fontSize: '10px' }}>
+                            ({p.spotPolicy.pricingTypeLabel})
+                          </span>
+                          <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>
+                        </a>
+                      ) : (
+                        <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+                          {p.interruptionNoticeWindow}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Balance / Quota */}
+                    <td style={{ padding: '10px 12px', fontSize: '11px' }}>
+                      {p.availableCreditsUsd !== null ? (
+                        <a
+                          href={p.billingUrl || '#'}
+                          target={p.billingUrl?.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open billing and prepaid credits console"
+                          style={{
+                            color: '#34d399',
+                            fontWeight: 700,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          ${p.availableCreditsUsd.toFixed(2)} prepaid ↗
+                        </a>
+                      ) : p.creditType === 'postpaid_invoice' ? (
+                        <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Invoice</span>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>$0 Local HW</span>
+                      )}
+                    </td>
+
+                    {/* Direct Links */}
+                    <td style={{ padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        {p.pricingUrl && (
+                          <a
+                            href={p.pricingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Pricing Catalog"
+                            style={{
+                              color: '#38bdf8',
+                              textDecoration: 'none',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Rates ↗
+                          </a>
+                        )}
+                        {p.billingUrl && (
+                          <a
+                            href={p.billingUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Billing Console"
+                            style={{
+                              color: '#c084fc',
+                              textDecoration: 'none',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Billing ↗
+                          </a>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Selected Provider Popover Details */}
       {selectedProviderDetail && (

@@ -6,12 +6,10 @@ import type {
   PricingHistorySummary,
   PricingSyncAudit,
 } from '../../types';
-import { StatCard } from '../common/StatCard';
-import { StatusBadge } from '../common/Badge';
 import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
-import { ProviderFleetBar } from './ProviderFleetBar';
+import { ProviderFleetBar, DEFAULT_PROVIDER_FLEET } from './ProviderFleetBar';
 import { HistoricalPriceChart } from './HistoricalPriceChart';
-import { ModelRecommendationStudio } from './ModelRecommendationStudio';
+import { CATALOG_MODELS } from './ModelRecommendationStudio';
 
 export const HARDWARE_BENCHMARK_THROUGHPUT: Record<
   string,
@@ -138,6 +136,40 @@ export const PROVIDER_CONSOLE_LINKS: Record<
   },
 };
 
+/**
+ * Normalizes hardware strings into short compact representations with VRAM (e.g. "5070 Ti (16GB)").
+ */
+export function formatHwShortName(rawName?: string, vramGb?: number): string {
+  if (!rawName) return vramGb ? `GPU (${vramGb}GB)` : 'Standard GPU';
+
+  let short = rawName;
+  if (/5070\s*Ti/i.test(rawName)) short = '5070 Ti';
+  else if (/5090/i.test(rawName)) short = '5090';
+  else if (/4090/i.test(rawName)) short = '4090';
+  else if (/h200/i.test(rawName)) short = 'H200 SXM';
+  else if (/h100/i.test(rawName)) short = 'H100 SXM5';
+  else if (/a100/i.test(rawName)) short = 'A100';
+  else if (/a6000/i.test(rawName)) short = 'A6000 Ada';
+  else if (/l4\b/i.test(rawName)) short = 'L4';
+  else if (/a10g/i.test(rawName)) short = 'A10G';
+  else if (/inferentia2/i.test(rawName)) short = 'Inferentia2';
+  else if (/cpu/i.test(rawName)) short = 'CPU Xeon/EPYC';
+  else {
+    short = rawName
+      .replace(/^NVIDIA\s+GeForce\s+/i, '')
+      .replace(/^NVIDIA\s+/i, '')
+      .replace(/\s*\(\d+GB.*?\)/i, '')
+      .trim();
+  }
+
+  if (short.includes('(') && short.includes('GB)')) {
+    return short;
+  }
+
+  const vram = vramGb && vramGb > 0 ? ` (${vramGb}GB)` : '';
+  return `${short}${vram}`;
+}
+
 export function getGpuPerformance(item: GpuPricingItem) {
   const bench = HARDWARE_BENCHMARK_THROUGHPUT[item.hardwareSkuId] || {
     tokensPerSec: Math.max(25, Math.round(item.vramGb * 2.2)),
@@ -164,8 +196,43 @@ export function getGpuPerformance(item: GpuPricingItem) {
   };
 }
 
+export interface UnifiedPricingResult {
+  id: string;
+  itemType: 'gpu' | 'model';
+  provider: string;
+  providerDisplayName: string;
+  hwShortName: string; // e.g. "5070 Ti (16GB)"
+  hwArchitecture: string;
+  vramGb: number;
+  modelName?: string;
+  modelId?: string;
+  developer?: string;
+  weightType?: 'open' | 'proprietary';
+  modality: 'text_to_text' | 'text_to_image' | 'text_to_video' | 'speech_to_text' | 'code_reasoning' | 'raw_compute';
+  executionType: 'dedicated_gpu' | 'token_factory' | 'serverless' | 'pay_per_call' | 'local';
+  pricingModel: string;
+  pricingModelLabel: string;
+  preemptionPolicy: string;
+  preemptionPolicyUrl: string;
+  priceHourlyUsd: number;
+  priceDisplay: string;
+  priceSubtext?: string;
+  throughputTokPerSec: number;
+  throughputDisplay: string;
+  throughputSubtext: string;
+  tokensPerDollar: number;
+  costPerMillionUsd: number;
+  costEfficiencyDisplay: string;
+  efficiencyBadge?: 'ultra_value' | 'top_efficiency' | 'sweet_spot' | 'max_speed';
+  availabilityScore: number;
+  availabilityLabel: string;
+  availabilityUrl: string;
+  reliability: string;
+  riskTier: string;
+  riskUrl: string;
+}
+
 export function FinOpsPricingView() {
-  const [activeSubTab, setActiveSubTab] = useState<'gpus' | 'recommendations' | 'vram_matrix' | 'models' | 'history'>('gpus');
   const [gpuPricing, setGpuPricing] = useState<GpuPricingItem[]>([]);
   const [modelPricing, setModelPricing] = useState<ModelPricingItem[]>([]);
   const [historySummaries, setHistorySummaries] = useState<PricingHistorySummary[]>([]);
@@ -173,38 +240,29 @@ export function FinOpsPricingView() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [showHistoryChart, setShowHistoryChart] = useState(false);
 
-  // Filters
+  // Filters on top
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [selectedPricingModel, setSelectedPricingModel] = useState<string>('all');
+  const [selectedModality, setSelectedModality] = useState<string>('all');
   const [selectedExecutionType, setSelectedExecutionType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Table Sorting State (SortableHeader)
-  const [gpuSortKey, setGpuSortKey] = useState<string>('normalizedHourlyUsd');
-  const [gpuSortDir, setGpuSortDir] = useState<SortDirection>('asc');
-  const [modelSortKey, setModelSortKey] = useState<string>('modelName');
-  const [modelSortDir, setModelSortDir] = useState<SortDirection>('asc');
+  // Table Sorting State
+  const [sortKey, setSortKey] = useState<string>('costEfficiency');
+  const [sortDir, setSortDir] = useState<SortDirection>('desc');
 
-  const handleGpuSort = (col: string) => {
-    if (gpuSortKey === col) {
-      setGpuSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+  const handleSort = (col: string) => {
+    if (sortKey === col) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
-      setGpuSortKey(col);
-      setGpuSortDir(
-        col === 'throughput' || col === 'costEfficiency' || col === 'obtainabilityScore'
+      setSortKey(col);
+      setSortDir(
+        col === 'throughput' || col === 'costEfficiency' || col === 'availability' || col === 'price'
           ? 'desc'
           : 'asc'
       );
-    }
-  };
-
-  const handleModelSort = (col: string) => {
-    if (modelSortKey === col) {
-      setModelSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setModelSortKey(col);
-      setModelSortDir(col === 'modelName' || col === 'provider' ? 'asc' : 'asc');
     }
   };
 
@@ -248,173 +306,382 @@ export function FinOpsPricingView() {
     }
   };
 
-  // KPIs
-  const lowestSpotGpu = useMemo(() => {
-    const spotItems = gpuPricing.filter((g) => g.pricingModel === 'spot_bid');
-    if (spotItems.length === 0) return null;
-    return spotItems.reduce((min, cur) =>
-      cur.normalizedHourlyUsd < min.normalizedHourlyUsd ? cur : min
-    );
-  }, [gpuPricing]);
+  // Build Unified Pricing Results (combines GPU hardware offerings and Model offerings)
+  const unifiedResults: UnifiedPricingResult[] = useMemo(() => {
+    const list: UnifiedPricingResult[] = [];
 
-  const lowestVramPriceGpu = useMemo(() => {
-    if (gpuPricing.length === 0) return null;
-    return gpuPricing.reduce((min, cur) => {
-      const curRate = cur.normalizedHourlyUsd / cur.vramGb;
-      const minRate = min.normalizedHourlyUsd / min.vramGb;
-      return curRate < minRate ? cur : min;
-    });
-  }, [gpuPricing]);
-
-  const lowestOnDemandH100 = useMemo(() => {
-    const h100s = gpuPricing.filter(
-      (g) => g.hardwareSkuId === 'nvidia-h100-sxm' && g.pricingModel === 'on_demand'
-    );
-    if (h100s.length === 0) return null;
-    return h100s.reduce((min, cur) =>
-      cur.normalizedHourlyUsd < min.normalizedHourlyUsd ? cur : min
-    );
-  }, [gpuPricing]);
-
-  const lowestTokenFactory = useMemo(() => {
-    const tokenModels = modelPricing.filter(
-      (m) => m.executionType === 'token_factory' && m.inputPricePerMillionUsd
-    );
-    if (tokenModels.length === 0) return null;
-    return tokenModels.reduce((min, cur) =>
-      (cur.inputPricePerMillionUsd || 999) < (min.inputPricePerMillionUsd || 999) ? cur : min
-    );
-  }, [modelPricing]);
-
-  // VRAM Tier Matrix
-  const vramTierMatrix = useMemo(() => {
-    const tiers = [
-      { label: '16 GB Tier', min: 14, max: 18, desc: 'Entry-level fine-tuning & 8B inference (RTX 5070 Ti / V100)' },
-      { label: '24 GB Tier', min: 20, max: 28, desc: 'Mid-range LLM & diffusion workloads (RTX 4090 / L4 / A10G)' },
-      { label: '32 GB Tier', min: 30, max: 36, desc: 'High-speed Blackwell compute (RTX 5090)' },
-      { label: '80 GB Tier', min: 70, max: 90, desc: 'Enterprise 70B+ & batch training (H100 SXM5 / A100)' },
-    ];
-
-    return tiers.map((tier) => {
-      const matches = gpuPricing.filter((g) => g.vramGb >= tier.min && g.vramGb <= tier.max);
-      const spotItems = matches.filter((g) => g.pricingModel === 'spot_bid' || g.pricingModel === 'preemptible');
-      const onDemandItems = matches.filter((g) => g.pricingModel === 'on_demand');
-
-      const bestSpot =
-        spotItems.length > 0
-          ? spotItems.reduce((min, cur) => (cur.normalizedHourlyUsd < min.normalizedHourlyUsd ? cur : min))
-          : null;
-
-      const bestOnDemand =
-        onDemandItems.length > 0
-          ? onDemandItems.reduce((min, cur) => (cur.normalizedHourlyUsd < min.normalizedHourlyUsd ? cur : min))
-          : null;
-
-      return {
-        ...tier,
-        totalOptions: matches.length,
-        bestSpot,
-        bestOnDemand,
+    // 1. GPU Instances
+    for (const g of gpuPricing) {
+      const perf = getGpuPerformance(g);
+      const hwShort = formatHwShortName(g.hardwareDisplayName, g.vramGb);
+      const fleet = DEFAULT_PROVIDER_FLEET.find((p) => p.provider.toLowerCase() === g.provider.toLowerCase());
+      const links = PROVIDER_CONSOLE_LINKS[g.provider.toLowerCase()] || {
+        capacityUrl: fleet?.pricingUrl || '#',
+        spotPolicyUrl: fleet?.spotPricingUrl || '#',
       };
-    });
-  }, [gpuPricing]);
 
-  // Open Model Best Deals
-  const openModelBestDeals = useMemo(() => {
-    const map = new Map<string, { modelName: string; developer: string; options: ModelPricingItem[] }>();
-    for (const m of modelPricing) {
-      if (!map.has(m.modelName)) {
-        map.set(m.modelName, { modelName: m.modelName, developer: m.developer, options: [] });
-      }
-      map.get(m.modelName)!.options.push(m);
+      const isSpot = g.pricingModel === 'spot_bid' || g.pricingModel === 'preemptible';
+      const preemptionPolicy = isSpot
+        ? fleet?.spotPolicy?.noticeWindowLabel
+          ? `${fleet.spotPolicy.noticeWindowLabel} (${fleet.spotPolicy.pricingTypeLabel})`
+          : 'Spot bid preemption'
+        : g.pricingModel === 'serverless'
+          ? 'Scale-to-zero micro-metered'
+          : 'Dedicated process (zero interruption)';
+
+      const reliability =
+        g.provider === 'local_pytorch'
+          ? '100% Dedicated Workstation'
+          : g.provider === 'bedrock' || g.provider === 'sagemaker'
+            ? '99.9% Enterprise SLA'
+            : g.provider === 'nebius' || g.provider === 'baseten' || g.provider === 'coreweave'
+              ? '99.5% Tier 3+ DC'
+              : 'Community Cluster (98%)';
+
+      const isUltraValue = perf.tokensPerDollar >= 1_000_000;
+      const isTopEfficiency = !isUltraValue && perf.tokensPerDollar >= 800_000;
+      const isSweetSpot = !isUltraValue && !isTopEfficiency && perf.tokensPerDollar >= 500_000;
+      const isMaxThroughput = perf.tokensPerSec >= 180;
+
+      list.push({
+        id: `gpu-${g.id}`,
+        itemType: 'gpu',
+        provider: g.provider,
+        providerDisplayName: fleet?.displayName || g.provider.toUpperCase(),
+        hwShortName: hwShort,
+        hwArchitecture: perf.architecture,
+        vramGb: g.vramGb,
+        modality: 'raw_compute',
+        executionType:
+          g.provider === 'local_pytorch'
+            ? 'local'
+            : g.pricingModel === 'serverless'
+              ? 'serverless'
+              : 'dedicated_gpu',
+        pricingModel: g.pricingModel,
+        pricingModelLabel: g.pricingModel.replace('_', ' ').toUpperCase(),
+        preemptionPolicy,
+        preemptionPolicyUrl: links.spotPolicyUrl,
+        priceHourlyUsd: g.normalizedHourlyUsd,
+        priceDisplay: `$${g.normalizedHourlyUsd.toFixed(3)}/hr`,
+        priceSubtext: `$${(g.normalizedHourlyUsd / g.vramGb).toFixed(4)}/GB`,
+        throughputTokPerSec: perf.tokensPerSec,
+        throughputDisplay: `${perf.tokensPerSec} tok/s`,
+        throughputSubtext: 'FP16/FP8 Tensor',
+        tokensPerDollar: perf.tokensPerDollar,
+        costPerMillionUsd: perf.costPerMillion,
+        costEfficiencyDisplay: `${(perf.tokensPerDollar / 1000).toFixed(0)}K tok/$`,
+        efficiencyBadge: isUltraValue
+          ? 'ultra_value'
+          : isTopEfficiency
+            ? 'top_efficiency'
+            : isSweetSpot
+              ? 'sweet_spot'
+              : isMaxThroughput
+                ? 'max_speed'
+                : undefined,
+        availabilityScore: g.obtainabilityScore,
+        availabilityLabel: `${g.obtainabilityLabel} (${Math.round(g.obtainabilityScore * 100)}%)`,
+        availabilityUrl: links.capacityUrl,
+        reliability,
+        riskTier: g.interruptionRiskTier,
+        riskUrl: links.spotPolicyUrl,
+      });
     }
 
-    return Array.from(map.values()).map((entry) => {
-      const best = entry.options.reduce((cheapest, cur) => {
-        const curCost = cur.inputPricePerMillionUsd ?? cur.perUnitUsd ?? 999;
-        const cheapCost = cheapest.inputPricePerMillionUsd ?? cheapest.perUnitUsd ?? 999;
-        return curCost < cheapCost ? cur : cheapest;
-      }, entry.options[0]);
+    // 2. Model Endpoints & Token Factory
+    for (const m of modelPricing) {
+      const fleet = DEFAULT_PROVIDER_FLEET.find((p) => p.provider.toLowerCase() === m.provider.toLowerCase());
+      const catalogMatch = CATALOG_MODELS.find(
+        (c) =>
+          c.id.toLowerCase() === m.modelId.toLowerCase() ||
+          c.name.toLowerCase().includes(m.modelName.toLowerCase()) ||
+          m.modelName.toLowerCase().includes(c.name.toLowerCase())
+      );
 
-      return {
-        modelName: entry.modelName,
-        developer: entry.developer,
-        bestOption: best,
-        totalProviders: entry.options.length,
+      // Determine open weights vs proprietary badge
+      const isProprietary =
+        catalogMatch?.weightType === 'proprietary' ||
+        m.developer.toLowerCase().includes('anthropic') ||
+        m.developer.toLowerCase().includes('internal') ||
+        m.developer.toLowerCase().includes('enterprise') ||
+        m.modelName.toLowerCase().includes('claude') ||
+        m.modelName.toLowerCase().includes('corporate') ||
+        m.modelName.toLowerCase().includes('proprietary');
+
+      const weightType: 'open' | 'proprietary' = isProprietary ? 'proprietary' : 'open';
+
+      // Determine model modality
+      let modality: UnifiedPricingResult['modality'] = 'text_to_text';
+      if (catalogMatch?.purpose && catalogMatch.purpose !== 'all') {
+        modality = catalogMatch.purpose;
+      } else {
+        const lowerName = m.modelName.toLowerCase();
+        if (lowerName.includes('flux') || lowerName.includes('diffusion') || lowerName.includes('image')) {
+          modality = 'text_to_image';
+        } else if (lowerName.includes('video') || lowerName.includes('cogvideo')) {
+          modality = 'text_to_video';
+        } else if (lowerName.includes('whisper') || lowerName.includes('speech') || lowerName.includes('audio')) {
+          modality = 'speech_to_text';
+        } else if (lowerName.includes('r1') || lowerName.includes('coder') || lowerName.includes('reasoning')) {
+          modality = 'code_reasoning';
+        }
+      }
+
+      // Hardware Short Name association
+      let hwShort = 'Cloud Serverless';
+      let arch = 'Cloud Accelerated';
+      let vram = 24;
+
+      if (catalogMatch?.recommendedGpuSku) {
+        if (catalogMatch.recommendedGpuSku.includes('h100')) {
+          hwShort = 'H100 SXM5 (80GB)';
+          arch = 'Hopper Tensor Core';
+          vram = 80;
+        } else if (catalogMatch.recommendedGpuSku.includes('5090')) {
+          hwShort = '5090 (32GB)';
+          arch = 'Blackwell Architecture';
+          vram = 32;
+        } else if (catalogMatch.recommendedGpuSku.includes('4090')) {
+          hwShort = '4090 (24GB)';
+          arch = 'Ada Lovelace 24GB';
+          vram = 24;
+        } else if (catalogMatch.recommendedGpuSku.includes('5070ti')) {
+          hwShort = '5070 Ti (16GB)';
+          arch = 'Blackwell Workstation';
+          vram = 16;
+        } else if (catalogMatch.recommendedGpuSku.includes('l4')) {
+          hwShort = 'L4 (24GB)';
+          arch = 'Ada Lovelace Serverless';
+          vram = 24;
+        }
+      } else if (m.executionType === 'token_factory') {
+        hwShort = 'H100 SXM5 (80GB)';
+        arch = 'Hopper Cluster MaaS';
+        vram = 80;
+      } else if (m.executionType === 'pay_per_call') {
+        hwShort = '5090 (32GB)';
+        arch = 'Media Accelerators';
+        vram = 32;
+      } else if (m.provider === 'bedrock') {
+        hwShort = 'Inferentia2 (32GB)';
+        arch = 'AWS NeuronCore-v2';
+        vram = 32;
+      }
+
+      const inputRate = m.inputPricePerMillionUsd ?? (m.perUnitUsd ? m.perUnitUsd * 100 : 0.5);
+      const toksPerSec =
+        modality === 'text_to_text' || modality === 'code_reasoning'
+          ? m.executionType === 'token_factory' ? 140 : 95
+          : 50;
+
+      const tokensPerDollar = Math.round(1_000_000 / (inputRate > 0 ? inputRate : 0.1));
+      const isUltraValue = tokensPerDollar >= 1_000_000;
+      const isTopEfficiency = !isUltraValue && tokensPerDollar >= 500_000;
+
+      const links = PROVIDER_CONSOLE_LINKS[m.provider.toLowerCase()] || {
+        capacityUrl: fleet?.pricingUrl || '#',
+        spotPolicyUrl: fleet?.spotPricingUrl || '#',
       };
-    });
-  }, [modelPricing]);
 
-  // Filtered GPU list
-  const filteredGpus = useMemo(() => {
-    return gpuPricing.filter((item) => {
-      if (selectedProvider !== 'all' && item.provider !== selectedProvider) return false;
-      if (selectedPricingModel !== 'all' && item.pricingModel !== selectedPricingModel) return false;
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = item.hardwareDisplayName.toLowerCase().includes(query);
-        const matchesSku = item.hardwareSkuId.toLowerCase().includes(query);
-        const matchesProv = item.provider.toLowerCase().includes(query);
-        if (!matchesName && !matchesSku && !matchesProv) return false;
+      list.push({
+        id: `model-${m.id}`,
+        itemType: 'model',
+        provider: m.provider,
+        providerDisplayName: fleet?.displayName || m.provider.toUpperCase(),
+        hwShortName: hwShort,
+        hwArchitecture: arch,
+        vramGb: vram,
+        modelName: m.modelName,
+        modelId: m.modelId,
+        developer: m.developer,
+        weightType,
+        modality,
+        executionType:
+          m.executionType === 'token_factory'
+            ? 'token_factory'
+            : m.executionType === 'serverless_endpoint'
+              ? 'serverless'
+              : 'pay_per_call',
+        pricingModel: m.executionType,
+        pricingModelLabel:
+          m.executionType === 'token_factory'
+            ? 'TOKEN FACTORY (MaaS)'
+            : m.executionType === 'serverless_endpoint'
+              ? 'SERVERLESS CONTAINER'
+              : 'PAY-PER-CALL MEDIA',
+        preemptionPolicy: 'Dedicated SLA (zero interruption)',
+        preemptionPolicyUrl: fleet?.pricingUrl || '#',
+        priceHourlyUsd: (inputRate * toksPerSec * 3.6) / 1000,
+        priceDisplay:
+          m.inputPricePerMillionUsd !== undefined
+            ? `$${m.inputPricePerMillionUsd.toFixed(2)}/1M tok`
+            : m.perUnitUsd !== undefined
+              ? `$${m.perUnitUsd} / ${m.unitType === 'megapixel' ? 'MP' : 'call'}`
+              : '$0.50/1M tok',
+        priceSubtext:
+          m.outputPricePerMillionUsd !== undefined
+            ? `+$${m.outputPricePerMillionUsd.toFixed(2)}/1M out`
+            : 'Per Invocation',
+        throughputTokPerSec: toksPerSec,
+        throughputDisplay:
+          modality === 'text_to_text' || modality === 'code_reasoning'
+            ? `${toksPerSec} tok/s`
+            : '~850 ms/call',
+        throughputSubtext:
+          m.executionType === 'token_factory'
+            ? 'MaaS Cluster'
+            : modality === 'text_to_image'
+              ? 'Diffusion Latency'
+              : 'Accelerated Container',
+        tokensPerDollar,
+        costPerMillionUsd: inputRate,
+        costEfficiencyDisplay: `${(tokensPerDollar / 1000).toFixed(0)}K tok/$`,
+        efficiencyBadge: isUltraValue ? 'ultra_value' : isTopEfficiency ? 'top_efficiency' : undefined,
+        availabilityScore: 0.98,
+        availabilityLabel: 'Instant (100%)',
+        availabilityUrl: links.capacityUrl,
+        reliability:
+          m.provider === 'bedrock'
+            ? '99.9% Enterprise SLA'
+            : m.provider === 'fal' || m.provider === 'wavespeed'
+              ? '99.9% Media Gateway SLA'
+              : '99.5% Neocloud Tier 3+',
+        riskTier: 'Guaranteed (0%)',
+        riskUrl: links.spotPolicyUrl,
+      });
+    }
+
+    return list;
+  }, [gpuPricing, modelPricing]);
+
+  // Filter unified results based on user selection
+  const filteredResults = useMemo(() => {
+    return unifiedResults.filter((item) => {
+      // 1. Provider Filter
+      if (selectedProvider !== 'all' && item.provider.toLowerCase() !== selectedProvider.toLowerCase()) {
+        return false;
       }
+
+      // 2. Pricing Model Filter
+      if (selectedPricingModel !== 'all') {
+        if (selectedPricingModel === 'spot_bid') {
+          if (item.pricingModel !== 'spot_bid' && item.pricingModel !== 'spot' && item.pricingModel !== 'preemptible') {
+            return false;
+          }
+        } else if (selectedPricingModel === 'on_demand') {
+          if (item.pricingModel !== 'on_demand') return false;
+        } else if (selectedPricingModel === 'serverless') {
+          if (item.pricingModel !== 'serverless' && item.pricingModel !== 'serverless_endpoint') return false;
+        } else if (selectedPricingModel === 'token_factory') {
+          if (item.pricingModel !== 'token_factory') return false;
+        } else if (selectedPricingModel === 'local') {
+          if (item.provider !== 'local_pytorch') return false;
+        }
+      }
+
+      // 3. Model Modality Filter
+      if (selectedModality !== 'all') {
+        if (selectedModality === 'raw_compute') {
+          if (item.itemType !== 'gpu') return false;
+        } else if (item.itemType === 'model') {
+          if (item.modality !== selectedModality) return false;
+        } else if (item.itemType === 'gpu') {
+          // GPUs can execute LLMs and Diffusion
+          if (selectedModality !== 'text_to_text' && selectedModality !== 'text_to_image') {
+            return false;
+          }
+        }
+      }
+
+      // 4. Execution Type Filter
+      if (selectedExecutionType !== 'all') {
+        if (selectedExecutionType === 'dedicated_gpu') {
+          if (item.executionType !== 'dedicated_gpu') return false;
+        } else if (selectedExecutionType === 'token_factory') {
+          if (item.executionType !== 'token_factory') return false;
+        } else if (selectedExecutionType === 'serverless') {
+          if (item.executionType !== 'serverless') return false;
+        } else if (selectedExecutionType === 'pay_per_call') {
+          if (item.executionType !== 'pay_per_call') return false;
+        } else if (selectedExecutionType === 'local') {
+          if (item.executionType !== 'local') return false;
+        }
+      }
+
+      // 5. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesHw = item.hwShortName.toLowerCase().includes(q);
+        const matchesProv = item.providerDisplayName.toLowerCase().includes(q) || item.provider.toLowerCase().includes(q);
+        const matchesModel = item.modelName ? item.modelName.toLowerCase().includes(q) : false;
+        const matchesDev = item.developer ? item.developer.toLowerCase().includes(q) : false;
+        const matchesArch = item.hwArchitecture.toLowerCase().includes(q);
+        if (!matchesHw && !matchesProv && !matchesModel && !matchesDev && !matchesArch) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [gpuPricing, selectedProvider, selectedPricingModel, searchQuery]);
+  }, [unifiedResults, selectedProvider, selectedPricingModel, selectedModality, selectedExecutionType, searchQuery]);
 
-  // Sorted GPU list via SortableHeader
-  const sortedGpus = useMemo(() => {
-    return genericSort(filteredGpus, gpuSortKey, gpuSortDir, (item, key) => {
-      if (key === 'vramPrice') return item.normalizedHourlyUsd / item.vramGb;
-      if (key === 'hourlyPrice') return item.normalizedHourlyUsd;
-      if (key === 'throughput') return getGpuPerformance(item).tokensPerSec;
-      if (key === 'costEfficiency') return getGpuPerformance(item).tokensPerDollar;
+  // Sort unified results via SortableHeader
+  const sortedResults = useMemo(() => {
+    return genericSort(filteredResults, sortKey, sortDir, (item, key) => {
+      if (key === 'provider') return item.providerDisplayName;
+      if (key === 'hw') return item.hwShortName;
+      if (key === 'price') return item.priceHourlyUsd;
+      if (key === 'throughput') return item.throughputTokPerSec;
+      if (key === 'costEfficiency') return item.tokensPerDollar;
+      if (key === 'pricingModel') return item.pricingModelLabel;
+      if (key === 'availability') return item.availabilityScore;
+      if (key === 'reliability') return item.reliability;
+      if (key === 'risk') return item.riskTier;
       return (item as unknown as Record<string, unknown>)[key];
     });
-  }, [filteredGpus, gpuSortKey, gpuSortDir]);
+  }, [filteredResults, sortKey, sortDir]);
 
-  // Filtered Models list
-  const filteredModels = useMemo(() => {
-    return modelPricing.filter((item) => {
-      if (selectedProvider !== 'all' && item.provider !== selectedProvider) return false;
-      if (selectedExecutionType !== 'all' && item.executionType !== selectedExecutionType) return false;
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = item.modelName.toLowerCase().includes(query);
-        const matchesId = item.modelId.toLowerCase().includes(query);
-        const matchesDev = item.developer.toLowerCase().includes(query);
-        if (!matchesName && !matchesId && !matchesDev) return false;
-      }
-      return true;
-    });
-  }, [modelPricing, selectedProvider, selectedExecutionType, searchQuery]);
+  const handleResetFilters = () => {
+    setSelectedProvider('all');
+    setSelectedPricingModel('all');
+    setSelectedModality('all');
+    setSelectedExecutionType('all');
+    setSearchQuery('');
+  };
 
-  // Sorted Models list via SortableHeader
-  const sortedModels = useMemo(() => {
-    return genericSort(filteredModels, modelSortKey, modelSortDir, (item, key) => {
-      if (key === 'inputPrice') return item.inputPricePerMillionUsd ?? item.perUnitUsd ?? 999;
-      if (key === 'outputPrice') return item.outputPricePerMillionUsd ?? 999;
-      if (key === 'cachedPrice') return item.cachedPricePerMillionUsd ?? 999;
-      return (item as unknown as Record<string, unknown>)[key];
-    });
-  }, [filteredModels, modelSortKey, modelSortDir]);
+  const hasActiveFilters =
+    selectedProvider !== 'all' ||
+    selectedPricingModel !== 'all' ||
+    selectedModality !== 'all' ||
+    selectedExecutionType !== 'all' ||
+    searchQuery.trim().length > 0;
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
-      {/* Top Header & Sync Action */}
+    <div
+      style={{
+        maxWidth: '1200px',
+        width: '100%',
+        margin: '0 auto',
+        padding: '16px 20px',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* Top Header & Actions */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'flex-start',
-          marginBottom: '24px',
+          marginBottom: '16px',
           flexWrap: 'wrap',
-          gap: '16px',
+          gap: '12px',
         }}
       >
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
-              Neocloud & FinOps Pricing Intelligence
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
+              GPU &amp; Model Pricing
             </h1>
             <span
               style={{
@@ -423,24 +690,43 @@ export function FinOpsPricingView() {
                 border: '1px solid #10b98140',
                 borderRadius: '6px',
                 padding: '2px 8px',
-                fontSize: '12px',
+                fontSize: '11px',
                 fontWeight: 600,
               }}
             >
-              $0 Long-Term Commitments
+              Real-Time Cross-Cloud Intelligence
             </span>
           </div>
-          <p style={{ color: '#94a3b8', fontSize: '14px', marginTop: '4px', margin: 0 }}>
-            Real-time cross-provider GPU availability, on-demand vs spot rates, Token Factory pricing & update cadence.
+          <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '4px', margin: 0 }}>
+            Unified catalog across 14 providers: live GPU spot auctions, on-demand hardware, Token Factory MaaS &amp; serverless rates.
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {syncMessage && (
-            <span style={{ color: '#10b981', fontSize: '13px', fontWeight: 500 }}>
+            <span style={{ color: '#10b981', fontSize: '12px', fontWeight: 500 }}>
               {syncMessage}
             </span>
           )}
+          <button
+            onClick={() => setShowHistoryChart((prev) => !prev)}
+            style={{
+              backgroundColor: showHistoryChart ? '#334155' : '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #38bdf840',
+              borderRadius: '6px',
+              padding: '8px 12px',
+              fontWeight: 600,
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'background-color 0.2s',
+            }}
+          >
+            <span>{showHistoryChart ? '📉 Close History Chart' : '📈 Price Fluctuations'}</span>
+          </button>
           <button
             onClick={handleSync}
             disabled={isSyncing}
@@ -448,204 +734,55 @@ export function FinOpsPricingView() {
               backgroundColor: '#3b82f6',
               color: '#ffffff',
               border: 'none',
-              borderRadius: '8px',
-              padding: '10px 16px',
+              borderRadius: '6px',
+              padding: '8px 14px',
               fontWeight: 600,
-              fontSize: '13px',
+              fontSize: '12px',
               cursor: isSyncing ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'background-color 0.2s',
             }}
           >
-            {isSyncing ? 'Syncing Providers...' : '↻ Refresh Catalogs'}
+            {isSyncing ? 'Syncing...' : '↻ Refresh Catalogs'}
           </button>
         </div>
       </div>
 
-      {/* KPI Stats Grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: '16px',
-          marginBottom: '24px',
-        }}
-      >
-        <StatCard
-          label="Lowest Spot GPU Rate"
-          value={lowestSpotGpu ? `$${lowestSpotGpu.normalizedHourlyUsd.toFixed(3)}/hr` : '--'}
-          subtext={lowestSpotGpu ? `${lowestSpotGpu.hardwareDisplayName} (${lowestSpotGpu.provider})` : 'Spot Auction'}
-          accentColor="#10b981"
-          trend="-55% vs on-demand"
-          trendPositive={true}
-        />
-        <StatCard
-          label="Lowest Price / GB VRAM"
-          value={
-            lowestVramPriceGpu
-              ? `$${(lowestVramPriceGpu.normalizedHourlyUsd / lowestVramPriceGpu.vramGb).toFixed(4)}/GB-hr`
-              : '--'
-          }
-          subtext={
-            lowestVramPriceGpu
-              ? `${lowestVramPriceGpu.hardwareDisplayName} (${lowestVramPriceGpu.provider})`
-              : 'Best VRAM Deal'
-          }
-          accentColor="#06b6d4"
-          trend="Highest VRAM Value"
-          trendPositive={true}
-        />
-        <StatCard
-          label="Lowest On-Demand H100 (80GB)"
-          value={lowestOnDemandH100 ? `$${lowestOnDemandH100.normalizedHourlyUsd.toFixed(2)}/hr` : '--'}
-          subtext={lowestOnDemandH100 ? `${lowestOnDemandH100.provider} (Dedicated SXM5)` : 'Enterprise H100'}
-          accentColor="#3b82f6"
-          trend="No annual commit"
-          trendPositive={true}
-        />
-        <StatCard
-          label="Lowest Token Factory Input"
-          value={lowestTokenFactory ? `$${lowestTokenFactory.inputPricePerMillionUsd}/1M` : '--'}
-          subtext={lowestTokenFactory ? `${lowestTokenFactory.modelName} (${lowestTokenFactory.provider})` : 'MaaS API'}
-          accentColor="#8b5cf6"
-          trend="1M context window"
-          trendPositive={true}
-        />
-        <StatCard
-          label="Monitored Neocloud Catalogs"
-          value={syncAudits.length > 0 ? `${syncAudits.length} Providers` : '7 Neoclouds'}
-          subtext="RunPod, Vast.ai, Baseten, Nebius, JarvisLabs, fal, Runware"
-          accentColor="#f59e0b"
-          trend="Pay-as-you-go"
-          trendPositive={true}
-        />
-      </div>
-
-      {/* Provider Fleet & Real-Time Sync Status Bar */}
+      {/* Multi-Cloud Provider Fleet & Real-Time Sync Status Bar (in table format that can be hidden) */}
       <ProviderFleetBar
         syncAudits={syncAudits}
         onRefreshSync={handleSync}
         isSyncing={isSyncing}
       />
 
-      {isLoading && gpuPricing.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '14px' }}>
-          Loading real-time pricing intelligence from neocloud provider catalogs...
+      {/* Optional Collapsible Historical Price Chart */}
+      {showHistoryChart && historySummaries.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <HistoricalPriceChart summaries={historySummaries} />
         </div>
       )}
 
-      {/* Navigation Sub-Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          borderBottom: '1px solid #1e293b',
-          marginBottom: '20px',
-          gap: '8px',
-          overflowX: 'auto',
-        }}
-      >
-        <button
-          onClick={() => setActiveSubTab('gpus')}
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeSubTab === 'gpus' ? '2px solid #3b82f6' : '2px solid transparent',
-            color: activeSubTab === 'gpus' ? '#f8fafc' : '#94a3b8',
-            fontWeight: 600,
-            fontSize: '14px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          GPU Availability &amp; Pricing ({gpuPricing.length})
-        </button>
-        <button
-          onClick={() => setActiveSubTab('recommendations')}
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeSubTab === 'recommendations' ? '2px solid #8b5cf6' : '2px solid transparent',
-            color: activeSubTab === 'recommendations' ? '#f8fafc' : '#94a3b8',
-            fontWeight: 600,
-            fontSize: '14px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          🎯 Purpose &amp; Model Studio
-        </button>
-        <button
-          onClick={() => setActiveSubTab('vram_matrix')}
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeSubTab === 'vram_matrix' ? '2px solid #06b6d4' : '2px solid transparent',
-            color: activeSubTab === 'vram_matrix' ? '#f8fafc' : '#94a3b8',
-            fontWeight: 600,
-            fontSize: '14px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          ⭐ Best Value &amp; VRAM Matrix
-        </button>
-        <button
-          onClick={() => setActiveSubTab('models')}
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeSubTab === 'models' ? '2px solid #3b82f6' : '2px solid transparent',
-            color: activeSubTab === 'models' ? '#f8fafc' : '#94a3b8',
-            fontWeight: 600,
-            fontSize: '14px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          Open Models &amp; Token Factory ({modelPricing.length})
-        </button>
-        <button
-          onClick={() => setActiveSubTab('history')}
-          style={{
-            padding: '12px 18px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            borderBottom: activeSubTab === 'history' ? '2px solid #3b82f6' : '2px solid transparent',
-            color: activeSubTab === 'history' ? '#f8fafc' : '#94a3b8',
-            fontWeight: 600,
-            fontSize: '14px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          📈 Pricing History &amp; Fluctuations ({historySummaries.length})
-        </button>
-      </div>
-
-      {/* Filter Bar */}
+      {/* Top Filter Bar: Provider, Pricing Model, Model Modality, Execution Type */}
       <div
         style={{
           backgroundColor: '#0f172a',
-          padding: '16px',
+          padding: '14px 16px',
           borderRadius: '10px',
           border: '1px solid #1e293b',
           display: 'flex',
-          gap: '16px',
+          gap: '12px',
           alignItems: 'center',
           flexWrap: 'wrap',
-          marginBottom: '20px',
+          marginBottom: '16px',
         }}
       >
-        <div style={{ flex: '1 1 200px' }}>
+        {/* Search */}
+        <div style={{ flex: '1 1 180px' }}>
           <input
             type="text"
-            placeholder="Search GPU chip, model name, or provider..."
+            placeholder="Search chip, model, or provider..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -653,16 +790,18 @@ export function FinOpsPricingView() {
               backgroundColor: '#1e293b',
               border: '1px solid #334155',
               borderRadius: '6px',
-              padding: '8px 12px',
+              padding: '7px 11px',
               color: '#f8fafc',
-              fontSize: '13px',
+              fontSize: '12px',
               outline: 'none',
+              boxSizing: 'border-box',
             }}
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Provider:</label>
+        {/* Filter 1: Provider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 500 }}>Provider:</label>
           <select
             value={selectedProvider}
             onChange={(e) => setSelectedProvider(e.target.value)}
@@ -671,8 +810,8 @@ export function FinOpsPricingView() {
               color: '#f8fafc',
               border: '1px solid #334155',
               borderRadius: '6px',
-              padding: '8px 12px',
-              fontSize: '13px',
+              padding: '7px 10px',
+              fontSize: '12px',
             }}
           >
             <option value="all">All Providers</option>
@@ -681,7 +820,7 @@ export function FinOpsPricingView() {
             <option value="baseten">Baseten</option>
             <option value="nebius">Nebius AI Studio</option>
             <option value="jarvislabs">JarvisLabs</option>
-            <option value="coreweave">CoreWeave Forge</option>
+            <option value="coreweave">CoreWeave</option>
             <option value="fal">fal.ai</option>
             <option value="runware">Runware</option>
             <option value="hivenet">Hivenet</option>
@@ -693,867 +832,583 @@ export function FinOpsPricingView() {
           </select>
         </div>
 
-        {activeSubTab === 'gpus' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Pricing Model:</label>
-            <select
-              value={selectedPricingModel}
-              onChange={(e) => setSelectedPricingModel(e.target.value)}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                borderRadius: '6px',
-                padding: '8px 12px',
-                fontSize: '13px',
-              }}
-            >
-              <option value="all">All Models</option>
-              <option value="on_demand">On-Demand</option>
-              <option value="spot_bid">Spot / Preemptible</option>
-              <option value="serverless">Serverless Micro-metered</option>
-            </select>
-          </div>
-        )}
+        {/* Filter 2: Pricing Model */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 500 }}>Pricing Model:</label>
+          <select
+            value={selectedPricingModel}
+            onChange={(e) => setSelectedPricingModel(e.target.value)}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              padding: '7px 10px',
+              fontSize: '12px',
+            }}
+          >
+            <option value="all">All Models</option>
+            <option value="spot_bid">Spot / Preemptible</option>
+            <option value="on_demand">On-Demand ($0 Commit)</option>
+            <option value="serverless">Serverless Micro-metered</option>
+            <option value="token_factory">Token Factory (MaaS)</option>
+            <option value="local">Dedicated Local HW</option>
+          </select>
+        </div>
 
-        {activeSubTab === 'models' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <label style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 500 }}>Execution:</label>
-            <select
-              value={selectedExecutionType}
-              onChange={(e) => setSelectedExecutionType(e.target.value)}
+        {/* Filter 3: Model Modality */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 500 }}>Modality:</label>
+          <select
+            value={selectedModality}
+            onChange={(e) => setSelectedModality(e.target.value)}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              padding: '7px 10px',
+              fontSize: '12px',
+            }}
+          >
+            <option value="all">All Modalities</option>
+            <option value="text_to_text">Text-to-Text (LLM)</option>
+            <option value="text_to_image">Text-to-Image (Diffusion)</option>
+            <option value="text_to_video">Text-to-Video</option>
+            <option value="speech_to_text">Speech-to-Text (Audio)</option>
+            <option value="code_reasoning">Code &amp; Reasoning</option>
+            <option value="raw_compute">Raw GPU Compute</option>
+          </select>
+        </div>
+
+        {/* Filter 4: Execution Type */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <label style={{ color: '#94a3b8', fontSize: '12px', fontWeight: 500 }}>Execution:</label>
+          <select
+            value={selectedExecutionType}
+            onChange={(e) => setSelectedExecutionType(e.target.value)}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#f8fafc',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              padding: '7px 10px',
+              fontSize: '12px',
+            }}
+          >
+            <option value="all">All Execution Types</option>
+            <option value="dedicated_gpu">Dedicated Cloud GPU</option>
+            <option value="token_factory">Token Factory (MaaS)</option>
+            <option value="serverless">Serverless Container</option>
+            <option value="pay_per_call">Pay-Per-Call Media</option>
+            <option value="local">Local Workstation</option>
+          </select>
+        </div>
+
+        {/* Reset Filters & Results Count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+          <span
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#38bdf8',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            {sortedResults.length} Results
+          </span>
+          {hasActiveFilters && (
+            <button
+              onClick={handleResetFilters}
               style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                borderRadius: '6px',
-                padding: '8px 12px',
-                fontSize: '13px',
+                backgroundColor: 'transparent',
+                color: '#94a3b8',
+                border: '1px solid #475569',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                cursor: 'pointer',
               }}
             >
-              <option value="all">All Execution Types</option>
-              <option value="token_factory">Token Factory (MaaS)</option>
-              <option value="serverless_endpoint">Serverless Container</option>
-              <option value="pay_per_call">Pay-Per-Call Media</option>
-            </select>
-          </div>
-        )}
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* SUBTAB: Model Recommendation & Hardware Studio */}
-      {activeSubTab === 'recommendations' && (
-        <ModelRecommendationStudio
-          gpuPricing={gpuPricing}
-          modelPricing={modelPricing}
-        />
-      )}
-
-      {/* TAB A: GPU Availability & Pricing */}
-      {activeSubTab === 'gpus' && (
-        <div
-          style={{
-            backgroundColor: '#0f172a',
-            borderRadius: '12px',
-            border: '1px solid #1e293b',
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
-                  <SortableHeader
-                    column="provider"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Provider
-                  </SortableHeader>
-                  <SortableHeader
-                    column="hardwareDisplayName"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Hardware Chip
-                  </SortableHeader>
-                  <SortableHeader
-                    column="vramGb"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    VRAM
-                  </SortableHeader>
-                  <SortableHeader
-                    column="hourlyPrice"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Price ($/hr)
-                  </SortableHeader>
-                  <SortableHeader
-                    column="throughput"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px', color: '#c084fc' }}
-                  >
-                    HW Throughput (8B Ref)
-                  </SortableHeader>
-                  <SortableHeader
-                    column="costEfficiency"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px', color: '#34d399' }}
-                  >
-                    Cost-Efficiency (Tokens / $)
-                  </SortableHeader>
-                  <SortableHeader
-                    column="vramPrice"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px', color: '#06b6d4' }}
-                  >
-                    Cost / GB VRAM
-                  </SortableHeader>
-                  <SortableHeader
-                    column="pricingModel"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Pricing Model
-                  </SortableHeader>
-                  <SortableHeader
-                    column="obtainabilityScore"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Availability &amp; Source
-                  </SortableHeader>
-                  <SortableHeader
-                    column="interruptionRiskTier"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Risk Tier &amp; Policy
-                  </SortableHeader>
-                  <SortableHeader
-                    column="commitment"
-                    currentSortKey={gpuSortKey}
-                    currentSortDir={gpuSortDir}
-                    onSort={handleGpuSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Commitment
-                  </SortableHeader>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGpus.map((item, idx) => {
-                  const vramRate = item.normalizedHourlyUsd / item.vramGb;
-                  const isTopVramValue = vramRate <= 0.015;
-                  const perf = getGpuPerformance(item);
-                  const links = PROVIDER_CONSOLE_LINKS[item.provider.toLowerCase()] || {
-                    capacityUrl: '#',
-                    spotPolicyUrl: '#',
-                  };
-
-                  const isUltraValue = perf.tokensPerDollar >= 1_000_000;
-                  const isTopEfficiency = !isUltraValue && perf.tokensPerDollar >= 800_000;
-                  const isSweetSpot = !isUltraValue && !isTopEfficiency && perf.tokensPerDollar >= 500_000;
-                  const isMaxThroughput = perf.tokensPerSec >= 180;
-
-                  return (
-                    <tr
-                      key={item.id}
-                      style={{
-                        borderBottom: '1px solid #1e293b',
-                        backgroundColor: idx % 2 === 0 ? 'transparent' : '#1e293b20',
-                      }}
-                    >
-                      <td style={{ padding: '14px 16px', fontWeight: 600, color: '#f8fafc' }}>
-                        <a
-                          href={links.capacityUrl}
-                          target={links.capacityUrl.startsWith('http') ? '_blank' : '_self'}
-                          rel="noopener noreferrer"
-                          title={`View ${item.provider.toUpperCase()} GPU console`}
-                          style={{
-                            backgroundColor: '#3b82f620',
-                            color: '#60a5fa',
-                            padding: '3px 8px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            textDecoration: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '3px',
-                          }}
-                        >
-                          {item.provider.toUpperCase()}
-                          {links.capacityUrl.startsWith('http') && <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>}
-                        </a>
-                      </td>
-                      <td style={{ padding: '14px 16px', color: '#f1f5f9', fontWeight: 500 }}>
-                        <div style={{ fontWeight: 600 }}>{item.hardwareDisplayName}</div>
-                        <div style={{ fontSize: '11px', color: '#64748b' }}>{perf.architecture}</div>
-                      </td>
-                      <td style={{ padding: '14px 16px', color: '#94a3b8' }}>{item.vramGb} GB</td>
-                      <td style={{ padding: '14px 16px', color: '#10b981', fontWeight: 700, fontSize: '14px' }}>
-                        ${item.normalizedHourlyUsd.toFixed(3)}
-                      </td>
-                      {/* HW Performance in Tokens/sec */}
-                      <td style={{ padding: '14px 16px' }}>
-                        <div
-                          title={perf.description}
-                          style={{ cursor: 'help' }}
-                        >
-                          <div style={{ color: '#c084fc', fontWeight: 700, fontSize: '13px' }}>
-                            {perf.tokensPerSec} tok/s
-                          </div>
-                          <div style={{ fontSize: '10px', color: '#94a3b8' }}>
-                            FP16 / FP8 Tensor
-                          </div>
-                        </div>
-                      </td>
-                      {/* Cost-Efficiency: Tokens per Dollar & $/1M tokens */}
-                      <td style={{ padding: '14px 16px' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ color: '#34d399', fontWeight: 700, fontSize: '13px' }}>
-                              {(perf.tokensPerDollar / 1000).toFixed(0)}K tok/$
-                            </span>
-                            {isUltraValue && (
-                              <span
-                                style={{
-                                  backgroundColor: 'rgba(52, 211, 153, 0.15)',
-                                  color: '#34d399',
-                                  fontSize: '9px',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                🚀 ULTRA VALUE
-                              </span>
-                            )}
-                            {isTopEfficiency && (
-                              <span
-                                style={{
-                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                                  color: '#10b981',
-                                  fontSize: '9px',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                🏆 TOP EFFICIENCY
-                              </span>
-                            )}
-                            {isSweetSpot && (
-                              <span
-                                style={{
-                                  backgroundColor: 'rgba(56, 189, 248, 0.15)',
-                                  color: '#38bdf8',
-                                  fontSize: '9px',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                ⚡ SWEET SPOT
-                              </span>
-                            )}
-                            {isMaxThroughput && !isUltraValue && !isTopEfficiency && (
-                              <span
-                                style={{
-                                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                                  color: '#f87171',
-                                  fontSize: '9px',
-                                  padding: '1px 5px',
-                                  borderRadius: '3px',
-                                  fontWeight: 700,
-                                }}
-                              >
-                                🔥 MAX SPEED
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                            ${perf.costPerMillion.toFixed(2)} / 1M tokens
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: '14px 16px', color: '#06b6d4', fontWeight: 600 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>${vramRate.toFixed(4)}/GB</span>
-                          {isTopVramValue && (
-                            <span
-                              style={{
-                                backgroundColor: '#06b6d420',
-                                color: '#06b6d4',
-                                fontSize: '10px',
-                                padding: '1px 5px',
-                                borderRadius: '3px',
-                                fontWeight: 700,
-                              }}
-                            >
-                              TOP VALUE
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <span
-                          style={{
-                            color:
-                              item.pricingModel === 'spot_bid'
-                                ? '#34d399'
-                                : item.pricingModel === 'serverless'
-                                  ? '#a78bfa'
-                                  : '#38bdf8',
-                            fontWeight: 600,
-                            fontSize: '12px',
-                          }}
-                        >
-                          {item.pricingModel.replace('_', ' ').toUpperCase()}
-                        </span>
-                      </td>
-                      {/* Availability Score with Tooltip and Capacity Link */}
-                      <td style={{ padding: '14px 16px' }}>
-                        <a
-                          href={links.capacityUrl}
-                          target={links.capacityUrl.startsWith('http') ? '_blank' : '_self'}
-                          rel="noopener noreferrer"
-                          title={`Availability Calculation: Obtainability Score = (Available Instances / Total Capacity Pool) × (1 - Queue Saturation). ${(item.obtainabilityScore * 100).toFixed(0)}% instant placement probability in ${item.zone}. Click to inspect live capacity.`}
-                          style={{
-                            backgroundColor:
-                              item.obtainabilityLabel === 'High'
-                                ? '#10b98120'
-                                : item.obtainabilityLabel === 'Medium'
-                                  ? '#f59e0b20'
-                                  : '#ef444420',
-                            color:
-                              item.obtainabilityLabel === 'High'
-                                ? '#34d399'
-                                : item.obtainabilityLabel === 'Medium'
-                                  ? '#fbbf24'
-                                  : '#f87171',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            textDecoration: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {item.obtainabilityLabel} ({(item.obtainabilityScore * 100).toFixed(0)}%)
-                          <span style={{ fontSize: '9px', opacity: 0.8 }}>↗</span>
-                        </a>
-                      </td>
-                      {/* Risk Tier with Tooltip and Spot Policy Link */}
-                      <td style={{ padding: '14px 16px', fontSize: '12px' }}>
-                        <a
-                          href={links.spotPolicyUrl}
-                          target={links.spotPolicyUrl.startsWith('http') ? '_blank' : '_self'}
-                          rel="noopener noreferrer"
-                          title={`Interruption Risk Profile: ${item.interruptionRiskTier} based on 30-day preemption frequency. Click to inspect provider spot eviction policy & notice window.`}
-                          style={{
-                            color: item.interruptionRiskTier === 'guaranteed' ? '#38bdf8' : '#f59e0b',
-                            fontWeight: 600,
-                            textDecoration: 'none',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            borderBottom: '1px dotted currentColor',
-                          }}
-                        >
-                          {item.interruptionRiskTier}
-                          <span style={{ fontSize: '9px', opacity: 0.8 }}>↗</span>
-                        </a>
-                      </td>
-                      <td style={{ padding: '14px 16px', color: '#64748b', fontSize: '12px' }}>
-                        {item.commitment}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      {isLoading && unifiedResults.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '14px' }}>
+          Loading real-time pricing intelligence from neocloud provider catalogs...
         </div>
       )}
 
-      {/* TAB B: Best Value & VRAM Matrix */}
-      {activeSubTab === 'vram_matrix' && (
-        <div>
-          {/* VRAM Tiers Cards */}
-          <div style={{ marginBottom: '32px' }}>
-            <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
-              Best Price per VRAM Capacity Tier ($/hr & $/GB-hr)
-            </h3>
-            <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', marginTop: 0 }}>
-              Workloads requiring specific memory budgets (16GB, 24GB, 32GB, 80GB) mapped to the cheapest verified provider.
-            </p>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                gap: '16px',
-              }}
-            >
-              {vramTierMatrix.map((tier) => (
-                <div
-                  key={tier.label}
-                  style={{
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #1e293b',
-                    borderRadius: '12px',
-                    padding: '20px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                  }}
+      {/* Results Table: Columns Provider, HW -short name, eg. 5070 Ti (16GB)-, Price, Throughput, Cost-Efficiency, Pricing Model (with preemption policy), Availability, Reliability, Risk */}
+      <div
+        style={{
+          backgroundColor: '#0f172a',
+          borderRadius: '10px',
+          border: '1px solid #1e293b',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              textAlign: 'left',
+              fontSize: '12px',
+            }}
+          >
+            <thead>
+              <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
+                <SortableHeader
+                  column="provider"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
                 >
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>
-                        {tier.label}
-                      </span>
-                      <span
-                        style={{
-                          backgroundColor: '#06b6d420',
-                          color: '#06b6d4',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {tier.totalOptions} Options
-                      </span>
-                    </div>
-                    <p style={{ color: '#64748b', fontSize: '12px', marginTop: '4px', marginBottom: '16px' }}>
-                      {tier.desc}
-                    </p>
-
-                    {/* Best Spot Deal */}
-                    <div
-                      style={{
-                        backgroundColor: '#1e293b',
-                        borderRadius: '8px',
-                        padding: '12px',
-                        marginBottom: '10px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                        <span style={{ color: '#10b981', fontSize: '11px', fontWeight: 700 }}>
-                          BEST SPOT / PREEMPTIBLE
-                        </span>
-                        {tier.bestSpot && (
-                          <span style={{ color: '#34d399', fontSize: '13px', fontWeight: 700 }}>
-                            ${tier.bestSpot.normalizedHourlyUsd.toFixed(3)}/hr
-                          </span>
-                        )}
-                      </div>
-                      {tier.bestSpot ? (
-                        <div>
-                          <div style={{ color: '#f8fafc', fontWeight: 600, fontSize: '13px' }}>
-                            {tier.bestSpot.hardwareDisplayName} ({tier.bestSpot.provider.toUpperCase()})
-                          </div>
-                          <div style={{ color: '#06b6d4', fontSize: '11px', marginTop: '2px' }}>
-                            ${(tier.bestSpot.normalizedHourlyUsd / tier.bestSpot.vramGb).toFixed(4)} / GB-hr • Risk: {tier.bestSpot.interruptionRiskTier}
-                          </div>
-                        </div>
-                      ) : (
-                        <span style={{ color: '#64748b', fontSize: '12px' }}>No spot offers available</span>
-                      )}
-                    </div>
-
-                    {/* Best On-Demand Deal */}
-                    <div
-                      style={{
-                        backgroundColor: '#1e293b',
-                        borderRadius: '8px',
-                        padding: '12px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                        <span style={{ color: '#38bdf8', fontSize: '11px', fontWeight: 700 }}>
-                          BEST ON-DEMAND ($0 COMMIT)
-                        </span>
-                        {tier.bestOnDemand && (
-                          <span style={{ color: '#60a5fa', fontSize: '13px', fontWeight: 700 }}>
-                            ${tier.bestOnDemand.normalizedHourlyUsd.toFixed(2)}/hr
-                          </span>
-                        )}
-                      </div>
-                      {tier.bestOnDemand ? (
-                        <div>
-                          <div style={{ color: '#f8fafc', fontWeight: 600, fontSize: '13px' }}>
-                            {tier.bestOnDemand.hardwareDisplayName} ({tier.bestOnDemand.provider.toUpperCase()})
-                          </div>
-                          <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '2px' }}>
-                            ${(tier.bestOnDemand.normalizedHourlyUsd / tier.bestOnDemand.vramGb).toFixed(4)} / GB-hr • Availability: {tier.bestOnDemand.obtainabilityLabel}
-                          </div>
-                        </div>
-                      ) : (
-                        <span style={{ color: '#64748b', fontSize: '12px' }}>No on-demand offers</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Open Model Best Deals Comparison Table */}
-          <div style={{ marginBottom: '32px' }}>
-            <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
-              Best Price per Open Model Across Providers
-            </h3>
-            <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', marginTop: 0 }}>
-              Identifies the lowest cost provider for each open model family (Token Factory MaaS vs Serverless vs Pay-Per-Call).
-            </p>
-            <div
-              style={{
-                backgroundColor: '#0f172a',
-                borderRadius: '12px',
-                border: '1px solid #1e293b',
-                overflow: 'hidden',
-              }}
-            >
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Model Name</th>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Developer</th>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Cheapest Provider</th>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Execution Modality</th>
-                      <th style={{ padding: '14px 16px', color: '#10b981', fontWeight: 600 }}>Best Input Rate</th>
-                      <th style={{ padding: '14px 16px', color: '#60a5fa', fontWeight: 600 }}>Output Rate</th>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Cached Discount</th>
-                      <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Options Count</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {openModelBestDeals.map((deal, idx) => (
-                      <tr
-                        key={deal.modelName}
-                        style={{
-                          borderBottom: '1px solid #1e293b',
-                          backgroundColor: idx % 2 === 0 ? 'transparent' : '#1e293b20',
-                        }}
-                      >
-                        <td style={{ padding: '14px 16px', color: '#f8fafc', fontWeight: 600 }}>
-                          {deal.modelName}
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#cbd5e1' }}>{deal.developer}</td>
-                        <td style={{ padding: '14px 16px' }}>
-                          <span
-                            style={{
-                              backgroundColor: '#10b98120',
-                              color: '#34d399',
-                              padding: '3px 8px',
-                              borderRadius: '4px',
-                              fontSize: '12px',
-                              fontWeight: 700,
-                            }}
-                          >
-                            {deal.bestOption.provider.toUpperCase()}
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#cbd5e1', fontSize: '12px' }}>
-                          {deal.bestOption.executionType.replace('_', ' ').toUpperCase()}
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#10b981', fontWeight: 700 }}>
-                          {deal.bestOption.inputPricePerMillionUsd !== undefined
-                            ? `$${deal.bestOption.inputPricePerMillionUsd.toFixed(2)} / 1M`
-                            : deal.bestOption.perUnitUsd !== undefined
-                              ? `$${deal.bestOption.perUnitUsd} / ${deal.bestOption.unitType}`
-                              : '--'}
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#60a5fa', fontWeight: 600 }}>
-                          {deal.bestOption.outputPricePerMillionUsd !== undefined
-                            ? `$${deal.bestOption.outputPricePerMillionUsd.toFixed(2)} / 1M`
-                            : '--'}
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#94a3b8', fontSize: '12px' }}>
-                          {deal.bestOption.cachedPricePerMillionUsd !== undefined
-                            ? `$${deal.bestOption.cachedPricePerMillionUsd.toFixed(3)} / 1M`
-                            : '--'}
-                        </td>
-                        <td style={{ padding: '14px 16px', color: '#64748b', fontSize: '12px' }}>
-                          {deal.totalProviders} Provider{deal.totalProviders > 1 ? 's' : ''}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB C: Open Models & Token Factory */}
-      {activeSubTab === 'models' && (
-        <div
-          style={{
-            backgroundColor: '#0f172a',
-            borderRadius: '12px',
-            border: '1px solid #1e293b',
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155' }}>
-                  <SortableHeader
-                    column="provider"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
+                  Provider
+                </SortableHeader>
+                <SortableHeader
+                  column="hw"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
+                >
+                  HW (Chip &amp; Model)
+                </SortableHeader>
+                <SortableHeader
+                  column="price"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px', color: '#10b981' }}
+                >
+                  Price
+                </SortableHeader>
+                <SortableHeader
+                  column="throughput"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px', color: '#c084fc' }}
+                >
+                  Throughput
+                </SortableHeader>
+                <SortableHeader
+                  column="costEfficiency"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px', color: '#34d399' }}
+                >
+                  Cost-Efficiency
+                </SortableHeader>
+                <SortableHeader
+                  column="pricingModel"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
+                >
+                  Pricing Model (Preemption Policy)
+                </SortableHeader>
+                <SortableHeader
+                  column="availability"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
+                >
+                  Availability
+                </SortableHeader>
+                <SortableHeader
+                  column="reliability"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
+                >
+                  Reliability
+                </SortableHeader>
+                <SortableHeader
+                  column="risk"
+                  currentSortKey={sortKey}
+                  currentSortDir={sortDir}
+                  onSort={handleSort}
+                  style={{ padding: '12px 14px' }}
+                >
+                  Risk
+                </SortableHeader>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedResults.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={9}
+                    style={{
+                      textAlign: 'center',
+                      padding: '36px',
+                      color: '#64748b',
+                      fontSize: '13px',
+                    }}
                   >
-                    Provider
-                  </SortableHeader>
-                  <SortableHeader
-                    column="modelName"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Model ID &amp; Name
-                  </SortableHeader>
-                  <SortableHeader
-                    column="developer"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Developer
-                  </SortableHeader>
-                  <SortableHeader
-                    column="executionType"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Execution Type
-                  </SortableHeader>
-                  <SortableHeader
-                    column="inputPrice"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px', color: '#10b981' }}
-                  >
-                    Input Rate
-                  </SortableHeader>
-                  <SortableHeader
-                    column="outputPrice"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px', color: '#60a5fa' }}
-                  >
-                    Output Rate
-                  </SortableHeader>
-                  <SortableHeader
-                    column="cachedPrice"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Cached Input
-                  </SortableHeader>
-                  <SortableHeader
-                    column="contextLength"
-                    currentSortKey={modelSortKey}
-                    currentSortDir={modelSortDir}
-                    onSort={handleModelSort}
-                    style={{ padding: '14px 16px' }}
-                  >
-                    Context Window
-                  </SortableHeader>
-                  <th style={{ padding: '14px 16px', color: '#94a3b8', fontWeight: 600 }}>Status</th>
+                    No matching offerings found for the selected filter combination. Click Reset to clear filters.
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {sortedModels.map((item, idx) => (
+              ) : (
+                sortedResults.map((item, idx) => (
                   <tr
                     key={item.id}
                     style={{
                       borderBottom: '1px solid #1e293b',
                       backgroundColor: idx % 2 === 0 ? 'transparent' : '#1e293b20',
+                      transition: 'background-color 0.15s ease',
                     }}
                   >
-                    <td style={{ padding: '14px 16px', fontWeight: 600 }}>
-                      <span
+                    {/* 1. Provider */}
+                    <td style={{ padding: '12px 14px', fontWeight: 600 }}>
+                      <a
+                        href={item.availabilityUrl}
+                        target={item.availabilityUrl.startsWith('http') ? '_blank' : '_self'}
+                        rel="noopener noreferrer"
+                        title={`View ${item.providerDisplayName} console & infrastructure`}
                         style={{
-                          backgroundColor: '#8b5cf620',
-                          color: '#a78bfa',
-                          padding: '3px 8px',
+                          backgroundColor: '#3b82f620',
+                          color: '#60a5fa',
+                          padding: '3px 7px',
                           borderRadius: '4px',
-                          fontSize: '12px',
+                          fontSize: '11px',
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
                         }}
                       >
-                        {item.provider.toUpperCase()}
-                      </span>
+                        {item.providerDisplayName}
+                        {item.availabilityUrl.startsWith('http') && (
+                          <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>
+                        )}
+                      </a>
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <div style={{ color: '#f8fafc', fontWeight: 600 }}>{item.modelName}</div>
-                      <div style={{ color: '#64748b', fontSize: '11px', fontFamily: 'monospace' }}>
-                        {item.modelId}
+
+                    {/* 2. HW (short name, eg. 5070 Ti (16GB)) with Model & Open vs Proprietary Badge */}
+                    <td style={{ padding: '12px 14px' }}>
+                      {item.modelName ? (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 700, color: '#f8fafc', fontSize: '13px' }}>
+                              {item.modelName}
+                            </span>
+                            {/* Open vs Proprietary Badge (no filter on top, marked with badge/icon) */}
+                            {item.weightType === 'open' ? (
+                              <span
+                                title="Open Weights Model (Community / Apache 2.0 License)"
+                                style={{
+                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                                  color: '#34d399',
+                                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                                  borderRadius: '4px',
+                                  padding: '1px 5px',
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '2px',
+                                }}
+                              >
+                                🟢 Open
+                              </span>
+                            ) : (
+                              <span
+                                title="Proprietary / Closed Enterprise Weights"
+                                style={{
+                                  backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                  color: '#fbbf24',
+                                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                                  borderRadius: '4px',
+                                  padding: '1px 5px',
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '2px',
+                                }}
+                              >
+                                🔒 Proprietary
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '11px',
+                              color: '#94a3b8',
+                              marginTop: '2px',
+                              display: 'flex',
+                              gap: '6px',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <span style={{ color: '#38bdf8', fontWeight: 600 }}>{item.hwShortName}</span>
+                            <span>•</span>
+                            <span>{item.hwArchitecture}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: 700, color: '#f8fafc', fontSize: '13px' }}>
+                              {item.hwShortName}
+                            </span>
+                            <span
+                              style={{
+                                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                                color: '#38bdf8',
+                                border: '1px solid rgba(56, 189, 248, 0.3)',
+                                borderRadius: '4px',
+                                padding: '1px 5px',
+                                fontSize: '10px',
+                                fontWeight: 700,
+                              }}
+                            >
+                              Hardware Chip
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                            {item.hwArchitecture}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+
+                    {/* 3. Price */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ color: '#10b981', fontWeight: 700, fontSize: '13px' }}>
+                        {item.priceDisplay}
+                      </div>
+                      {item.priceSubtext && (
+                        <div style={{ fontSize: '10px', color: '#64748b', marginTop: '1px' }}>
+                          {item.priceSubtext}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* 4. Throughput */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ color: '#c084fc', fontWeight: 700, fontSize: '12px' }}>
+                        {item.throughputDisplay}
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '1px' }}>
+                        {item.throughputSubtext}
                       </div>
                     </td>
-                    <td style={{ padding: '14px 16px', color: '#cbd5e1' }}>{item.developer}</td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <span
+
+                    {/* 5. Cost-Efficiency */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ color: '#34d399', fontWeight: 700, fontSize: '12px' }}>
+                          {item.costEfficiencyDisplay}
+                        </span>
+                        {item.efficiencyBadge === 'ultra_value' && (
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                              color: '#34d399',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            🚀 ULTRA
+                          </span>
+                        )}
+                        {item.efficiencyBadge === 'top_efficiency' && (
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                              color: '#10b981',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            🏆 TOP
+                          </span>
+                        )}
+                        {item.efficiencyBadge === 'sweet_spot' && (
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                              color: '#38bdf8',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            ⚡ SWEET
+                          </span>
+                        )}
+                        {item.efficiencyBadge === 'max_speed' && (
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                              color: '#f87171',
+                              fontSize: '9px',
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            🔥 SPEED
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '1px' }}>
+                        ${item.costPerMillionUsd.toFixed(2)}/1M tok
+                      </div>
+                    </td>
+
+                    {/* 6. Pricing Model (with preemption policy) */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span
+                          style={{
+                            color:
+                              item.pricingModel === 'spot_bid' || item.pricingModel === 'spot'
+                                ? '#34d399'
+                                : item.pricingModel === 'serverless' || item.pricingModel === 'serverless_endpoint'
+                                  ? '#a78bfa'
+                                  : item.pricingModel === 'token_factory'
+                                    ? '#c084fc'
+                                    : item.pricingModel === 'local'
+                                      ? '#38bdf8'
+                                      : '#60a5fa',
+                            fontWeight: 700,
+                            fontSize: '11px',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {item.pricingModelLabel}
+                        </span>
+                        <a
+                          href={item.preemptionPolicyUrl}
+                          target={item.preemptionPolicyUrl.startsWith('http') ? '_blank' : '_self'}
+                          rel="noopener noreferrer"
+                          title={`Preemption & Spot Eviction Policy: ${item.preemptionPolicy}. Click to inspect provider documentation.`}
+                          style={{
+                            fontSize: '10px',
+                            color: '#94a3b8',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            borderBottom: '1px dotted #475569',
+                          }}
+                        >
+                          <span>{item.preemptionPolicy}</span>
+                          {item.preemptionPolicyUrl.startsWith('http') && (
+                            <span style={{ fontSize: '8px', opacity: 0.7 }}>↗</span>
+                          )}
+                        </a>
+                      </div>
+                    </td>
+
+                    {/* 7. Availability */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <a
+                        href={item.availabilityUrl}
+                        target={item.availabilityUrl.startsWith('http') ? '_blank' : '_self'}
+                        rel="noopener noreferrer"
+                        title={`Availability: ${(item.availabilityScore * 100).toFixed(0)}% instant placement probability. Click to inspect live console capacity.`}
                         style={{
-                          color: item.executionType === 'token_factory' ? '#38bdf8' : '#fb923c',
-                          fontWeight: 500,
-                          fontSize: '12px',
+                          backgroundColor:
+                            item.availabilityLabel.includes('High') || item.availabilityLabel.includes('Instant')
+                              ? '#10b98120'
+                              : item.availabilityLabel.includes('Medium')
+                                ? '#f59e0b20'
+                                : '#ef444420',
+                          color:
+                            item.availabilityLabel.includes('High') || item.availabilityLabel.includes('Instant')
+                              ? '#34d399'
+                              : item.availabilityLabel.includes('Medium')
+                                ? '#fbbf24'
+                                : '#f87171',
+                          padding: '2px 7px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
                         }}
                       >
-                        {item.executionType.replace('_', ' ').toUpperCase()}
-                      </span>
+                        {item.availabilityLabel}
+                        <span style={{ fontSize: '8px', opacity: 0.8 }}>↗</span>
+                      </a>
                     </td>
-                    <td style={{ padding: '14px 16px', color: '#10b981', fontWeight: 600 }}>
-                      {item.inputPricePerMillionUsd !== undefined
-                        ? `$${item.inputPricePerMillionUsd.toFixed(2)} / 1M`
-                        : item.perUnitUsd !== undefined
-                          ? `$${item.perUnitUsd} / ${item.unitType}`
-                          : '--'}
+
+                    {/* 8. Reliability */}
+                    <td style={{ padding: '12px 14px', color: '#f1f5f9', fontSize: '11px', fontWeight: 600 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span
+                          style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            backgroundColor:
+                              item.reliability.includes('99.') || item.reliability.includes('100%')
+                                ? '#10b981'
+                                : '#f59e0b',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span>{item.reliability}</span>
+                      </div>
                     </td>
-                    <td style={{ padding: '14px 16px', color: '#60a5fa', fontWeight: 600 }}>
-                      {item.outputPricePerMillionUsd !== undefined
-                        ? `$${item.outputPricePerMillionUsd.toFixed(2)} / 1M`
-                        : '--'}
-                    </td>
-                    <td style={{ padding: '14px 16px', color: '#94a3b8', fontSize: '12px' }}>
-                      {item.cachedPricePerMillionUsd !== undefined
-                        ? `$${item.cachedPricePerMillionUsd.toFixed(3)} / 1M`
-                        : '--'}
-                    </td>
-                    <td style={{ padding: '14px 16px', color: '#cbd5e1', fontSize: '12px' }}>
-                      {item.contextLength
-                        ? `${(item.contextLength / 1024).toFixed(0)}k tokens`
-                        : 'Fixed'}
-                    </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <StatusBadge status={item.isAvailable ? 'healthy' : 'degraded'} />
+
+                    {/* 9. Risk */}
+                    <td style={{ padding: '12px 14px', fontSize: '11px' }}>
+                      <a
+                        href={item.riskUrl}
+                        target={item.riskUrl.startsWith('http') ? '_blank' : '_self'}
+                        rel="noopener noreferrer"
+                        title={`Interruption Risk Profile: ${item.riskTier}. Click to inspect spot preemption policy.`}
+                        style={{
+                          color:
+                            item.riskTier === 'guaranteed' || item.riskTier === 'Guaranteed (0%)'
+                              ? '#38bdf8'
+                              : item.riskTier === '<5%'
+                                ? '#34d399'
+                                : '#f59e0b',
+                          fontWeight: 600,
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          borderBottom: '1px dotted currentColor',
+                        }}
+                      >
+                        {item.riskTier}
+                        <span style={{ fontSize: '8px', opacity: 0.8 }}>↗</span>
+                      </a>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {/* TAB D: Pricing History & Update Cadence */}
-      {activeSubTab === 'history' && (
-        <div>
-          {/* Interactive Historical Price SVG Line Chart */}
-          <HistoricalPriceChart summaries={historySummaries} />
-
-          {/* Provider Update Frequency Cards */}
-          <div style={{ marginBottom: '24px' }}>
-            <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>
-              Provider Pricing Update Cadence &amp; Telemetry
-            </h3>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                gap: '16px',
-              }}
-            >
-              {syncAudits.map((audit) => (
-                <div
-                  key={audit.id}
-                  style={{
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #1e293b',
-                    borderRadius: '10px',
-                    padding: '16px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span
-                      style={{
-                        backgroundColor: '#3b82f620',
-                        color: '#60a5fa',
-                        padding: '2px 8px',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {audit.provider.toUpperCase()}
-                    </span>
-                    <span
-                      style={{
-                        color:
-                          audit.updateCadenceCategory === 'realtime_auction'
-                            ? '#34d399'
-                            : audit.updateCadenceCategory === 'dynamic_shifts'
-                              ? '#38bdf8'
-                              : '#a78bfa',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {audit.updateCadenceCategory.replace('_', ' ').toUpperCase()}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: '12px', color: '#f8fafc', fontSize: '13px', fontWeight: 600 }}>
-                    {audit.updateFrequencyDescription}
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginTop: '8px',
-                      color: '#64748b',
-                      fontSize: '12px',
-                    }}
-                  >
-                    <span>Expected Interval: ~{(audit.estimatedUpdateIntervalSec / 60).toFixed(0)} mins</span>
-                    <span>Records: {audit.recordsCount}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
