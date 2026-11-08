@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { ProviderFleetStatus, PricingSyncAudit } from '../../types';
+import type { ProviderFleetStatus, PricingSyncAudit, ProviderBalanceStatus } from '../../types';
 
 interface ProviderFleetBarProps {
   syncAudits: PricingSyncAudit[];
+  providerBalances?: Record<string, ProviderBalanceStatus>;
   onRefreshSync?: () => void;
   isSyncing?: boolean;
 }
@@ -18,7 +19,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Live Spot Auction & Community Pods',
     estimatedUpdateIntervalSec: 120,
     allowedPricingModels: ['on_demand', 'spot', 'serverless'],
-    availableCreditsUsd: 15.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '2-min grace notice',
@@ -47,7 +48,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Unregulated Spot Bid & Auction Market',
     estimatedUpdateIntervalSec: 60,
     allowedPricingModels: ['on_demand', 'spot'],
-    availableCreditsUsd: 84.2,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '5-10% risk',
     interruptionNoticeWindow: 'Instant on outbid threshold',
@@ -76,7 +77,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Scale-to-Zero Micro-Metered Serverless',
     estimatedUpdateIntervalSec: 600,
     allowedPricingModels: ['serverless', 'on_demand'],
-    availableCreditsUsd: 250.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: 'Guaranteed (0%)',
     interruptionNoticeWindow: 'Zero interruption (Dedicated)',
@@ -105,7 +106,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Tier 3+ Neocloud Capacity & Preemptible',
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['on_demand', 'spot'],
-    availableCreditsUsd: 120.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '30-sec SIGTERM notice',
@@ -134,7 +135,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Token Factory MaaS & Instant Pods',
     estimatedUpdateIntervalSec: 180,
     allowedPricingModels: ['token_factory', 'on_demand', 'spot'],
-    availableCreditsUsd: 50.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '2-min grace notice',
@@ -163,7 +164,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Kubernetes Cloud GPU & Interruptible Virtual Servers',
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['on_demand', 'spot', 'serverless'],
-    availableCreditsUsd: 175.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '2-min K8s grace',
@@ -192,7 +193,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Real-Time Diffusion & Media Inference',
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['pay_per_call'],
-    availableCreditsUsd: 45.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: 'Guaranteed (0%)',
     interruptionNoticeWindow: 'Zero interruption (API)',
@@ -221,7 +222,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Shared Serverless Engine per Megapixel',
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['pay_per_call', 'serverless'],
-    availableCreditsUsd: 35.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: 'Guaranteed (0%)',
     interruptionNoticeWindow: 'Zero interruption (API)',
@@ -250,7 +251,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Decentralized P2P Compute & Elastic Spot Grid',
     estimatedUpdateIntervalSec: 60,
     allowedPricingModels: ['spot', 'on_demand'],
-    availableCreditsUsd: 65.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '5-10% risk',
     interruptionNoticeWindow: '1-min node drain',
@@ -279,7 +280,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Sub-Second Accelerated Media & Token Engine',
     estimatedUpdateIntervalSec: 180,
     allowedPricingModels: ['serverless', 'pay_per_call'],
-    availableCreditsUsd: 80.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: 'Guaranteed (0%)',
     interruptionNoticeWindow: 'Zero interruption (API)',
@@ -308,7 +309,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     updateFrequencyDescription: 'Private Enterprise Bare-Metal & Scheduled Cluster',
     estimatedUpdateIntervalSec: 1800,
     allowedPricingModels: ['on_demand', 'spot'],
-    availableCreditsUsd: 110.0,
+    availableCreditsUsd: null,
     creditType: 'prepaid_credits',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '5-min graceful notice',
@@ -418,27 +419,36 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
 
 export function ProviderFleetBar({
   syncAudits,
+  providerBalances,
   onRefreshSync,
   isSyncing = false,
 }: ProviderFleetBarProps) {
   const [isTableVisible, setIsTableVisible] = useState(false);
   const [selectedProviderDetail, setSelectedProviderDetail] = useState<
-    (ProviderFleetStatus & { liveBalanceUsd?: number | null }) | null
+    (ProviderFleetStatus & { liveBalanceUsd?: number | null; balanceStatus?: string }) | null
   >(null);
 
-  // Merge dynamic sync audits with baseline providers
+  // Merge dynamic sync audits and live provider balances with baseline providers
   const providers = DEFAULT_PROVIDER_FLEET.map((p) => {
     const audit = syncAudits.find((a) => a.provider.toLowerCase() === p.provider.toLowerCase());
-    // Live balance is only used if returned by the live API / syncAudit; otherwise null (unknown / unmocked)
-    const liveBalanceUsd =
-      audit && (audit as any).availableCreditsUsd !== undefined
-        ? (audit as any).availableCreditsUsd
-        : null;
+    const balanceEntry = providerBalances ? providerBalances[p.provider.toLowerCase()] : undefined;
+
+    let liveBalanceUsd: number | null = null;
+    let balanceStatus = 'UNKNOWN';
+
+    if (balanceEntry && balanceEntry.balanceUsd !== undefined) {
+      liveBalanceUsd = balanceEntry.balanceUsd;
+      balanceStatus = balanceEntry.status;
+    } else if (audit && (audit as any).availableCreditsUsd !== undefined) {
+      liveBalanceUsd = (audit as any).availableCreditsUsd;
+      balanceStatus = (audit as any).balanceStatus || (liveBalanceUsd !== null ? 'LIVE_VERIFIED' : 'UNKNOWN');
+    }
 
     if (audit) {
       return {
         ...p,
         liveBalanceUsd,
+        balanceStatus,
         lastSyncedAt: audit.syncedAt,
         updateFrequencyDescription: audit.updateFrequencyDescription || p.updateFrequencyDescription,
         estimatedUpdateIntervalSec: audit.estimatedUpdateIntervalSec || p.estimatedUpdateIntervalSec,
@@ -448,6 +458,7 @@ export function ProviderFleetBar({
     return {
       ...p,
       liveBalanceUsd,
+      balanceStatus,
     };
   });
 
@@ -810,9 +821,26 @@ export function ProviderFleetBar({
                     {/* Balance / Credits: Real API-returned value or -- / UNKNOWN */}
                     <td style={{ padding: '10px 12px', fontSize: '11px' }}>
                       {p.liveBalanceUsd !== null && p.liveBalanceUsd !== undefined ? (
-                        <span style={{ color: '#34d399', fontWeight: 700 }}>
-                          ${p.liveBalanceUsd.toFixed(2)}
-                        </span>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: '#34d399', fontWeight: 700 }}>
+                            ${p.liveBalanceUsd.toFixed(2)}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '9px',
+                              backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                              color: '#34d399',
+                              border: '1px solid rgba(16, 185, 129, 0.35)',
+                              borderRadius: '3px',
+                              padding: '1px 4px',
+                              fontWeight: 700,
+                              letterSpacing: '0.02em',
+                            }}
+                            title={`Real-time verified balance from ${p.displayName} billing API`}
+                          >
+                            API Verified
+                          </span>
+                        </div>
                       ) : p.provider === 'local_pytorch' ? (
                         <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
                       ) : p.creditType === 'postpaid_invoice' ? (
@@ -820,7 +848,7 @@ export function ProviderFleetBar({
                       ) : (
                         <span
                           style={{ color: '#64748b', fontWeight: 600 }}
-                          title="Balance is not mocked; pending live provider billing API integration"
+                          title="Balance is not mocked; pending live provider billing API integration or missing API key"
                         >
                           --
                         </span>

@@ -196,7 +196,7 @@ describe('Provider Fleet & Real-Time Sync Telemetry', () => {
     assert.ok(runpod.allowedPricingModels.includes('spot'));
     assert.ok(runpod.allowedPricingModels.includes('on_demand'));
     assert.ok(runpod.allowedPricingModels.includes('serverless'));
-    assert.equal(runpod.availableCreditsUsd, 15.0);
+    assert.equal(runpod.availableCreditsUsd, null); // Unmocked by default, populated via live API
     assert.match(runpod.interruptionNoticeWindow, /2-min/);
     assert.equal(runpod.spotPolicy?.noticeWindowMinutes, 2);
     assert.equal(runpod.spotPolicy?.pricingType, 'floating_bid');
@@ -209,7 +209,7 @@ describe('Provider Fleet & Real-Time Sync Telemetry', () => {
 
     const baseten = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'baseten')!;
     assert.ok(baseten.allowedPricingModels.includes('serverless'));
-    assert.equal(baseten.availableCreditsUsd, 250);
+    assert.equal(baseten.availableCreditsUsd, null); // Unmocked by default, populated via live API
 
     const coreweave = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'coreweave')!;
     assert.equal(coreweave.spotPolicy?.noticeWindowMinutes, 2);

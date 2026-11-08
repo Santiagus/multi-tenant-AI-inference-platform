@@ -244,12 +244,20 @@ export class PlatformApiClient {
     count: number;
     data: import('../types').PricingHistorySummary[];
     cadence_audits: import('../types').PricingSyncAudit[];
+    provider_balances?: Record<string, import('../types').ProviderBalanceStatus>;
   }> {
     const params = new URLSearchParams();
     if (options?.provider) params.set('provider', options.provider);
     if (options?.item_id) params.set('item_id', options.item_id);
     const qs = params.toString();
     return this.request(`/v1/finops/pricing-history${qs ? `?${qs}` : ''}`);
+  }
+
+  async getProviderBalances(): Promise<{
+    ok: boolean;
+    balances: Record<string, import('../types').ProviderBalanceStatus>;
+  }> {
+    return this.request('/v1/finops/balances');
   }
 
   async syncPricing(): Promise<{

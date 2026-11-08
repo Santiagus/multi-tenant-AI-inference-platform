@@ -5,6 +5,7 @@ import type {
   ModelPricingItem,
   PricingHistorySummary,
   PricingSyncAudit,
+  ProviderBalanceStatus,
 } from '../../types';
 import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
 import { ProviderFleetBar, DEFAULT_PROVIDER_FLEET } from './ProviderFleetBar';
@@ -237,6 +238,7 @@ export function FinOpsPricingView() {
   const [modelPricing, setModelPricing] = useState<ModelPricingItem[]>([]);
   const [historySummaries, setHistorySummaries] = useState<PricingHistorySummary[]>([]);
   const [syncAudits, setSyncAudits] = useState<PricingSyncAudit[]>([]);
+  const [providerBalances, setProviderBalances] = useState<Record<string, ProviderBalanceStatus>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -269,15 +271,17 @@ export function FinOpsPricingView() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [gpuRes, modelRes, histRes] = await Promise.all([
+      const [gpuRes, modelRes, histRes, balancesRes] = await Promise.all([
         apiClient.getGpuPricing(),
         apiClient.getModelPricing(),
         apiClient.getPricingHistory(),
+        apiClient.getProviderBalances().catch(() => ({ ok: false, balances: {} as Record<string, ProviderBalanceStatus> })),
       ]);
       setGpuPricing(gpuRes.data);
       setModelPricing(modelRes.data);
       setHistorySummaries(histRes.data);
       setSyncAudits(histRes.cadence_audits || []);
+      setProviderBalances(balancesRes.balances || histRes.provider_balances || {});
     } catch (err) {
       console.error('Failed to load FinOps pricing intelligence:', err);
     } finally {
@@ -753,6 +757,7 @@ export function FinOpsPricingView() {
       {/* Multi-Cloud Provider Fleet & Real-Time Sync Status Bar (in table format that can be hidden) */}
       <ProviderFleetBar
         syncAudits={syncAudits}
+        providerBalances={providerBalances}
         onRefreshSync={handleSync}
         isSyncing={isSyncing}
       />
