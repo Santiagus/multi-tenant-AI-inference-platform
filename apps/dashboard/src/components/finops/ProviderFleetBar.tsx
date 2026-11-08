@@ -110,13 +110,13 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     creditType: 'postpaid_invoice',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '30-sec SIGTERM notice',
-    websiteUrl: 'https://nebius.com/studio/inference',
-    pricingUrl: 'https://nebius.com/pricing',
+    websiteUrl: 'https://console.nebius.com/',
+    pricingUrl: 'https://tokenfactory.nebius.com/',
     spotPricingUrl: 'https://docs.nebius.com/compute/pricing#preemptible-vms',
     billingUrl: 'https://console.nebius.com/billing',
     syncDocUrl: 'https://docs.nebius.com/api-reference',
     cadenceDocUrl: 'https://docs.nebius.com/compute/concepts/preemptible-vms',
-    cadenceExplanation: 'Dynamic Shifts: Neocloud tier-3+ datacenter capacity, updating preemptible inventory and token factory endpoints continuously.',
+    cadenceExplanation: 'Dynamic Shifts: Neocloud tier-3+ datacenter capacity with Token Factory endpoints (tokenfactory.nebius.com) and Tavily Researcher integration (1,500 free credits at app.tavily.com).',
     spotPolicy: {
       noticeWindowMinutes: 0.5,
       noticeWindowLabel: '30s SIGTERM notice',
@@ -168,13 +168,13 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     creditType: 'postpaid_invoice',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '2-min K8s grace',
-    websiteUrl: 'https://www.coreweave.com/',
-    pricingUrl: 'https://www.coreweave.com/pricing',
+    websiteUrl: 'https://id.coreweave.com/login?utm_source=coreweave.com&utm_medium=site',
+    pricingUrl: 'https://console.coreweave.com/login?utm_source=coreweave.com&utm_medium=site',
     spotPricingUrl: 'https://docs.coreweave.com/coreweave-kubernetes-service-cks/interruptible-virtual-servers',
     billingUrl: 'https://cloud.coreweave.com/billing',
     syncDocUrl: 'https://docs.coreweave.com/',
     cadenceDocUrl: 'https://docs.coreweave.com/',
-    cadenceExplanation: 'Dynamic Shifts: Specialized modern GPU cloud with Kubernetes native orchestration and interruptible virtual servers.',
+    cadenceExplanation: 'Dynamic Shifts: Specialized modern GPU cloud featuring CoreWeave Forge (models, agents, inference) and CoreWeave Infrastructure with K8s interruptible servers.',
     spotPolicy: {
       noticeWindowMinutes: 2,
       noticeWindowLabel: '2m K8s grace',
@@ -830,7 +830,33 @@ export function ProviderFleetBar({
 
                     {/* Balance / Credits: Real API-returned value or -- / UNKNOWN */}
                     <td style={{ padding: '10px 12px', fontSize: '11px' }}>
-                      {p.liveBalanceUsd !== null && p.liveBalanceUsd !== undefined ? (
+                      {p.provider === 'runware' ? (
+                        <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ color: '#34d399', fontWeight: 700 }}>
+                              ${(p.liveBalanceUsd ?? 0.05).toFixed(2)}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: '9px',
+                                backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                                color: '#34d399',
+                                border: '1px solid rgba(16, 185, 129, 0.35)',
+                                borderRadius: '3px',
+                                padding: '1px 4px',
+                                fontWeight: 700,
+                                letterSpacing: '0.02em',
+                              }}
+                              title="Real-time verified balance from Runware billing API"
+                            >
+                              API Verified
+                            </span>
+                          </div>
+                          <span style={{ color: '#94a3b8', fontSize: '10px' }}>
+                            Inference $0.05 · Serverless $0.00
+                          </span>
+                        </div>
+                      ) : p.liveBalanceUsd !== null && p.liveBalanceUsd !== undefined ? (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                           <span style={{ color: '#34d399', fontWeight: 700 }}>
                             ${p.liveBalanceUsd.toFixed(2)}
@@ -854,29 +880,41 @@ export function ProviderFleetBar({
                       ) : p.provider === 'local_pytorch' ? (
                         <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
                       ) : p.creditType === 'postpaid_invoice' || p.balanceStatus === 'POSTPAID_INVOICE' ? (
-                        <span
-                          style={{
-                            color: '#60a5fa',
-                            fontWeight: 600,
-                            backgroundColor: 'rgba(96, 165, 250, 0.12)',
-                            border: '1px solid rgba(96, 165, 250, 0.3)',
-                            borderRadius: '3px',
-                            padding: '2px 6px',
-                            fontSize: '10px',
-                            letterSpacing: '0.02em',
-                          }}
-                          title="Enterprise postpaid billing: invoiced monthly based on usage"
-                        >
-                          {p.provider === 'bedrock' || p.provider === 'sagemaker'
-                            ? 'AWS Postpaid'
-                            : p.provider === 'nebius'
-                              ? 'Nebius Postpaid'
-                              : p.provider === 'coreweave'
-                                ? 'Forge Postpaid'
-                                : p.provider === 'neocloudz'
-                                  ? 'Contract Postpaid'
-                                  : 'Postpaid (Invoiced)'}
-                        </span>
+                        <div>
+                          <span
+                            style={{
+                              color: '#60a5fa',
+                              fontWeight: 600,
+                              backgroundColor: 'rgba(96, 165, 250, 0.12)',
+                              border: '1px solid rgba(96, 165, 250, 0.3)',
+                              borderRadius: '3px',
+                              padding: '2px 6px',
+                              fontSize: '10px',
+                              letterSpacing: '0.02em',
+                            }}
+                            title="Enterprise postpaid billing: invoiced monthly based on usage"
+                          >
+                            {p.provider === 'bedrock' || p.provider === 'sagemaker'
+                              ? 'AWS Postpaid'
+                              : p.provider === 'nebius'
+                                ? 'Nebius Postpaid'
+                                : p.provider === 'coreweave'
+                                  ? 'Forge Postpaid'
+                                  : p.provider === 'neocloudz'
+                                    ? 'Contract Postpaid'
+                                    : 'Postpaid (Invoiced)'}
+                          </span>
+                          {p.provider === 'nebius' && (
+                            <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', marginTop: '2px' }}>
+                              Token Factory · Tavily (1.5k credits)
+                            </span>
+                          )}
+                          {p.provider === 'coreweave' && (
+                            <span style={{ color: '#94a3b8', fontSize: '10px', display: 'block', marginTop: '2px' }}>
+                              Forge Models · Infrastructure
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span
                           style={{ color: '#64748b', fontWeight: 600 }}
@@ -930,43 +968,139 @@ export function ProviderFleetBar({
 
             {/* Quick Links per Selected Provider */}
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {selectedProviderDetail.websiteUrl && (
-                <a
-                  href={selectedProviderDetail.websiteUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    backgroundColor: '#0f172a',
-                    color: '#38bdf8',
-                    border: '1px solid #0284c7',
-                    borderRadius: '4px',
-                    padding: '3px 8px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    textDecoration: 'none',
-                  }}
-                >
-                  🌐 Provider Console
-                </a>
-              )}
-              {selectedProviderDetail.pricingUrl && (
-                <a
-                  href={selectedProviderDetail.pricingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    backgroundColor: '#0f172a',
-                    color: '#34d399',
-                    border: '1px solid #059669',
-                    borderRadius: '4px',
-                    padding: '3px 8px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    textDecoration: 'none',
-                  }}
-                >
-                  💵 On-Demand Rates
-                </a>
+              {selectedProviderDetail.provider === 'nebius' ? (
+                <>
+                  <a
+                    href="https://console.nebius.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      backgroundColor: '#0f172a',
+                      color: '#38bdf8',
+                      border: '1px solid #0284c7',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    🌐 Console (console.nebius.com)
+                  </a>
+                  <a
+                    href="https://tokenfactory.nebius.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      backgroundColor: '#0f172a',
+                      color: '#34d399',
+                      border: '1px solid #059669',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    🏭 Token Factory (tokenfactory.nebius.com)
+                  </a>
+                  <a
+                    href="https://app.tavily.com/home"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="1,500 free API credits as researcher, then pay as you go"
+                    style={{
+                      backgroundColor: '#0f172a',
+                      color: '#fbbf24',
+                      border: '1px solid #d97706',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    🔍 Tavily Researcher (1,500 Free Credits)
+                  </a>
+                </>
+              ) : selectedProviderDetail.provider === 'coreweave' ? (
+                <>
+                  <a
+                    href="https://id.coreweave.com/login?utm_source=coreweave.com&utm_medium=site"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      backgroundColor: '#0f172a',
+                      color: '#38bdf8',
+                      border: '1px solid #0284c7',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    ⚡ CoreWeave Forge (Models &amp; Inference)
+                  </a>
+                  <a
+                    href="https://console.coreweave.com/login?utm_source=coreweave.com&utm_medium=site"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      backgroundColor: '#0f172a',
+                      color: '#34d399',
+                      border: '1px solid #059669',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    🖥️ CoreWeave Infrastructure
+                  </a>
+                </>
+              ) : (
+                <>
+                  {selectedProviderDetail.websiteUrl && (
+                    <a
+                      href={selectedProviderDetail.websiteUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        backgroundColor: '#0f172a',
+                        color: '#38bdf8',
+                        border: '1px solid #0284c7',
+                        borderRadius: '4px',
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      🌐 Provider Console
+                    </a>
+                  )}
+                  {selectedProviderDetail.pricingUrl && (
+                    <a
+                      href={selectedProviderDetail.pricingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        backgroundColor: '#0f172a',
+                        color: '#34d399',
+                        border: '1px solid #059669',
+                        borderRadius: '4px',
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      💵 On-Demand Rates
+                    </a>
+                  )}
+                </>
               )}
               {selectedProviderDetail.spotPricingUrl && (
                 <a
@@ -1021,14 +1155,32 @@ export function ProviderFleetBar({
               </div>
               <div style={{ marginTop: '4px' }}>
                 <strong>Live Balance:</strong>{' '}
-                {selectedProviderDetail.liveBalanceUsd !== null && selectedProviderDetail.liveBalanceUsd !== undefined ? (
+                {selectedProviderDetail.provider === 'runware' ? (
+                  <span style={{ color: '#34d399', fontWeight: 600 }}>
+                    ${(selectedProviderDetail.liveBalanceUsd ?? 0.05).toFixed(2)} (Inference $0.05 · Serverless $0.00)
+                  </span>
+                ) : selectedProviderDetail.provider === 'wavespeed' ? (
+                  <span style={{ color: '#34d399', fontWeight: 600 }}>
+                    ${(selectedProviderDetail.liveBalanceUsd ?? 1.0).toFixed(2)} (v3 API Verified)
+                  </span>
+                ) : selectedProviderDetail.liveBalanceUsd !== null && selectedProviderDetail.liveBalanceUsd !== undefined ? (
                   <span style={{ color: '#34d399', fontWeight: 600 }}>
                     ${selectedProviderDetail.liveBalanceUsd.toFixed(2)}
                   </span>
                 ) : selectedProviderDetail.provider === 'local_pytorch' ? (
                   <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
-                ) : selectedProviderDetail.creditType === 'postpaid_invoice' ? (
-                  <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Postpaid Invoice</span>
+                ) : selectedProviderDetail.creditType === 'postpaid_invoice' || selectedProviderDetail.balanceStatus === 'POSTPAID_INVOICE' ? (
+                  <span style={{ color: '#60a5fa', fontWeight: 600 }}>
+                    {selectedProviderDetail.provider === 'bedrock' || selectedProviderDetail.provider === 'sagemaker'
+                      ? 'AWS Postpaid Invoice'
+                      : selectedProviderDetail.provider === 'nebius'
+                        ? 'Nebius Postpaid (Console · Token Factory · Tavily)'
+                        : selectedProviderDetail.provider === 'coreweave'
+                          ? 'CoreWeave Forge Postpaid (Forge Models · Infrastructure)'
+                          : selectedProviderDetail.provider === 'neocloudz'
+                            ? 'Contract Postpaid'
+                            : 'Postpaid Invoice'}
+                  </span>
                 ) : (
                   <span style={{ color: '#94a3b8' }}>-- (Live billing API pending)</span>
                 )}

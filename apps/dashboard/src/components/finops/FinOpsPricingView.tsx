@@ -100,7 +100,7 @@ export const PROVIDER_CONSOLE_LINKS: Record<
     spotPolicyUrl: 'https://jarvislabs.ai/docs/faq/',
   },
   coreweave: {
-    capacityUrl: 'https://cloud.coreweave.com/',
+    capacityUrl: 'https://id.coreweave.com/login?utm_source=coreweave.com&utm_medium=site',
     spotPolicyUrl: 'https://docs.coreweave.com/coreweave-kubernetes-service-cks/interruptible-virtual-servers',
   },
   fal: {
