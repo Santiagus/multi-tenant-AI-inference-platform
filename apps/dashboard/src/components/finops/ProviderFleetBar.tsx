@@ -107,7 +107,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['on_demand', 'spot'],
     availableCreditsUsd: null,
-    creditType: 'prepaid_credits',
+    creditType: 'postpaid_invoice',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '30-sec SIGTERM notice',
     websiteUrl: 'https://nebius.com/studio/inference',
@@ -165,7 +165,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     estimatedUpdateIntervalSec: 300,
     allowedPricingModels: ['on_demand', 'spot', 'serverless'],
     availableCreditsUsd: null,
-    creditType: 'prepaid_credits',
+    creditType: 'postpaid_invoice',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '2-min K8s grace',
     websiteUrl: 'https://www.coreweave.com/',
@@ -310,7 +310,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     estimatedUpdateIntervalSec: 1800,
     allowedPricingModels: ['on_demand', 'spot'],
     availableCreditsUsd: null,
-    creditType: 'prepaid_credits',
+    creditType: 'postpaid_invoice',
     interruptionRiskTier: '<5% risk',
     interruptionNoticeWindow: '5-min graceful notice',
     websiteUrl: 'https://neocloudz.com/',
@@ -435,10 +435,18 @@ export function ProviderFleetBar({
 
     let liveBalanceUsd: number | null = null;
     let balanceStatus = 'UNKNOWN';
+    let creditType = p.creditType;
 
-    if (balanceEntry && balanceEntry.balanceUsd !== undefined) {
-      liveBalanceUsd = balanceEntry.balanceUsd;
-      balanceStatus = balanceEntry.status;
+    if (balanceEntry) {
+      if (balanceEntry.balanceUsd !== undefined && balanceEntry.balanceUsd !== null) {
+        liveBalanceUsd = balanceEntry.balanceUsd;
+      }
+      if (balanceEntry.status) {
+        balanceStatus = balanceEntry.status;
+      }
+      if (balanceEntry.creditType) {
+        creditType = balanceEntry.creditType as any;
+      }
     } else if (audit && (audit as any).availableCreditsUsd !== undefined) {
       liveBalanceUsd = (audit as any).availableCreditsUsd;
       balanceStatus = (audit as any).balanceStatus || (liveBalanceUsd !== null ? 'LIVE_VERIFIED' : 'UNKNOWN');
@@ -449,6 +457,7 @@ export function ProviderFleetBar({
         ...p,
         liveBalanceUsd,
         balanceStatus,
+        creditType,
         lastSyncedAt: audit.syncedAt,
         updateFrequencyDescription: audit.updateFrequencyDescription || p.updateFrequencyDescription,
         estimatedUpdateIntervalSec: audit.estimatedUpdateIntervalSec || p.estimatedUpdateIntervalSec,
@@ -459,6 +468,7 @@ export function ProviderFleetBar({
       ...p,
       liveBalanceUsd,
       balanceStatus,
+      creditType,
     };
   });
 
@@ -558,7 +568,7 @@ export function ProviderFleetBar({
             >
               {totalLiveCredits !== null ? `$${totalLiveCredits.toFixed(2)}` : '--'}
               <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 400, marginLeft: '4px' }}>
-                {totalLiveCredits !== null ? '+ AWS Postpaid' : '(Live Billing Unconnected)'}
+                {totalLiveCredits !== null ? '+ Nebius, Forge, AWS, NeoCloudz Postpaid' : '(Live Billing Unconnected)'}
               </span>
             </div>
           </div>
@@ -843,8 +853,30 @@ export function ProviderFleetBar({
                         </div>
                       ) : p.provider === 'local_pytorch' ? (
                         <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
-                      ) : p.creditType === 'postpaid_invoice' ? (
-                        <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Postpaid</span>
+                      ) : p.creditType === 'postpaid_invoice' || p.balanceStatus === 'POSTPAID_INVOICE' ? (
+                        <span
+                          style={{
+                            color: '#60a5fa',
+                            fontWeight: 600,
+                            backgroundColor: 'rgba(96, 165, 250, 0.12)',
+                            border: '1px solid rgba(96, 165, 250, 0.3)',
+                            borderRadius: '3px',
+                            padding: '2px 6px',
+                            fontSize: '10px',
+                            letterSpacing: '0.02em',
+                          }}
+                          title="Enterprise postpaid billing: invoiced monthly based on usage"
+                        >
+                          {p.provider === 'bedrock' || p.provider === 'sagemaker'
+                            ? 'AWS Postpaid'
+                            : p.provider === 'nebius'
+                              ? 'Nebius Postpaid'
+                              : p.provider === 'coreweave'
+                                ? 'Forge Postpaid'
+                                : p.provider === 'neocloudz'
+                                  ? 'Contract Postpaid'
+                                  : 'Postpaid (Invoiced)'}
+                        </span>
                       ) : (
                         <span
                           style={{ color: '#64748b', fontWeight: 600 }}
