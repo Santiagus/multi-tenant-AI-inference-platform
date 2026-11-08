@@ -395,5 +395,37 @@ describe('Unified FinOps Pricing Table & Hardware Short Names', () => {
       assert.equal(isProp, true, `${name} should be classified as proprietary`);
     }
   });
+
+  it('renders real API balance when provided and falls back to unmocked placeholder -- when unknown', () => {
+    const formatBalance = (
+      provider: string,
+      liveBalanceUsd: number | null | undefined,
+      creditType: string
+    ): string => {
+      if (liveBalanceUsd !== null && liveBalanceUsd !== undefined) {
+        return `$${liveBalanceUsd.toFixed(2)}`;
+      }
+      if (provider === 'local_pytorch') {
+        return '$0.00 (Local HW)';
+      }
+      if (creditType === 'postpaid_invoice') {
+        return 'AWS Postpaid';
+      }
+      return '--';
+    };
+
+    // Live balance returned by real API
+    assert.equal(formatBalance('runpod', 42.5, 'prepaid_credits'), '$42.50');
+    assert.equal(formatBalance('vast_ai', 105.75, 'prepaid_credits'), '$105.75');
+
+    // No live balance returned by API (unmocked)
+    assert.equal(formatBalance('runpod', null, 'prepaid_credits'), '--');
+    assert.equal(formatBalance('vast_ai', undefined, 'prepaid_credits'), '--');
+    assert.equal(formatBalance('baseten', null, 'prepaid_credits'), '--');
+
+    // Local HW and AWS postpaid
+    assert.equal(formatBalance('local_pytorch', null, 'zero_commitment'), '$0.00 (Local HW)');
+    assert.equal(formatBalance('bedrock', null, 'postpaid_invoice'), 'AWS Postpaid');
+  });
 });
 

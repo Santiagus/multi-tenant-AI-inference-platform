@@ -1092,9 +1092,6 @@ export function FinOpsPricingView() {
                         }}
                       >
                         {item.providerDisplayName}
-                        {item.availabilityUrl.startsWith('http') && (
-                          <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>
-                        )}
                       </a>
                     </td>
 
@@ -1315,9 +1312,6 @@ export function FinOpsPricingView() {
                           }}
                         >
                           <span>{item.preemptionPolicy}</span>
-                          {item.preemptionPolicyUrl.startsWith('http') && (
-                            <span style={{ fontSize: '8px', opacity: 0.7 }}>↗</span>
-                          )}
                         </a>
                       </div>
                     </td>
@@ -1353,7 +1347,6 @@ export function FinOpsPricingView() {
                         }}
                       >
                         {item.availabilityLabel}
-                        <span style={{ fontSize: '8px', opacity: 0.8 }}>↗</span>
                       </a>
                     </td>
 
@@ -1399,7 +1392,6 @@ export function FinOpsPricingView() {
                         }}
                       >
                         {item.riskTier}
-                        <span style={{ fontSize: '8px', opacity: 0.8 }}>↗</span>
                       </a>
                     </td>
                   </tr>

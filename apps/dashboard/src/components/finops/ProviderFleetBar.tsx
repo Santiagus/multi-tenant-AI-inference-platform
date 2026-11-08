@@ -422,27 +422,42 @@ export function ProviderFleetBar({
   isSyncing = false,
 }: ProviderFleetBarProps) {
   const [isTableVisible, setIsTableVisible] = useState(false);
-  const [selectedProviderDetail, setSelectedProviderDetail] = useState<ProviderFleetStatus | null>(null);
+  const [selectedProviderDetail, setSelectedProviderDetail] = useState<
+    (ProviderFleetStatus & { liveBalanceUsd?: number | null }) | null
+  >(null);
 
   // Merge dynamic sync audits with baseline providers
   const providers = DEFAULT_PROVIDER_FLEET.map((p) => {
     const audit = syncAudits.find((a) => a.provider.toLowerCase() === p.provider.toLowerCase());
+    // Live balance is only used if returned by the live API / syncAudit; otherwise null (unknown / unmocked)
+    const liveBalanceUsd =
+      audit && (audit as any).availableCreditsUsd !== undefined
+        ? (audit as any).availableCreditsUsd
+        : null;
+
     if (audit) {
       return {
         ...p,
+        liveBalanceUsd,
         lastSyncedAt: audit.syncedAt,
         updateFrequencyDescription: audit.updateFrequencyDescription || p.updateFrequencyDescription,
         estimatedUpdateIntervalSec: audit.estimatedUpdateIntervalSec || p.estimatedUpdateIntervalSec,
         updateCadenceCategory: audit.updateCadenceCategory || p.updateCadenceCategory,
       };
     }
-    return p;
+    return {
+      ...p,
+      liveBalanceUsd,
+    };
   });
 
-  const totalPrepaidCredits = providers.reduce(
-    (acc, p) => acc + (p.availableCreditsUsd !== null ? p.availableCreditsUsd : 0),
-    0
+  const livePrepaidProviders = providers.filter(
+    (p) => p.liveBalanceUsd !== null && p.liveBalanceUsd !== undefined
   );
+  const totalLiveCredits =
+    livePrepaidProviders.length > 0
+      ? livePrepaidProviders.reduce((acc, p) => acc + (p.liveBalanceUsd || 0), 0)
+      : null;
 
   return (
     <div
@@ -512,7 +527,7 @@ export function ProviderFleetBar({
                   textDecoration: 'none',
                 }}
               >
-                📊 W&amp;B Weave Tracing ↗
+                📊 W&amp;B Weave Tracing
               </a>
             </div>
           </div>
@@ -523,9 +538,17 @@ export function ProviderFleetBar({
             <div style={{ fontSize: '10px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>
               Neocloud Prepaid Pool
             </div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#34d399' }}>
-              ${totalPrepaidCredits.toFixed(2)}{' '}
-              <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 400 }}>+ AWS Postpaid</span>
+            <div
+              style={{
+                fontSize: '13px',
+                fontWeight: 700,
+                color: totalLiveCredits !== null ? '#34d399' : '#94a3b8',
+              }}
+            >
+              {totalLiveCredits !== null ? `$${totalLiveCredits.toFixed(2)}` : '--'}
+              <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 400, marginLeft: '4px' }}>
+                {totalLiveCredits !== null ? '+ AWS Postpaid' : '(Live Billing Unconnected)'}
+              </span>
             </div>
           </div>
 
@@ -608,8 +631,7 @@ export function ProviderFleetBar({
                 <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Update Cadence</th>
                 <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Supported Modalities</th>
                 <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Preemption &amp; Spot Policy</th>
-                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Balance / Account</th>
-                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Verified Portals</th>
+                <th style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600 }}>Balance / Credits</th>
               </tr>
             </thead>
             <tbody>
@@ -665,7 +687,6 @@ export function ProviderFleetBar({
                           }}
                         >
                           {p.displayName}
-                          {p.websiteUrl?.startsWith('http') && <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>}
                         </a>
                       </div>
                     </td>
@@ -778,7 +799,6 @@ export function ProviderFleetBar({
                           <span style={{ color: '#94a3b8', fontSize: '10px' }}>
                             ({p.spotPolicy.pricingTypeLabel})
                           </span>
-                          <span style={{ fontSize: '9px', opacity: 0.7 }}>↗</span>
                         </a>
                       ) : (
                         <span style={{ color: '#94a3b8', fontSize: '11px' }}>
@@ -787,68 +807,24 @@ export function ProviderFleetBar({
                       )}
                     </td>
 
-                    {/* Balance / Quota */}
+                    {/* Balance / Credits: Real API-returned value or -- / UNKNOWN */}
                     <td style={{ padding: '10px 12px', fontSize: '11px' }}>
-                      {p.availableCreditsUsd !== null ? (
-                        <a
-                          href={p.billingUrl || '#'}
-                          target={p.billingUrl?.startsWith('http') ? '_blank' : '_self'}
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          title="Open billing and prepaid credits console"
-                          style={{
-                            color: '#34d399',
-                            fontWeight: 700,
-                            textDecoration: 'none',
-                          }}
-                        >
-                          ${p.availableCreditsUsd.toFixed(2)} prepaid ↗
-                        </a>
+                      {p.liveBalanceUsd !== null && p.liveBalanceUsd !== undefined ? (
+                        <span style={{ color: '#34d399', fontWeight: 700 }}>
+                          ${p.liveBalanceUsd.toFixed(2)}
+                        </span>
+                      ) : p.provider === 'local_pytorch' ? (
+                        <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
                       ) : p.creditType === 'postpaid_invoice' ? (
-                        <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Invoice</span>
+                        <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Postpaid</span>
                       ) : (
-                        <span style={{ color: '#94a3b8' }}>$0 Local HW</span>
+                        <span
+                          style={{ color: '#64748b', fontWeight: 600 }}
+                          title="Balance is not mocked; pending live provider billing API integration"
+                        >
+                          --
+                        </span>
                       )}
-                    </td>
-
-                    {/* Direct Links */}
-                    <td style={{ padding: '10px 12px' }}>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                        {p.pricingUrl && (
-                          <a
-                            href={p.pricingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Pricing Catalog"
-                            style={{
-                              color: '#38bdf8',
-                              textDecoration: 'none',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                            }}
-                          >
-                            Rates ↗
-                          </a>
-                        )}
-                        {p.billingUrl && (
-                          <a
-                            href={p.billingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Billing Console"
-                            style={{
-                              color: '#c084fc',
-                              textDecoration: 'none',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                            }}
-                          >
-                            Billing ↗
-                          </a>
-                        )}
-                      </div>
                     </td>
                   </tr>
                 );
@@ -910,7 +886,7 @@ export function ProviderFleetBar({
                     textDecoration: 'none',
                   }}
                 >
-                  🌐 Provider Console ↗
+                  🌐 Provider Console
                 </a>
               )}
               {selectedProviderDetail.pricingUrl && (
@@ -929,7 +905,7 @@ export function ProviderFleetBar({
                     textDecoration: 'none',
                   }}
                 >
-                  💵 On-Demand Rates ↗
+                  💵 On-Demand Rates
                 </a>
               )}
               {selectedProviderDetail.spotPricingUrl && (
@@ -948,7 +924,7 @@ export function ProviderFleetBar({
                     textDecoration: 'none',
                   }}
                 >
-                  ⚡ Spot / Preemptible ↗
+                  ⚡ Spot / Preemptible
                 </a>
               )}
               {selectedProviderDetail.billingUrl && (
@@ -967,7 +943,7 @@ export function ProviderFleetBar({
                     textDecoration: 'none',
                   }}
                 >
-                  💳 Manage Credits ↗
+                  💳 Manage Credits
                 </a>
               )}
             </div>
@@ -982,6 +958,20 @@ export function ProviderFleetBar({
               <div style={{ marginTop: '4px' }}>
                 <strong>Notice Window:</strong>{' '}
                 <span style={{ color: '#34d399', fontWeight: 600 }}>{selectedProviderDetail.interruptionNoticeWindow}</span>
+              </div>
+              <div style={{ marginTop: '4px' }}>
+                <strong>Live Balance:</strong>{' '}
+                {selectedProviderDetail.liveBalanceUsd !== null && selectedProviderDetail.liveBalanceUsd !== undefined ? (
+                  <span style={{ color: '#34d399', fontWeight: 600 }}>
+                    ${selectedProviderDetail.liveBalanceUsd.toFixed(2)}
+                  </span>
+                ) : selectedProviderDetail.provider === 'local_pytorch' ? (
+                  <span style={{ color: '#94a3b8' }}>$0.00 (Local HW)</span>
+                ) : selectedProviderDetail.creditType === 'postpaid_invoice' ? (
+                  <span style={{ color: '#60a5fa', fontWeight: 600 }}>AWS Postpaid Invoice</span>
+                ) : (
+                  <span style={{ color: '#94a3b8' }}>-- (Live billing API pending)</span>
+                )}
               </div>
             </div>
 
