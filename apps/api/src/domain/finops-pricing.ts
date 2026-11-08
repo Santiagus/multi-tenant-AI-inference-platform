@@ -59,6 +59,19 @@ export interface PricingSyncAudit {
   updateFrequencyDescription: string;
   status: string;
   syncedAt: string;
+  availableCreditsUsd?: number | null;
+  balanceStatus?: string;
+}
+
+export interface ProviderBalanceStatus {
+  provider: string;
+  displayName: string;
+  balanceUsd: number | null;
+  currency: string;
+  status: 'LIVE_VERIFIED' | 'POSTPAID_INVOICE' | 'LOCAL_HARDWARE' | 'UNKNOWN' | 'NO_API_KEY';
+  creditType: 'prepaid_credits' | 'postpaid_invoice' | 'zero_commitment';
+  checkedAt: string;
+  rawDetails?: string;
 }
 
 export interface PricingHistoryPoint {

@@ -117,6 +117,40 @@ describe('FinOps Neocloud Pricing & Availability Intelligence Routes', () => {
     const runpodAudit = body.cadence_audits.find((a: any) => a.provider === 'runpod');
     assert.ok(runpodAudit);
     assert.equal(runpodAudit.updateCadenceCategory, 'dynamic_shifts');
+    assert.equal(typeof runpodAudit.availableCreditsUsd, 'number');
+  });
+
+  test('GET /v1/finops/balances returns verified real-time provider balances', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/finops/balances',
+      headers: { 'x-tenant-id': 'tenant-test' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(body.balances);
+
+    // Vast.ai
+    assert.equal(body.balances.vast_ai.provider, 'vast_ai');
+    assert.equal(body.balances.vast_ai.balanceUsd, 0.0);
+    assert.equal(body.balances.vast_ai.status, 'LIVE_VERIFIED');
+
+    // RunPod
+    assert.equal(body.balances.runpod.provider, 'runpod');
+    assert.equal(body.balances.runpod.balanceUsd, 15.0);
+    assert.equal(body.balances.runpod.status, 'LIVE_VERIFIED');
+
+    // Local PyTorch
+    assert.equal(body.balances.local_pytorch.provider, 'local_pytorch');
+    assert.equal(body.balances.local_pytorch.balanceUsd, 0.0);
+    assert.equal(body.balances.local_pytorch.status, 'LOCAL_HARDWARE');
+
+    // AWS Bedrock (Postpaid)
+    assert.equal(body.balances.bedrock.provider, 'bedrock');
+    assert.equal(body.balances.bedrock.balanceUsd, null);
+    assert.equal(body.balances.bedrock.status, 'POSTPAID_INVOICE');
   });
 
   test('POST /v1/finops/sync initiates catalog synchronization', async () => {

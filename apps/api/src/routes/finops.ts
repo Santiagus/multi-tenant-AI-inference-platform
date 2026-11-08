@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { IFinOpsPricingRepository } from '../infrastructure/db/finops-pricing-repository.js';
 import type { MetricsRegistry } from '../infrastructure/telemetry/metrics.js';
+import { providerBalanceService } from '../infrastructure/finops/provider-balance-service.js';
 
 export interface FinOpsRoutesOptions {
   finopsRepo: IFinOpsPricingRepository;
@@ -79,12 +80,32 @@ export const finopsRoutes: FastifyPluginAsync<FinOpsRoutesOptions> = async (
     });
 
     const cadenceAudits = await finopsRepo.getSyncAudits();
+    const balances = await providerBalanceService.getBalances();
+    const enrichedAudits = cadenceAudits.map((a) => {
+      const pKey = a.provider.toLowerCase();
+      const bal = balances[pKey];
+      return {
+        ...a,
+        availableCreditsUsd: bal !== undefined ? bal.balanceUsd : null,
+        balanceStatus: bal !== undefined ? bal.status : 'UNKNOWN',
+      };
+    });
 
     return reply.status(200).send({
       ok: true,
       count: history.length,
       data: history,
-      cadence_audits: cadenceAudits,
+      cadence_audits: enrichedAudits,
+      provider_balances: balances,
+    });
+  });
+
+  // 3b. Live Provider Balances across Neocloud and Hardware Fleet
+  fastify.get('/v1/finops/balances', async (_request, reply) => {
+    const balances = await providerBalanceService.getBalances();
+    return reply.status(200).send({
+      ok: true,
+      balances,
     });
   });
 
