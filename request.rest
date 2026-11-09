@@ -2064,8 +2064,15 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 18.3 Query Historical Pricing Trends & Provider Update Cadence (7-day lookback)
-GET {{baseUrl}}/v1/finops/pricing-history?lookback_days=7
+# 18.3 Query Historical Pricing Trends & Provider Update Cadence (Supports hours=24, 72, 168)
+GET {{baseUrl}}/v1/finops/pricing-history?hours=24
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.3b Query Live Provider Account Balances Across Fleet
+GET {{baseUrl}}/v1/finops/balances
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 

@@ -10,6 +10,7 @@ import {
   ALL_PLATFORM_PROVIDERS,
 } from '../src/components/jobs/JobsView';
 import { DEFAULT_PROVIDER_FLEET } from '../src/components/finops/ProviderFleetBar';
+import { computeProviderSyncMetrics } from '../src/components/providers/ProviderStatusView';
 import { CATALOG_MODELS } from '../src/components/finops/ModelRecommendationStudio';
 import { getTradingSession } from '../src/components/finops/HistoricalPriceChart';
 import { getGpuPerformance, formatHwShortName } from '../src/components/finops/FinOpsPricingView';
@@ -218,6 +219,72 @@ describe('Provider Fleet & Real-Time Sync Telemetry', () => {
     const bedrock = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'bedrock')!;
     assert.equal(bedrock.creditType, 'postpaid_invoice');
     assert.equal(bedrock.availableCreditsUsd, null);
+  });
+
+  it('computes synced vs unsynced provider counts accurately for tab status visualization', () => {
+    // 1. All baseline providers healthy with no failed audits
+    const baselineMetrics = computeProviderSyncMetrics(DEFAULT_PROVIDER_FLEET, [], {});
+    assert.equal(baselineMetrics.totalCount, 14);
+    assert.equal(baselineMetrics.syncedCount, 14);
+    assert.equal(baselineMetrics.unsyncedCount, 0);
+    assert.deepEqual(baselineMetrics.unsyncedProviders, []);
+
+    // 2. Toggling one provider offline increments unsyncedCount
+    const oneOfflineMetrics = computeProviderSyncMetrics(DEFAULT_PROVIDER_FLEET, [], {
+      vast_ai: { healthy: false },
+    });
+    assert.equal(oneOfflineMetrics.syncedCount, 13);
+    assert.equal(oneOfflineMetrics.unsyncedCount, 1);
+    assert.deepEqual(oneOfflineMetrics.unsyncedProviders, ['vast_ai']);
+
+    // 3. Failed sync audit flags provider as unsynced
+    const failedAuditMetrics = computeProviderSyncMetrics(
+      DEFAULT_PROVIDER_FLEET,
+      [
+        {
+          id: 'audit-err',
+          provider: 'runpod',
+          syncType: 'gpu_hardware',
+          recordsCount: 0,
+          updateCadenceCategory: 'realtime_auction',
+          estimatedUpdateIntervalSec: 120,
+          updateFrequencyDescription: 'Auction bids',
+          status: 'FAILED',
+          syncedAt: new Date().toISOString(),
+        },
+      ],
+      {}
+    );
+    assert.equal(failedAuditMetrics.syncedCount, 13);
+    assert.equal(failedAuditMetrics.unsyncedCount, 1);
+    assert.deepEqual(failedAuditMetrics.unsyncedProviders, ['runpod']);
+
+    // 4. Multiple simultaneous provider anomalies
+    const multiAnomalyMetrics = computeProviderSyncMetrics(
+      DEFAULT_PROVIDER_FLEET,
+      [
+        {
+          id: 'audit-err',
+          provider: 'runpod',
+          syncType: 'gpu_hardware',
+          recordsCount: 0,
+          updateCadenceCategory: 'realtime_auction',
+          estimatedUpdateIntervalSec: 120,
+          updateFrequencyDescription: 'Auction bids',
+          status: 'ERROR',
+          syncedAt: new Date().toISOString(),
+        },
+      ],
+      {
+        nebius: { healthy: false },
+        baseten: { healthy: false },
+      }
+    );
+    assert.equal(multiAnomalyMetrics.syncedCount, 11);
+    assert.equal(multiAnomalyMetrics.unsyncedCount, 3);
+    assert.ok(multiAnomalyMetrics.unsyncedProviders.includes('runpod'));
+    assert.ok(multiAnomalyMetrics.unsyncedProviders.includes('nebius'));
+    assert.ok(multiAnomalyMetrics.unsyncedProviders.includes('baseten'));
   });
 });
 
