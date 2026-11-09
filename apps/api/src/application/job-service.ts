@@ -29,6 +29,7 @@ export interface SubmitJobRequest {
   routingPreference?: RoutingPreferenceType;
   priority?: number;
   maxRetries?: number;
+  expiresInSeconds?: number;
   correlationId?: string | null;
   traceparent?: string | null;
 }
@@ -55,7 +56,8 @@ export class JobService {
     private queueClient: IQueueClient,
     private storageClient: IStorageClient,
     private tracer: DistributedTracer = defaultTracer,
-    private metrics: MetricsRegistry = defaultMetrics
+    private metrics: MetricsRegistry = defaultMetrics,
+    private defaultExpirationSeconds: number = 86400
   ) {}
 
   async submitJob(
@@ -103,7 +105,10 @@ export class JobService {
     const outboundTraceparent =
       request.traceparent ?? formatTraceparent(traceId, enqueueSpanId, traceFlags);
 
-    // 3. Persist Job to DB in QUEUED state
+    // 3. Persist Job to DB in QUEUED state with expiration timestamp
+    const expiresInSeconds = request.expiresInSeconds ?? this.defaultExpirationSeconds;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+
     const job = await this.jobRepo.create({
       tenantId,
       modelId: request.modelId,
@@ -116,6 +121,7 @@ export class JobService {
       inputPayload,
       inputUri,
       maxRetries: request.maxRetries ?? 3,
+      expiresAt,
     });
 
     // 4. Publish message envelope to Queue inside a PRODUCER span
@@ -322,6 +328,117 @@ export class JobService {
   async listDlqMessages(tenantId: string, maxMessages = 10): Promise<ReceivedDlqMessage[]> {
     const messages = await this.queueClient.receiveDlqMessages(maxMessages);
     return messages.filter((msg) => msg.body.tenantId === tenantId);
+  }
+
+  /**
+   * Scans and expires stale/stuck jobs exceeding expiration time (TTL) or maximum retries.
+   * Transitions them to FAILED, increments telemetry counters, and redrives to DLQ.
+   */
+  async reapExpiredJobs(options?: { defaultExpirationSeconds?: number }): Promise<{ reapedCount: number; jobs: Job[] }> {
+    const effectiveExpSec = options?.defaultExpirationSeconds ?? this.defaultExpirationSeconds;
+    const expiredJobs = await this.jobRepo.expireStaleJobs({ defaultExpirationSeconds: effectiveExpSec });
+
+    for (const job of expiredJobs) {
+      this.metrics.incCounter('inference_job_errors_total', {
+        provider: job.provider ?? 'queue',
+        error_code: job.errorCode ?? 'JOB_EXPIRED',
+        is_transient: 'false',
+      });
+      this.metrics.incCounter('inference_job_expired_total', {
+        model_id: job.modelId,
+      });
+
+      // Send failure notice to DLQ for operational review
+      await this.queueClient
+        .sendToDlq({
+          jobId: job.id,
+          tenantId: job.tenantId,
+          modelId: job.modelId,
+          routingPreference: job.routingPreference,
+          priority: job.priority,
+          correlationId: job.correlationId ?? undefined,
+          traceparent: job.traceparent ?? undefined,
+          inputUri: job.inputUri,
+          inputPayload: job.inputPayload,
+          failureReason: job.errorMessage ?? 'Job expired in queue',
+          errorCode: job.errorCode ?? 'JOB_EXPIRED',
+          retryCount: job.retryCount,
+          createdAt: job.createdAt.toISOString(),
+          failedAt: job.completedAt?.toISOString() ?? new Date().toISOString(),
+        })
+        .catch(() => {
+          // Non-blocking if DLQ is unavailable
+        });
+    }
+
+    return { reapedCount: expiredJobs.length, jobs: expiredJobs };
+  }
+
+  /**
+   * Manually re-triggers a FAILED, CANCELLED, or stuck job.
+   * Resets execution state and retries, generates a fresh expiration window, and enqueues to worker queue.
+   */
+  async retryJob(
+    tenantId: string,
+    jobId: string,
+    options?: { expiresInSeconds?: number }
+  ): Promise<Job> {
+    const job = await this.getJob(tenantId, jobId);
+
+    if (job.status === JobStatus.PROCESSING) {
+      throw new ConflictError(
+        `Cannot manually retry job '${jobId}' while it is currently in PROCESSING state.`,
+        'JOB_IN_PROGRESS'
+      );
+    }
+
+    const expSec = options?.expiresInSeconds ?? this.defaultExpirationSeconds;
+    const newExpiresAt = new Date(Date.now() + expSec * 1000);
+
+    const updated = await this.jobRepo.update(tenantId, jobId, {
+      status: JobStatus.QUEUED,
+      retryCount: 0,
+      errorCode: null,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+      progressPct: 0,
+      progress: {
+        phase: 'queued',
+        percent: 0,
+        message: 'Manually re-triggered by operator',
+      },
+      expiresAt: newExpiresAt,
+    });
+
+    const activeJob = updated ?? job;
+
+    // Enqueue task message to worker queue
+    const correlationId = activeJob.correlationId ?? randomUUID();
+    await this.queueClient.sendMessage({
+      jobId: activeJob.id,
+      tenantId: activeJob.tenantId,
+      modelId: activeJob.modelId,
+      routingPreference: activeJob.routingPreference,
+      priority: activeJob.priority,
+      correlationId,
+      traceparent: activeJob.traceparent ?? undefined,
+      inputUri: activeJob.inputUri,
+      inputPayload: activeJob.inputPayload,
+      createdAt: new Date().toISOString(),
+    });
+
+    this.metrics.incCounter('jobs_submitted_total', {
+      tenant_id: activeJob.tenantId,
+      model_id: activeJob.modelId,
+    });
+    this.metrics.incCounter('jobs_manually_retried_total', {
+      tenant_id: activeJob.tenantId,
+      model_id: activeJob.modelId,
+    });
+
+    return activeJob;
   }
 }
 

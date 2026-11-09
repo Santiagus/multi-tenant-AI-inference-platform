@@ -467,6 +467,27 @@ POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 4.5 Manually Trigger / Retry a Cancelled or Failed Job
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/retry
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "expires_in_seconds": 86400
+}
+
+###
+
+# 4.6 Reap Stale or Retries-Exhausted Queued Jobs (Sweep Queue TTL Expiration)
+POST {{baseUrl}}/v1/jobs/reap
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
 
 ### ==============================================================================
 ### USE CASE 5: Validation & Uniform RFC 7807 Error Handling

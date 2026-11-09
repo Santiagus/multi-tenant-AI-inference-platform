@@ -481,6 +481,39 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     },
   },
 
+  'POST /v1/jobs/:id/retry': {
+    tags: ['Jobs'],
+    summary: 'Manually Trigger / Retry Job',
+    description: 'Manually re-triggers a FAILED, CANCELLED, or stuck job, resetting retry counters and re-enqueuing.',
+    params: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Job UUID to retry / manually trigger',
+          example: '40ecad89-bd24-426a-8b33-5be40ba9fe0a',
+        },
+      },
+      required: ['id'],
+    },
+    body: {
+      type: 'object',
+      properties: {
+        expires_in_seconds: {
+          type: 'integer',
+          description: 'Custom expiration timeout in seconds for this run',
+          example: 86400,
+        },
+      },
+    },
+  },
+
+  'POST /v1/jobs/reap': {
+    tags: ['Jobs'],
+    summary: 'Reap Expired Jobs',
+    description: 'Scans non-terminal jobs exceeding queue TTL expiration or maximum retries and marks them FAILED.',
+  },
+
   'POST /v1/jobs/:id/transition': {
     tags: ['Jobs'],
     summary: 'Transition Job Lifecycle State',

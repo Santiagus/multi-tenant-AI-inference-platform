@@ -62,6 +62,7 @@ export interface JobItem {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  expires_at?: string | null;
   duration_ms: number | null;
   progress_pct?: number;
   progress?: JobProgress | null;

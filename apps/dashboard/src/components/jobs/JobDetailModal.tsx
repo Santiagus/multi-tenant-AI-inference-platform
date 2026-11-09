@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { StatusBadge } from '../common/Badge';
 import { getJobHardware } from './JobsView';
 import type { JobItem } from '../../types';
@@ -7,12 +8,15 @@ interface JobDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCancelJob: (jobId: string) => Promise<void>;
+  onRetryJob?: (jobId: string) => Promise<void>;
 }
 
-export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailModalProps) {
+export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }: JobDetailModalProps) {
+  const [isRetrying, setIsRetrying] = useState(false);
   if (!isOpen || !job) return null;
 
   const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED';
+  const canRetry = job.status === 'FAILED' || job.status === 'CANCELLED';
 
   // Cost and economics calculation
   const inTokens = job.usage?.prompt_tokens ?? 0;
@@ -255,24 +259,48 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
           {job.error && (
             <div
               style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
+                backgroundColor: job.error.code === 'JOB_EXPIRED' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: job.error.code === 'JOB_EXPIRED' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                 padding: '14px',
                 borderRadius: '8px',
               }}
             >
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#f87171', marginBottom: '4px' }}>
-                Execution Failure [{job.error.code || 'UNKNOWN_ERROR'}]
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: job.error.code === 'JOB_EXPIRED' ? '#fbbf24' : '#f87171',
+                  marginBottom: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>{job.error.code === 'JOB_EXPIRED' ? '⏳' : '⚠️'}</span>
+                {job.error.code === 'JOB_EXPIRED'
+                  ? 'Queue Expiration Timeout Exhausted'
+                  : job.error.code === 'MAX_RETRIES_EXCEEDED'
+                    ? 'Maximum Retry Attempts Exhausted'
+                    : `Execution Failure [${job.error.code || 'UNKNOWN_ERROR'}]`}
               </div>
-              <div style={{ fontSize: '13px', color: '#fca5a5' }}>{job.error.message}</div>
+              <div style={{ fontSize: '13px', color: job.error.code === 'JOB_EXPIRED' ? '#fde68a' : '#fca5a5' }}>
+                {job.error.message}
+              </div>
             </div>
           )}
 
           {/* Telemetry Trace Context */}
-          <div style={{ fontSize: '11px', color: '#64748b' }}>
+          <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', flexDirection: 'column', gap: '3px' }}>
             <div><strong>Correlation ID:</strong> <span style={{ fontFamily: 'monospace' }}>{job.correlation_id || 'None'}</span></div>
             <div><strong>Trace ID:</strong> <span style={{ fontFamily: 'monospace' }}>{job.trace_id || 'None'}</span></div>
-            <div><strong>Created:</strong> {new Date(job.created_at).toLocaleString()} | <strong>Completed:</strong> {job.completed_at ? new Date(job.completed_at).toLocaleString() : 'In-flight'}</div>
+            <div>
+              <strong>Created:</strong> {new Date(job.created_at).toLocaleString()} |{' '}
+              <strong>Expires:</strong> {job.expires_at ? new Date(job.expires_at).toLocaleString() : 'No TTL'} |{' '}
+              <strong>Completed:</strong> {job.completed_at ? new Date(job.completed_at).toLocaleString() : 'In-flight'}
+            </div>
+            <div>
+              <strong>Retries:</strong> {job.retry_count} / {job.max_retries ?? 3} allowed
+            </div>
           </div>
         </div>
 
@@ -286,25 +314,56 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             alignItems: 'center',
           }}
         >
-          {canCancel ? (
-            <button
-              onClick={() => onCancelJob(job.job_id)}
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                color: '#f87171',
-                border: '1px solid rgba(239, 68, 68, 0.4)',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Cancel In-Flight Job
-            </button>
-          ) : (
-            <div />
-          )}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {canCancel && (
+              <button
+                onClick={() => onCancelJob(job.job_id)}
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel In-Flight Job
+              </button>
+            )}
+
+            {canRetry && onRetryJob && (
+              <button
+                onClick={async () => {
+                  setIsRetrying(true);
+                  try {
+                    await onRetryJob(job.job_id);
+                    onClose();
+                  } finally {
+                    setIsRetrying(false);
+                  }
+                }}
+                disabled={isRetrying}
+                style={{
+                  backgroundColor: '#4f46e5',
+                  color: '#ffffff',
+                  border: '1px solid #6366f1',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: isRetrying ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>⚡</span>
+                {isRetrying ? 'Re-triggering...' : 'Trigger Manually / Retry'}
+              </button>
+            )}
+          </div>
 
           <button
             onClick={onClose}

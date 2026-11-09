@@ -7,6 +7,7 @@ import { PostgresFinOpsPricingRepository } from './infrastructure/db/postgres-fi
 import { PricingSyncScheduler } from './infrastructure/finops/pricing-scheduler.js';
 import { S3StorageClient } from './infrastructure/storage/s3-storage.js';
 import { SqsQueueClient } from './infrastructure/queue/sqs-queue.js';
+import { JobService } from './application/job-service.js';
 import { buildApp } from './app.js';
 
 async function main() {
@@ -74,6 +75,32 @@ async function main() {
     console.log('Background inference worker daemon started.');
   }
 
+  // Job Expiration & Stale Queue Reaper
+  const jobService = new JobService(
+    jobRepo,
+    queueClient,
+    storageClient,
+    undefined,
+    undefined,
+    config.JOB_EXPIRATION_SECONDS
+  );
+  try {
+    const startupReap = await jobService.reapExpiredJobs();
+    if (startupReap.reapedCount > 0) {
+      console.log(`Initial job expiration scan reaped ${startupReap.reapedCount} stale/expired queued job(s).`);
+    }
+  } catch (err) {
+    console.warn('Initial job expiration check warning:', err);
+  }
+
+  const jobReaperTimer = setInterval(async () => {
+    try {
+      await jobService.reapExpiredJobs();
+    } catch (err) {
+      console.error('Error in periodic job expiration reaper:', err);
+    }
+  }, config.JOB_REAPER_INTERVAL_MS);
+
   // Build Fastify App
   const securityRepo = new PostgresSecurityRepository(db);
   const finopsRepo = new PostgresFinOpsPricingRepository(db, config.SHOWCASE_MODE);
@@ -107,6 +134,7 @@ async function main() {
     process.on(sig, async () => {
       console.log(`Received ${sig}, closing server...`);
       try {
+        clearInterval(jobReaperTimer);
         pricingScheduler.stop();
         await jobWorker.stop();
         await app.close();

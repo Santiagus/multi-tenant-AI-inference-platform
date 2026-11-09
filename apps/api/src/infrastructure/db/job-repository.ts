@@ -27,6 +27,7 @@ export interface UpdateJobOptions {
   retryCount?: number;
   startedAt?: Date | null;
   completedAt?: Date | null;
+  expiresAt?: Date | null;
 }
 
 export interface IJobRepository {
@@ -35,6 +36,7 @@ export interface IJobRepository {
   findByIdempotencyKey(tenantId: string, idempotencyKey: string): Promise<Job | null>;
   update(tenantId: string, id: string, updates: UpdateJobOptions): Promise<Job | null>;
   list(tenantId: string, options?: { limit?: number; offset?: number; status?: JobStatusType }): Promise<Job[]>;
+  expireStaleJobs(options?: { defaultExpirationSeconds?: number }): Promise<Job[]>;
 }
 
 interface JobRow {
@@ -66,6 +68,7 @@ interface JobRow {
   created_at: Date;
   started_at: Date | null;
   completed_at: Date | null;
+  expires_at?: Date | null;
   updated_at: Date;
 }
 
@@ -99,6 +102,7 @@ function mapRowToJob(row: JobRow): Job {
     createdAt: new Date(row.created_at),
     startedAt: row.started_at ? new Date(row.started_at) : null,
     completedAt: row.completed_at ? new Date(row.completed_at) : null,
+    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
     updatedAt: new Date(row.updated_at),
   };
 }
@@ -117,12 +121,18 @@ export class PostgresJobRepository implements IJobRepository {
     const inputPayload = input.inputPayload ? JSON.stringify(input.inputPayload) : null;
     const inputUri = input.inputUri ?? null;
     const maxRetries = input.maxRetries ?? 3;
+    const expiresAt =
+      input.expiresAt !== undefined
+        ? input.expiresAt
+        : input.expiresInSeconds
+          ? new Date(Date.now() + input.expiresInSeconds * 1000)
+          : null;
 
     const query = `
       INSERT INTO jobs (
         id, tenant_id, idempotency_key, request_hash, correlation_id, traceparent,
-        model_id, routing_preference, priority, status, input_payload, input_uri, max_retries
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        model_id, routing_preference, priority, status, input_payload, input_uri, max_retries, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *;
     `;
 
@@ -140,6 +150,7 @@ export class PostgresJobRepository implements IJobRepository {
       inputPayload,
       inputUri,
       maxRetries,
+      expiresAt,
     ]);
 
     return mapRowToJob(res.rows[0]);
@@ -228,6 +239,10 @@ export class PostgresJobRepository implements IJobRepository {
       setClauses.push(`completed_at = $${paramIndex++}`);
       values.push(updates.completedAt);
     }
+    if (updates.expiresAt !== undefined) {
+      setClauses.push(`expires_at = $${paramIndex++}`);
+      values.push(updates.expiresAt);
+    }
 
     let whereClause = 'WHERE tenant_id = $1 AND id = $2';
     if (updates.expectedCurrentStatuses && updates.expectedCurrentStatuses.length > 0) {
@@ -245,6 +260,34 @@ export class PostgresJobRepository implements IJobRepository {
     const res = await this.db.query<JobRow>(sql, values);
     if (res.rows.length === 0) return null;
     return mapRowToJob(res.rows[0]);
+  }
+
+  async expireStaleJobs(options: { defaultExpirationSeconds?: number } = {}): Promise<Job[]> {
+    const defaultExpSec = options.defaultExpirationSeconds ?? 86400;
+    const sql = `
+      UPDATE jobs
+      SET
+        status = 'FAILED',
+        error_code = CASE
+          WHEN retry_count >= max_retries AND max_retries > 0 THEN 'MAX_RETRIES_EXCEEDED'
+          ELSE 'JOB_EXPIRED'
+        END,
+        error_message = CASE
+          WHEN retry_count >= max_retries AND max_retries > 0 THEN 'Job failed: maximum retry attempts exhausted'
+          ELSE 'Job expired: exceeded queue expiration timeout'
+        END,
+        completed_at = NOW(),
+        updated_at = NOW()
+      WHERE status IN ('QUEUED', 'PROCESSING', 'RETRYING')
+        AND (
+          (expires_at IS NOT NULL AND expires_at <= NOW())
+          OR (expires_at IS NULL AND created_at < NOW() - ($1 || ' seconds')::INTERVAL)
+          OR (retry_count >= max_retries AND max_retries > 0)
+        )
+      RETURNING *;
+    `;
+    const res = await this.db.query<JobRow>(sql, [defaultExpSec]);
+    return res.rows.map(mapRowToJob);
   }
 
   async list(
@@ -275,6 +318,13 @@ export class InMemoryJobRepository implements IJobRepository {
 
   async create(input: NewJobInput): Promise<Job> {
     const now = new Date();
+    const expiresAt =
+      input.expiresAt !== undefined
+        ? input.expiresAt
+        : input.expiresInSeconds
+          ? new Date(now.getTime() + input.expiresInSeconds * 1000)
+          : null;
+
     const job: Job = {
       id: randomUUID(),
       tenantId: input.tenantId,
@@ -304,6 +354,7 @@ export class InMemoryJobRepository implements IJobRepository {
       createdAt: now,
       startedAt: null,
       completedAt: null,
+      expiresAt,
       updatedAt: now,
     };
     this.jobs.set(job.id, job);
@@ -352,10 +403,50 @@ export class InMemoryJobRepository implements IJobRepository {
     if (updates.retryCount !== undefined) job.retryCount = updates.retryCount;
     if (updates.startedAt !== undefined) job.startedAt = updates.startedAt;
     if (updates.completedAt !== undefined) job.completedAt = updates.completedAt;
+    if (updates.expiresAt !== undefined) job.expiresAt = updates.expiresAt;
     job.updatedAt = new Date();
 
     this.jobs.set(id, job);
     return { ...job };
+  }
+
+  async expireStaleJobs(options: { defaultExpirationSeconds?: number } = {}): Promise<Job[]> {
+    const now = new Date();
+    const defaultExpMs = (options.defaultExpirationSeconds ?? 86400) * 1000;
+    const reaped: Job[] = [];
+
+    for (const job of this.jobs.values()) {
+      if (
+        job.status === JobStatus.QUEUED ||
+        job.status === JobStatus.PROCESSING ||
+        job.status === JobStatus.RETRYING
+      ) {
+        const isExpiredByDate = job.expiresAt
+          ? job.expiresAt <= now
+          : now.getTime() - job.createdAt.getTime() >= defaultExpMs;
+        const isRetriesExceeded = job.maxRetries > 0 && job.retryCount >= job.maxRetries;
+
+        if (isExpiredByDate || isRetriesExceeded) {
+          const errorCode = isRetriesExceeded ? 'MAX_RETRIES_EXCEEDED' : 'JOB_EXPIRED';
+          const errorMessage = isRetriesExceeded
+            ? `Job failed: maximum retry attempts (${job.maxRetries}) exhausted`
+            : 'Job expired: exceeded queue expiration timeout';
+
+          job.status = JobStatus.FAILED;
+          job.errorCode = errorCode;
+          job.errorMessage = errorMessage;
+          job.completedAt = now;
+          job.updatedAt = now;
+          job.progress = {
+            phase: 'failed',
+            percent: job.progressPct ?? 0,
+            message: errorMessage,
+          };
+          reaped.push({ ...job });
+        }
+      }
+    }
+    return reaped;
   }
 
   async list(

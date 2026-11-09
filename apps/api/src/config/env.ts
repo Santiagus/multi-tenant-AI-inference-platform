@@ -26,8 +26,10 @@ export const EnvSchema = z.object({
   SQS_QUEUE_URL: z.string().default('http://localhost:9324/000000000000/inference-jobs'),
   SQS_DLQ_URL: z.string().default('http://localhost:9324/000000000000/inference-jobs-dlq'),
 
-  // Worker Daemon
+  // Worker Daemon & Job Lifecycle Expiration
   WORKER_ENABLED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
+  JOB_EXPIRATION_SECONDS: z.coerce.number().int().positive().default(86400),
+  JOB_REAPER_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
 
   // Tenancy & Auth Defaults
   DEFAULT_TENANT_ID: z.string().default('tenant-default'),

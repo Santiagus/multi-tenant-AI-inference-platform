@@ -126,6 +126,16 @@ export function App() {
     await loadData();
   };
 
+  const handleRetryJob = async (jobId: string) => {
+    await apiClient.retryJob(tenantId, jobId);
+    await loadData();
+  };
+
+  const handleReapExpiredJobs = async () => {
+    await apiClient.reapExpiredJobs();
+    await loadData();
+  };
+
   const handleTriggerWorker = async () => {
     setIsProcessingWorker(true);
     try {
@@ -207,6 +217,8 @@ export function App() {
             onRefresh={loadData}
             onSubmitJob={handleSubmitJob}
             onCancelJob={handleCancelJob}
+            onRetryJob={handleRetryJob}
+            onReapExpired={handleReapExpiredJobs}
             onTriggerWorker={handleTriggerWorker}
             isProcessingWorker={isProcessingWorker}
           />

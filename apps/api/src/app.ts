@@ -187,7 +187,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     deps.queueClient,
     deps.storageClient,
     tracer,
-    metrics
+    metrics,
+    deps.config?.JOB_EXPIRATION_SECONDS ?? 86400
   );
   const jobWorker =
     deps.jobWorker ??

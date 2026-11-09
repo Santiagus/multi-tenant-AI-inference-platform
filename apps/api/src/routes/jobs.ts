@@ -64,6 +64,7 @@ const SubmitJobSchema = z.object({
     .default('auto'),
   priority: z.number().int().min(1).max(10).default(5),
   max_retries: z.number().int().min(0).max(10).optional(),
+  expires_in_seconds: z.number().int().positive().max(604800).optional(),
   parameters: z.record(z.unknown()).optional(),
   input: z
     .object({
@@ -184,6 +185,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         routingPreference: body.routing_preference as RoutingPreferenceType,
         priority: body.priority,
         maxRetries: body.max_retries,
+        expiresInSeconds: body.expires_in_seconds,
         input: resolvedInput as Record<string, unknown> | undefined,
         inputUri: body.input_uri,
         correlationId,
@@ -269,6 +271,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       }
       const tenantId = (req as any).tenantId || 'tenant-default';
       const { limit, offset, status } = parseResult.data;
+      await jobService.reapExpiredJobs();
       const jobs = await jobService.listJobs(tenantId, { limit, offset, status: status as JobStatusType | undefined });
 
       return reply.status(200).send({
@@ -313,6 +316,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
             created_at: job.createdAt.toISOString(),
             started_at: job.startedAt?.toISOString() ?? null,
             completed_at: job.completedAt?.toISOString() ?? null,
+            expires_at: job.expiresAt?.toISOString() ?? null,
             duration_ms: job.durationMs,
             progress_pct: progressPct,
             progress,
@@ -470,6 +474,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       created_at: job.createdAt.toISOString(),
       started_at: job.startedAt?.toISOString() ?? null,
       completed_at: job.completedAt?.toISOString() ?? null,
+      expires_at: job.expiresAt?.toISOString() ?? null,
       duration_ms: job.durationMs,
     };
 
@@ -550,6 +555,66 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         job_id: job.id,
         status: job.status,
         completed_at: job.completedAt?.toISOString() ?? null,
+      });
+    }
+  );
+
+  // POST /v1/jobs/:id/retry - Manually trigger / retry a failed or cancelled job
+  fastify.post<{ Params: { id: string }; Body?: { expires_in_seconds?: number } }>(
+    '/v1/jobs/:id/retry',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Manually Trigger / Retry Job',
+        description: 'Manually re-triggers a FAILED, CANCELLED, or stuck job, resetting retry counters and re-enqueuing.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Job UUID' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const expiresInSeconds = req.body?.expires_in_seconds;
+      const job = await jobService.retryJob(tenantId, req.params.id, { expiresInSeconds });
+
+      return reply.status(200).send({
+        job_id: job.id,
+        status: job.status,
+        model_id: job.modelId,
+        retry_count: job.retryCount,
+        max_retries: job.maxRetries,
+        expires_at: job.expiresAt?.toISOString() ?? null,
+        message: 'Job successfully re-triggered and enqueued for worker execution',
+      });
+    }
+  );
+
+  // POST /v1/jobs/reap - Scan and expire stale or retries-exhausted jobs
+  fastify.post(
+    '/v1/jobs/reap',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Reap Expired Jobs',
+        description: 'Scans non-terminal jobs exceeding queue TTL expiration or maximum retries and marks them FAILED.',
+      },
+    },
+    async (_req, reply) => {
+      const result = await jobService.reapExpiredJobs();
+      return reply.status(200).send({
+        reaped_count: result.reapedCount,
+        reaped_jobs: result.jobs.map((j) => ({
+          job_id: j.id,
+          status: j.status,
+          error_code: j.errorCode,
+          error_message: j.errorMessage,
+        })),
       });
     }
   );

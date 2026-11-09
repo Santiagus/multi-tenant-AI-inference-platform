@@ -126,6 +126,26 @@ export class PlatformApiClient {
     );
   }
 
+  async retryJob(tenantId: string, jobId: string, expiresInSeconds?: number): Promise<{ job_id: string; status: string; message: string }> {
+    return this.request<{ job_id: string; status: string; message: string }>(
+      `/v1/jobs/${jobId}/retry`,
+      {
+        method: 'POST',
+        body: expiresInSeconds ? JSON.stringify({ expires_in_seconds: expiresInSeconds }) : undefined,
+      },
+      tenantId
+    );
+  }
+
+  async reapExpiredJobs(): Promise<{ reaped_count: number; reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }> }> {
+    return this.request<{ reaped_count: number; reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }> }>(
+      '/v1/jobs/reap',
+      {
+        method: 'POST',
+      }
+    );
+  }
+
   async getDlqMessages(tenantId: string): Promise<{ messages: DlqMessage[] }> {
     return this.request<{ messages: DlqMessage[] }>('/v1/jobs/dlq', {}, tenantId);
   }

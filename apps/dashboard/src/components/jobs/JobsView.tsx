@@ -20,6 +20,8 @@ interface JobsViewProps {
     input: { prompt: string };
   }) => Promise<void>;
   onCancelJob: (jobId: string) => Promise<void>;
+  onRetryJob?: (jobId: string) => Promise<void>;
+  onReapExpired?: () => Promise<void>;
   onTriggerWorker: () => Promise<void>;
   isProcessingWorker: boolean;
 }
@@ -161,6 +163,8 @@ export function JobsView({
   onRefresh,
   onSubmitJob,
   onCancelJob,
+  onRetryJob,
+  onReapExpired,
   onTriggerWorker,
   isProcessingWorker,
 }: JobsViewProps) {
@@ -1204,6 +1208,25 @@ export function JobsView({
             DLQ Messages ({stats.dlqCount})
           </button>
 
+          {onReapExpired && (
+            <button
+              onClick={onReapExpired}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#f59e0b',
+                border: '1px solid rgba(245, 158, 11, 0.4)',
+                padding: '8px 14px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+              title="Scans for queued jobs exceeding expiration TTL or retries and marks them FAILED"
+            >
+              ⏳ Reap Stale
+            </button>
+          )}
+
           <button
             onClick={onTriggerWorker}
             disabled={isProcessingWorker}
@@ -1338,18 +1361,19 @@ export function JobsView({
                 >
                   Submitted
                 </SortableHeader>
+                <th style={{ padding: '10px 10px', textAlign: 'right', color: '#94a3b8', fontWeight: 600 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && jobs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     Loading inference jobs...
                   </td>
                 </tr>
               ) : sortedJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     No inference jobs match the current filters. Click "+ Submit Job" to enqueue one.
                   </td>
                 </tr>
@@ -1496,6 +1520,53 @@ export function JobsView({
                         <div style={{ color: '#e2e8f0', fontWeight: 500 }}>{formatTimeAgo(job.created_at)}</div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>{new Date(job.created_at).toLocaleTimeString()}</div>
                       </td>
+                      <td
+                        style={{ padding: '10px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {job.status === 'FAILED' && onRetryJob ? (
+                          <button
+                            onClick={async () => {
+                              await onRetryJob(job.job_id);
+                              onRefresh();
+                            }}
+                            style={{
+                              backgroundColor: '#4f46e5',
+                              color: '#ffffff',
+                              border: 'none',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                            title="Re-enqueue and retry this failed job"
+                          >
+                            ⚡ Retry
+                          </button>
+                        ) : (job.status === 'QUEUED' || job.status === 'PROCESSING') ? (
+                          <button
+                            onClick={async () => {
+                              await onCancelJob(job.job_id);
+                              onRefresh();
+                            }}
+                            style={{
+                              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                              color: '#f87171',
+                              border: '1px solid rgba(239, 68, 68, 0.3)',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        ) : (
+                          <span style={{ color: '#475569', fontSize: '11px' }}>—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -1523,6 +1594,13 @@ export function JobsView({
           await onCancelJob(id);
           setSelectedJob(null);
           onRefresh();
+        }}
+        onRetryJob={async (id) => {
+          if (onRetryJob) {
+            await onRetryJob(id);
+            setSelectedJob(null);
+            onRefresh();
+          }
         }}
       />
 
