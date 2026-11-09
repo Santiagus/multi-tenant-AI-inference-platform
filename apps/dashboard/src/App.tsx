@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Navigation, type ActiveTab } from './components/Navigation';
 import { JobsView } from './components/jobs/JobsView';
-import { ProvidersView } from './components/providers/ProvidersView';
+import { ProviderStatusView, computeProviderSyncMetrics } from './components/providers/ProviderStatusView';
 import { FinOpsPricingView } from './components/finops/FinOpsPricingView';
-import { RoutingView } from './components/routing/RoutingView';
+import { DEFAULT_PROVIDER_FLEET } from './components/finops/ProviderFleetBar';
 import { EconomicsView } from './components/economics/EconomicsView';
 import { WorkloadPathView } from './components/flow/WorkloadPathView';
 import { apiClient } from './api/client';
 import type {
   DlqMessage,
-  EconomicsResponse,
   JobItem,
+  PricingSyncAudit,
+  ProviderBalanceStatus,
   ProviderProfile,
   RoutingPreference,
 } from './types';
@@ -20,15 +21,23 @@ export function App() {
   const [tenantId, setTenantId] = useState<string>('tenant-default');
   const [activeTab, setActiveTab] = useState<ActiveTab>('jobs');
   const [apiHealthy, setApiHealthy] = useState<boolean>(true);
+  const [dataSource, setDataSource] = useState<'real' | 'mock'>('real');
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isProcessingWorker, setIsProcessingWorker] = useState<boolean>(false);
+  const [isSyncingPricing, setIsSyncingPricing] = useState<boolean>(false);
 
   // Core Data
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [dlqMessages, setDlqMessages] = useState<DlqMessage[]>([]);
   const [providers, setProviders] = useState<Record<string, ProviderProfile>>({});
-  const [economics, setEconomics] = useState<EconomicsResponse | null>(null);
+  const [syncAudits, setSyncAudits] = useState<PricingSyncAudit[]>([]);
+  const [providerBalances, setProviderBalances] = useState<Record<string, ProviderBalanceStatus>>({});
+
+  // Real-time Provider Sync Status Metrics
+  const syncMetrics = useMemo(() => {
+    return computeProviderSyncMetrics(DEFAULT_PROVIDER_FLEET, syncAudits, providers);
+  }, [syncAudits, providers]);
 
   // In flight count
   const inFlightCount = jobs.filter(
@@ -45,13 +54,17 @@ export function App() {
       // 1. Health
       const health = await apiClient.getHealth();
       setApiHealthy(health.ok);
+      if (health.dataSource) {
+        setDataSource(health.dataSource);
+      }
 
-      // 2. Jobs & DLQ
-      const [jobsRes, dlqRes, provRes, econRes] = await Promise.allSettled([
-        apiClient.getJobs(tenantId, { limit: 50 }),
+      // 2. Jobs, DLQ, Providers, Economics, Sync Audits & Balances
+      const [jobsRes, dlqRes, provRes, histRes, balancesRes] = await Promise.allSettled([
+        apiClient.getJobs(tenantId, { limit: 100 }),
         apiClient.getDlqMessages(tenantId),
         apiClient.getProviders(),
-        apiClient.getEconomics(tenantId),
+        apiClient.getPricingHistory(),
+        apiClient.getProviderBalances().catch(() => ({ ok: false, balances: {} })),
       ]);
 
       if (jobsRes.status === 'fulfilled') {
@@ -63,8 +76,13 @@ export function App() {
       if (provRes.status === 'fulfilled') {
         setProviders(provRes.value.providers);
       }
-      if (econRes.status === 'fulfilled') {
-        setEconomics(econRes.value);
+      if (histRes.status === 'fulfilled') {
+        setSyncAudits(histRes.value.cadence_audits || []);
+      }
+      if (balancesRes.status === 'fulfilled' && (balancesRes.value as any)?.balances) {
+        setProviderBalances((balancesRes.value as any).balances);
+      } else if (histRes.status === 'fulfilled' && histRes.value.provider_balances) {
+        setProviderBalances(histRes.value.provider_balances);
       }
     } catch (err) {
       console.error('Failed to refresh platform dashboard state:', err);
@@ -78,12 +96,12 @@ export function App() {
     loadData();
   }, [loadData]);
 
-  // Auto-refresh interval (5s)
+  // Auto-refresh interval (60s optimal for real-time spot auction and provider updates)
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       loadData();
-    }, 5000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [autoRefresh, loadData]);
 
@@ -119,12 +137,25 @@ export function App() {
     await loadData();
   };
 
+  const handleSyncPricing = async () => {
+    setIsSyncingPricing(true);
+    try {
+      await apiClient.syncPricing();
+      await loadData();
+    } catch (err) {
+      console.error('Failed to synchronize provider catalogs:', err);
+    } finally {
+      setIsSyncingPricing(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header
         tenantId={tenantId}
         onTenantChange={setTenantId}
         apiHealthy={apiHealthy}
+        dataSource={dataSource}
         autoRefresh={autoRefresh}
         onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
         onManualRefresh={loadData}
@@ -136,6 +167,8 @@ export function App() {
         onTabChange={setActiveTab}
         jobCount={jobs.length}
         inFlightCount={inFlightCount}
+        syncedProvidersCount={syncMetrics.syncedCount}
+        unsyncedProvidersCount={syncMetrics.unsyncedCount}
       />
 
       <main style={{ flex: 1 }}>
@@ -152,22 +185,26 @@ export function App() {
           />
         )}
 
-        {activeTab === 'providers' && (
-          <ProvidersView
+        {activeTab === 'provider-status' && (
+          <ProviderStatusView
+            syncAudits={syncAudits}
+            providerBalances={providerBalances}
             providers={providers}
-            jobs={jobs}
-            isLoading={isRefreshing}
+            onRefreshSync={handleSyncPricing}
             onToggleHealth={handleToggleProviderHealth}
+            isSyncing={isSyncingPricing}
           />
         )}
 
-        {activeTab === 'pricing' && <FinOpsPricingView />}
-
-        {activeTab === 'routing' && <RoutingView />}
+        {activeTab === 'pricing' && (
+          <FinOpsPricingView
+            onNavigateToProviderStatus={() => setActiveTab('provider-status')}
+          />
+        )}
 
         {activeTab === 'economics' && (
           <EconomicsView
-            economics={economics}
+            jobs={jobs}
             isLoading={isRefreshing}
             onRefresh={loadData}
           />
