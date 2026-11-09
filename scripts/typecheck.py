@@ -31,14 +31,36 @@ IGNORE_DIRS = {
 
 
 def check_ast_type_annotations(repo_root: Path) -> list[str]:
-    """Inspect Python AST for syntax validity."""
+    """Inspect Python AST for syntax validity and clean typing rules."""
     issues: list[str] = []
     py_files = [p for p in repo_root.rglob("*.py") if not any(d in p.parts for d in IGNORE_DIRS)]
     for py_file in py_files:
         try:
-            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            content = py_file.read_text(encoding="utf-8")
+            tree = ast.parse(content, filename=str(py_file))
             if not isinstance(tree, ast.Module):
                 issues.append(f"{py_file}: AST root is not a Module")
+
+            # Check: code accessing unittest.mock requires explicit mock import for mypy in clean CI
+            has_unittest_mock_usage = False
+            has_explicit_mock_import = False
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr == "mock":
+                    if isinstance(node.value, ast.Name) and node.value.id == "unittest":
+                        has_unittest_mock_usage = True
+                elif isinstance(node, ast.ImportFrom) and node.module == "unittest":
+                    for alias in node.names:
+                        if alias.name == "mock":
+                            has_explicit_mock_import = True
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "unittest.mock":
+                            has_explicit_mock_import = True
+
+            if has_unittest_mock_usage and not has_explicit_mock_import:
+                issues.append(
+                    f"{py_file}: accesses 'unittest.mock' without explicit 'from unittest import mock' (triggers mypy failure in clean CI)"
+                )
         except Exception as exc:
             issues.append(f"{py_file}: AST parsing failed: {exc}")
     return issues

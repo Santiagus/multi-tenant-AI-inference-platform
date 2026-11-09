@@ -40,6 +40,9 @@ Consult a specific ADR in `docs/adr/` only when the task depends on that decisio
 - **Vertical Mermaid diagrams.** Prioritize vertical top-down reading (`flowchart TD`) for Mermaid architecture and workflow diagrams whenever possible.
 - **Clean link typography.** Never use decorative Unicode arrow characters (such as `↗`, `➜`, `➔`, `➡`) when adding hyperlinks in UI components, markdown documentation or reports. Format links cleanly using standard text, semantic styling or subtle underline/dotted borders without noise characters.
 - **Path-agnostic and portable.** Never use machine-specific absolute paths (e.g. `file:///home/...`, `/home/...`, `/Users/...`, `C:\...`) in code, documentation, markdown links, scripts or tests. All internal paths, imports and links must be relative to the repository workspace so anyone cloning the repository can access them.
+- **Explicit test mock imports & clean typing.** When writing or generating tests:
+  - In Python: Never access `unittest.mock` after a bare `import unittest`. Always explicitly import `from unittest import mock` (or `import unittest.mock as mock`), because in clean CI environments without eager submodule exports, mypy fails with `Module has no attribute "mock" [attr-defined]`.
+  - In TypeScript: Use standard `node:test` mocking (`mock.fn()`, `mock.method()`) or test doubles (`InMemoryJobRepository`, etc.) rather than importing third-party mock packages or undeclared globals. Always import test lifecycle functions explicitly from `node:test` (`test`, `describe`, `beforeEach`, etc.) and `node:assert/strict`.
 
 ## Security and repository boundary
 
