@@ -7,21 +7,34 @@ export interface HealthRouteOptions {
   db: { isHealthy: () => Promise<boolean> };
   storage: IStorageClient;
   queue: IQueueClient;
+  dataSource?: 'real' | 'mock';
+  getDataSource?: () => 'real' | 'mock';
 }
 
 export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fastify, options) => {
+  const getDataSource = (): 'real' | 'mock' => {
+    if (options.getDataSource) return options.getDataSource();
+    if (options.dataSource) return options.dataSource;
+    if (process.env.SHOWCASE_MODE === 'true' || process.env.SHOWCASE_MODE === '1' || process.env.MOCK_PROVIDERS === '1') {
+      return 'mock';
+    }
+    return 'real';
+  };
+
   fastify.get(
     '/healthz',
     {
       schema: {
         tags: ['Health'],
         summary: 'Liveness Probe',
-        description: 'Returns HTTP 200 if the Fastify API process is running and able to accept incoming connections.',
+        description: 'Returns HTTP 200 if the Fastify API process is running and indicates whether the platform is serving real or mock/showcase data.',
       },
     },
     async (_req, reply) => {
+      const dataSource = getDataSource();
       return reply.status(200).send({
         status: 'ok',
+        dataSource,
         timestamp: new Date().toISOString(),
       });
     }
@@ -45,9 +58,11 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fasti
 
       const isReady = dbOk && storageOk && queueOk;
       const statusCode = isReady ? 200 : 503;
+      const dataSource = getDataSource();
 
       return reply.status(statusCode).send({
         status: isReady ? 'ready' : 'unhealthy',
+        dataSource,
         timestamp: new Date().toISOString(),
         components: {
           database: dbOk ? 'healthy' : 'unhealthy',

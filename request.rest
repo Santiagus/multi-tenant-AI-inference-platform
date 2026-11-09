@@ -2103,6 +2103,24 @@ Authorization: Bearer {{apiKey}}
   "max_new_tokens": 64
 }
 
+###
+
+# 18.6 Inspect Showcase Mock Data Status
+GET {{baseUrl}}/v1/admin/showcase/status
+
+###
+
+# 18.7 Seed Showcase Mock Data On-the-Fly
+# Injects 30 multi-tenant jobs, 688 historical pricing snapshots & 45 sync audits
+POST {{baseUrl}}/v1/admin/showcase/seed
+
+###
+
+# 18.8 Purge Showcase Mock Data On-the-Fly
+# Cleanly deletes records matching 00000000-* and reverts to real data mode
+POST {{baseUrl}}/v1/admin/showcase/purge
+
+
 
 
 

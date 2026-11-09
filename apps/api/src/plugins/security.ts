@@ -30,6 +30,7 @@ const PUBLIC_PATH_PREFIXES = [
   '/swagger',
   '/redoc',
   '/v1/worker/process-next',
+  '/v1/admin/showcase',
 ];
 
 export function isPublicPath(url: string): boolean {

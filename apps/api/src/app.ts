@@ -27,6 +27,7 @@ import { analyticsRoutes } from './routes/analytics.js';
 import { finopsRoutes } from './routes/finops.js';
 import { securityRoutes } from './routes/security.js';
 import { gitOpsRoutes } from './routes/gitops.js';
+import { showcaseRoutes } from './routes/showcase.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
 import {
@@ -213,10 +214,24 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     rateLimiter,
   });
 
+  let currentDataSource: 'real' | 'mock' =
+    deps.config.SHOWCASE_MODE || process.env.SHOWCASE_MODE === 'true' || process.env.MOCK_PROVIDERS === '1'
+      ? 'mock'
+      : 'real';
+
   app.register(healthRoutes, {
     db: deps.db,
     storage: deps.storageClient,
     queue: deps.queueClient,
+    getDataSource: () => currentDataSource,
+  });
+
+  app.register(showcaseRoutes, {
+    db: deps.db,
+    getDataSource: () => currentDataSource,
+    setDataSource: (mode: 'real' | 'mock') => {
+      currentDataSource = mode;
+    },
   });
 
   app.register(observabilityRoutes, {
