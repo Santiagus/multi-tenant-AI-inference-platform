@@ -1,4 +1,8 @@
 import pg from 'pg';
+import { REAL_HISTORICAL_PRICING } from '../../finops/real-historical-prices.js';
+import { LiveProviderCatalogService } from '../../finops/live-provider-catalog.js';
+import { PostgresFinOpsPricingRepository } from '../postgres-finops-pricing-repository.js';
+import type { DatabasePool } from '../pool.js';
 
 export interface ShowcaseSeedOptions {
   connectionString?: string;
@@ -25,12 +29,34 @@ export async function runShowcaseSeed(options: ShowcaseSeedOptions = {}): Promis
       console.log(`Connected to Postgres at ${connectionString.replace(/:[^:]+@/, ':****@')}`);
 
       if (options.clearExisting) {
-        console.log('Clearing existing showcase demo records...');
+        console.log('Clearing existing showcase demo records (painted jobs and mock audits)...');
         await client.query("DELETE FROM jobs WHERE id::text LIKE '00000000-%'");
-        await client.query("DELETE FROM provider_pricing_snapshots WHERE id::text LIKE '00000000-%'");
         await client.query("DELETE FROM pricing_sync_audit WHERE id::text LIKE '00000000-%'");
-        console.log('Cleared showcase demo records.');
-        return { jobsCount: 0, snapshotsCount: 0, auditsCount: 0 };
+        console.log('Cleared painted demo jobs and mock audit logs.');
+
+        const dbAdapter = {
+          getPool: () => pool,
+          query: (text: string, params?: unknown[]) => pool.query(text, params),
+          isHealthy: async () => true,
+          close: async () => {},
+        } as unknown as DatabasePool;
+
+        const finopsRepo = new PostgresFinOpsPricingRepository(dbAdapter, false);
+        const baselineCount = await finopsRepo.ensureHistoricalSnapshots();
+        console.log(`Verified historical baseline snapshots: ${baselineCount} snapshots present.`);
+
+        console.log('Synchronizing real live provider catalogs from active APIs...');
+        const liveCatalog = new LiveProviderCatalogService(dbAdapter);
+        const liveResult = await liveCatalog.syncAll();
+        console.log(
+          `Live sync complete: ${liveResult.gpuSnapshotsCount} GPU snapshots from [${liveResult.syncedProviders.join(', ')}].`
+        );
+
+        return {
+          jobsCount: 0,
+          snapshotsCount: liveResult.gpuSnapshotsCount,
+          auditsCount: liveResult.auditRecordsCount,
+        };
       }
 
       // 1. Ensure required tenants exist
@@ -44,81 +70,24 @@ export async function runShowcaseSeed(options: ShowcaseSeedOptions = {}): Promis
         );
       }
 
-      // 2. Seed 7-day realistic market pricing snapshots for compatible GPUs
-      console.log('Seeding 7-day historical pricing snapshots across neocloud and hyperscaler fleet...');
-      const gpuItems = [
-        { provider: 'vast_ai', sku: 'nvidia-rtx-5070-ti', baseUsd: 0.32, spotRatio: 0.65, vol: 0.08, vram: 16 },
-        { provider: 'runpod', sku: 'nvidia-rtx-5070-ti', baseUsd: 0.44, spotRatio: 0.72, vol: 0.05, vram: 16 },
-        { provider: 'hivenet', sku: 'nvidia-rtx-5070-ti', baseUsd: 0.38, spotRatio: 0.68, vol: 0.07, vram: 16 },
-        { provider: 'nebius', sku: 'nvidia-rtx-5070-ti', baseUsd: 0.48, spotRatio: 0.85, vol: 0.03, vram: 16 },
-        { provider: 'runpod', sku: 'nvidia-rtx-4090', baseUsd: 0.74, spotRatio: 0.70, vol: 0.06, vram: 24 },
-        { provider: 'vast_ai', sku: 'nvidia-rtx-4090', baseUsd: 0.58, spotRatio: 0.62, vol: 0.09, vram: 24 },
-        { provider: 'coreweave', sku: 'nvidia-rtx-4090', baseUsd: 0.82, spotRatio: 0.88, vol: 0.02, vram: 24 },
-        { provider: 'runpod', sku: 'nvidia-a100-80gb', baseUsd: 1.89, spotRatio: 0.75, vol: 0.04, vram: 80 },
-        { provider: 'nebius', sku: 'nvidia-a100-80gb', baseUsd: 1.95, spotRatio: 0.80, vol: 0.03, vram: 80 },
-        { provider: 'sagemaker', sku: 'nvidia-a100-80gb', baseUsd: 4.10, spotRatio: 1.00, vol: 0.01, vram: 80 },
-        { provider: 'runpod', sku: 'nvidia-h100-sxm', baseUsd: 2.89, spotRatio: 0.78, vol: 0.05, vram: 80 },
-        { provider: 'nebius', sku: 'nvidia-h100-sxm', baseUsd: 2.95, spotRatio: 0.82, vol: 0.03, vram: 80 },
-        { provider: 'coreweave', sku: 'nvidia-h100-sxm', baseUsd: 3.25, spotRatio: 0.85, vol: 0.02, vram: 80 },
-        { provider: 'sagemaker', sku: 'nvidia-h100-sxm', baseUsd: 5.60, spotRatio: 1.00, vol: 0.01, vram: 80 },
-        { provider: 'baseten', sku: 'nvidia-l4', baseUsd: 0.65, spotRatio: 0.88, vol: 0.02, vram: 24 },
-        { provider: 'jarvislabs', sku: 'nvidia-rtx-5070-ti', baseUsd: 0.42, spotRatio: 0.75, vol: 0.05, vram: 16 },
-      ];
+      // 2. Seed 7-day realistic market pricing snapshots grounded in REAL open-source datasets
+      console.log(
+        `Seeding 7-day hourly pricing snapshots grounded in open datasets (${REAL_HISTORICAL_PRICING.provenance.dataset})...`
+      );
+      const dbAdapter = {
+        getPool: () => pool,
+        query: (text: string, params?: unknown[]) => pool.query(text, params),
+        isHealthy: async () => true,
+        close: async () => {},
+      } as unknown as DatabasePool;
 
-      const nowMs = Date.now();
-      let snapshotCount = 0;
-
-      for (const item of gpuItems) {
-        // Step every 4 hours over 7 days = 42 points per GPU option
-        for (let h = 168; h >= 0; h -= 4) {
-          const t = new Date(nowMs - h * 3600 * 1000);
-          const hourUtc = t.getUTCHours();
-
-          // Session multiplier simulating USA / EU / ASIA spot market fluctuations
-          let sessionMultiplier = 1.0;
-          if (hourUtc >= 15 && hourUtc < 22) sessionMultiplier = 1.08; // USA peak demand
-          else if (hourUtc >= 8 && hourUtc < 15) sessionMultiplier = 1.03; // EU session
-          else if (hourUtc >= 0 && hourUtc < 8) sessionMultiplier = 0.95; // Asia session
-          else sessionMultiplier = 0.91; // Off-peak UTC
-
-          const randomWalk = 1 + Math.sin(h * 0.25) * item.vol;
-          const onDemandUsd = Math.round(item.baseUsd * 100) / 100;
-          const spotUsd = Math.round(item.baseUsd * item.spotRatio * sessionMultiplier * randomWalk * 100) / 100;
-          const hourlyMicrocents = Math.round(spotUsd * 100_000_000);
-
-          const snapshotId = `00000000-0000-4000-b000-${String(snapshotCount + 1).padStart(12, '0')}`;
-          await client.query(
-            `INSERT INTO provider_pricing_snapshots (
-              id, provider, hardware_sku_id, zone, pricing_model,
-              rate_microcents, billing_unit, normalized_hourly_microcents,
-              obtainability_raw, obtainability_score, interruption_risk_tier,
-              is_available, recorded_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON CONFLICT (id) DO UPDATE SET
-              rate_microcents = EXCLUDED.rate_microcents,
-              normalized_hourly_microcents = EXCLUDED.normalized_hourly_microcents`,
-            [
-              snapshotId,
-              item.provider,
-              item.sku,
-              `${item.provider}-us-east`,
-              'spot_bid',
-              hourlyMicrocents,
-              'hour',
-              hourlyMicrocents,
-              'High',
-              0.88,
-              '<5%',
-              true,
-              t,
-            ]
-          );
-          snapshotCount++;
-        }
-      }
+      const finopsRepo = new PostgresFinOpsPricingRepository(dbAdapter, false);
+      const snapshotCount = await finopsRepo.seedHistoricalBaseline();
+      console.log(`Seeded ${snapshotCount} baseline snapshots.`);
 
       // 3. Seed Pricing Sync Audit logs
       console.log('Seeding pricing synchronization audit history...');
+      const nowMs = Date.now();
       const providers = [
         { name: 'vast_ai', interval: 60, cat: 'realtime_auction' },
         { name: 'runpod', interval: 120, cat: 'realtime_auction' },
@@ -150,7 +119,13 @@ export async function runShowcaseSeed(options: ShowcaseSeedOptions = {}): Promis
               p.cat,
               p.interval,
               'SUCCESS',
-              JSON.stringify({ latencyMs: Math.floor(Math.random() * 200 + 40) }),
+              JSON.stringify({
+                latencyMs: Math.floor(Math.random() * 200 + 40),
+                dataset: REAL_HISTORICAL_PRICING.provenance.dataset,
+                provenanceUrl: REAL_HISTORICAL_PRICING.provenance.sourceUrl,
+                license: REAL_HISTORICAL_PRICING.provenance.license,
+                window: `${REAL_HISTORICAL_PRICING.provenance.windowStart} to ${REAL_HISTORICAL_PRICING.provenance.windowEnd}`,
+              }),
               t,
             ]
           );

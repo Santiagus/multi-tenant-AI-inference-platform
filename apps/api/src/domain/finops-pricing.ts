@@ -58,6 +58,8 @@ export interface PricingSyncAudit {
   estimatedUpdateIntervalSec: number;
   updateFrequencyDescription: string;
   status: string;
+  details?: Record<string, unknown> | null;
+  error?: string | null;
   syncedAt: string;
   availableCreditsUsd?: number | null;
   balanceStatus?: string;

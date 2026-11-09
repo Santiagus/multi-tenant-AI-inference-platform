@@ -2,11 +2,17 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { IFinOpsPricingRepository } from '../infrastructure/db/finops-pricing-repository.js';
 import type { MetricsRegistry } from '../infrastructure/telemetry/metrics.js';
+import {
+  type DistributedTracer,
+  defaultTracer,
+  formatTraceparent,
+} from '../infrastructure/telemetry/tracer.js';
 import { providerBalanceService } from '../infrastructure/finops/provider-balance-service.js';
 
 export interface FinOpsRoutesOptions {
   finopsRepo: IFinOpsPricingRepository;
   metrics?: MetricsRegistry;
+  tracer?: DistributedTracer;
 }
 
 const GpuFilterQuerySchema = z.object({
@@ -23,13 +29,20 @@ const ModelFilterQuerySchema = z.object({
 const HistoryQuerySchema = z.object({
   provider: z.string().optional(),
   item_id: z.string().optional(),
+  hours: z.coerce.number().int().positive().optional(),
+});
+
+const SyncAuditsQuerySchema = z.object({
+  provider: z.string().optional(),
+  status: z.enum(['SUCCESS', 'FAILED', 'SKIPPED']).optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
 export const finopsRoutes: FastifyPluginAsync<FinOpsRoutesOptions> = async (
   fastify,
   opts
 ) => {
-  const { finopsRepo } = opts;
+  const { finopsRepo, tracer = defaultTracer } = opts;
 
   // 1. GPU Availability and Pricing per Provider (On-Demand, Spot, Serverless)
   fastify.get('/v1/finops/gpu-pricing', async (request, reply) => {
@@ -77,6 +90,7 @@ export const finopsRoutes: FastifyPluginAsync<FinOpsRoutesOptions> = async (
     const history = await finopsRepo.getPricingHistory({
       provider: query.provider,
       itemId: query.item_id,
+      hours: query.hours,
     });
 
     const cadenceAudits = await finopsRepo.getSyncAudits();
@@ -109,13 +123,162 @@ export const finopsRoutes: FastifyPluginAsync<FinOpsRoutesOptions> = async (
     });
   });
 
-  // 4. Trigger Instant Catalog Refresh
-  fastify.post('/v1/finops/sync', async (_request, reply) => {
-    const res = await finopsRepo.syncFromProviders();
+  // 4. Trigger Instant Catalog Refresh & Emit OpenTelemetry Distributed Trace
+  fastify.post(
+    '/v1/finops/sync',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'Synchronize Live Pricing Catalogs with Distributed Tracing',
+        description:
+          'Triggers live pricing synchronization across all connected neocloud and hardware providers, instrumented with OpenTelemetry distributed spans.',
+      },
+    },
+    async (request, reply) => {
+      const tenantId = (request as any).tenantId || 'tenant-default';
+      const correlationId = (request as any).correlationId;
+
+      return tracer.startActiveSpan(
+        'finops.pricing_sync',
+        {
+          attributes: {
+            'tenant.id': tenantId,
+            ...(correlationId ? { 'correlation.id': correlationId } : {}),
+            'sync.trigger': 'manual_api',
+          },
+        },
+        async (span) => {
+          try {
+            const body = (request.body as any) || {};
+            const requestedProviders = body.providers || (body.provider ? [body.provider] : undefined);
+            const res = await finopsRepo.syncFromProviders(requestedProviders ? { providers: requestedProviders } : undefined);
+            const totalIngested = (res as any).totalIngested ?? res.recordsCount ?? 0;
+
+            span.setAttribute('sync.total_ingested', totalIngested);
+            span.setAttribute('sync.synced_providers_count', res.syncedProviders.length);
+            span.setAttribute('sync.failed_providers_count', res.failedProviders?.length ?? 0);
+
+            if (res.failedProviders && res.failedProviders.length > 0) {
+              span.setAttribute('sync.failed_providers', res.failedProviders.join(','));
+              span.setAttribute('error', true);
+            }
+
+            // Emit granular child spans for each provider audit record
+            if (res.auditRecords && Array.isArray(res.auditRecords)) {
+              for (const audit of res.auditRecords) {
+                await tracer.startActiveSpan(
+                  `finops.sync.${audit.provider}`,
+                  {
+                    kind: 'CLIENT',
+                    serviceName: 'finops-pricing-service',
+                    attributes: {
+                      'provider.name': audit.provider,
+                      'sync.type': audit.syncType,
+                      'sync.records_count': audit.recordsCount,
+                      'sync.status': audit.status,
+                      'tenant.id': tenantId,
+                      ...(correlationId ? { 'correlation.id': correlationId } : {}),
+                      ...(audit.details?.endpoint ? { 'http.url': String(audit.details.endpoint) } : {}),
+                      ...(audit.details?.status ? { 'http.status_code': Number(audit.details.status) } : {}),
+                      ...(audit.error ? { 'error.message': String(audit.error) } : {}),
+                    },
+                  },
+                  async (childSpan) => {
+                    if (audit.status === 'FAILED') {
+                      childSpan.setAttribute('error', true);
+                    }
+                  }
+                );
+              }
+            }
+
+            const traceparent = span.traceparent || formatTraceparent(span.traceId, span.spanId);
+
+            return reply.status(200).send({
+              ok: true,
+              message: 'Pricing catalogs synchronization executed.',
+              trace_id: span.traceId,
+              traceparent,
+              trace_url: `/v1/traces/${span.traceId}`,
+              total_ingested: totalIngested,
+              synced_providers: res.syncedProviders,
+              failed_providers: res.failedProviders ?? [],
+              audit_records: res.auditRecords ?? [],
+              ...res,
+            });
+          } catch (err: any) {
+            span.setAttribute('error', true);
+            span.setAttribute('error.message', err.message);
+            throw err;
+          }
+        }
+      );
+    }
+  );
+
+  // 4b. Enterprise Resource Endpoint: Query Provider Pricing Synchronization Audits
+  fastify.get(
+    '/v1/finops/sync-audits',
+    {
+      schema: {
+        tags: ['Provider Routing'],
+        summary: 'Query Provider Pricing Synchronization Audits',
+        description:
+          'Retrieves chronological audit logs, records count, and diagnostic failure traces for provider pricing synchronizations.',
+        querystring: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', description: 'Filter by provider name (e.g. vast_ai, runpod)' },
+            status: { type: 'string', enum: ['SUCCESS', 'FAILED', 'SKIPPED'], description: 'Filter by execution status' },
+            limit: { type: 'integer', default: 50, description: 'Maximum audit records to return' },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const query = SyncAuditsQuerySchema.parse(request.query);
+      let audits = await finopsRepo.getSyncAudits();
+
+      if (query.provider) {
+        const p = query.provider.toLowerCase();
+        audits = audits.filter((a) => a.provider.toLowerCase() === p);
+      }
+      if (query.status) {
+        audits = audits.filter((a) => a.status === query.status);
+      }
+      if (query.limit && query.limit > 0) {
+        audits = audits.slice(0, query.limit);
+      }
+
+      return reply.status(200).send({
+        ok: true,
+        total: audits.length,
+        synced_at: audits[0]?.syncedAt || new Date().toISOString(),
+        audits,
+      });
+    }
+  );
+
+  // Backwards-compatible aliases:
+  fastify.get('/v1/finops/sync/audits', async (request, reply) => {
+    const audits = await finopsRepo.getSyncAudits();
     return reply.status(200).send({
       ok: true,
-      message: 'Pricing catalogs successfully synchronized from neocloud providers.',
-      ...res,
+      total: audits.length,
+      synced_at: audits[0]?.syncedAt || new Date().toISOString(),
+      audits,
+    });
+  });
+
+  fastify.get('/v1/finops/sync/traces', async (_request, reply) => {
+    const audits = await finopsRepo.getSyncAudits();
+    return reply.status(200).send({
+      ok: true,
+      total: audits.length,
+      traces: audits,
+      audits,
+      syncedAt: audits[0]?.syncedAt || new Date().toISOString(),
+      synced_at: audits[0]?.syncedAt || new Date().toISOString(),
     });
   });
 

@@ -9,6 +9,7 @@ export interface HealthRouteOptions {
   queue: IQueueClient;
   dataSource?: 'real' | 'mock';
   getDataSource?: () => 'real' | 'mock';
+  environment?: string;
 }
 
 export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fastify, options) => {
@@ -21,20 +22,32 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fasti
     return 'real';
   };
 
+  const getStage = (): string => {
+    const raw = options.environment || process.env.STAGE || process.env.ENVIRONMENT || process.env.NODE_ENV || 'local';
+    const up = raw.toUpperCase().trim();
+    if (up.includes('DEVELOPMENT') || up.includes('LOCAL')) return 'LOCAL';
+    if (up.includes('PROD')) return 'PRODUCTION';
+    if (up.includes('STAGE') || up.includes('STAGING')) return 'STAGING';
+    if (up.includes('TEST')) return 'TEST';
+    return up;
+  };
+
   fastify.get(
     '/healthz',
     {
       schema: {
         tags: ['Health'],
         summary: 'Liveness Probe',
-        description: 'Returns HTTP 200 if the Fastify API process is running and indicates whether the platform is serving real or mock/showcase data.',
+        description: 'Returns HTTP 200 if the Fastify API process is running and indicates whether the platform is serving real or mock/showcase data and active deployment stage.',
       },
     },
     async (_req, reply) => {
       const dataSource = getDataSource();
+      const environment = getStage();
       return reply.status(200).send({
         status: 'ok',
         dataSource,
+        environment,
         timestamp: new Date().toISOString(),
       });
     }
@@ -59,10 +72,12 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fasti
       const isReady = dbOk && storageOk && queueOk;
       const statusCode = isReady ? 200 : 503;
       const dataSource = getDataSource();
+      const environment = getStage();
 
       return reply.status(statusCode).send({
         status: isReady ? 'ready' : 'unhealthy',
         dataSource,
+        environment,
         timestamp: new Date().toISOString(),
         components: {
           database: dbOk ? 'healthy' : 'unhealthy',

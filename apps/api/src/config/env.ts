@@ -34,6 +34,9 @@ export const EnvSchema = z.object({
   API_KEY: z.string().default('dev-secret-key'),
   AUTH_ENFORCED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
   RATE_LIMITING_ENABLED: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(true),
+
+  // Showcase / Mock Data Mode
+  SHOWCASE_MODE: z.preprocess((val) => val === 'true' || val === true || val === '1', z.boolean()).default(false),
 });
 
 export type EnvConfig = z.infer<typeof EnvSchema>;

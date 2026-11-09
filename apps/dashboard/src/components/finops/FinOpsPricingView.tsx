@@ -4,8 +4,10 @@ import type {
   GpuPricingItem,
   ModelPricingItem,
   PricingHistorySummary,
+  PricingSyncAudit,
 } from '../../types';
 import { ModelComputeAdvisor } from './ModelComputeAdvisor';
+import { SyncTracesModal } from './SyncTracesModal';
 
 export const HARDWARE_BENCHMARK_THROUGHPUT: Record<
   string,
@@ -204,9 +206,11 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
   const [gpuPricing, setGpuPricing] = useState<GpuPricingItem[]>([]);
   const [modelPricing, setModelPricing] = useState<ModelPricingItem[]>([]);
   const [historySummaries, setHistorySummaries] = useState<PricingHistorySummary[]>([]);
+  const [syncAudits, setSyncAudits] = useState<PricingSyncAudit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [showTracesModal, setShowTracesModal] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ text: string; isError?: boolean } | null>(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -219,6 +223,9 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
       setGpuPricing(gpuRes.data);
       setModelPricing(modelRes.data);
       setHistorySummaries(histRes.data);
+      if (histRes.cadence_audits) {
+        setSyncAudits(histRes.cadence_audits);
+      }
     } catch (err) {
       console.error('Failed to load FinOps pricing intelligence:', err);
     } finally {
@@ -235,15 +242,25 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
     setSyncMessage(null);
     try {
       const res = await apiClient.syncPricing();
-      setSyncMessage(
-        `Synchronized ${res.recordsCount} records across ${res.syncedProviders.length} providers.`
-      );
+      if (res.failedProviders && res.failedProviders.length > 0) {
+        setSyncMessage({
+          text: `Synced ${res.syncedProviders.length} providers · ⚠️ ${res.failedProviders.length} failed (${res.failedProviders.map((p) => p.provider).join(', ')})`,
+          isError: true,
+        });
+      } else {
+        setSyncMessage({
+          text: `Synchronized ${res.recordsCount} records across ${res.syncedProviders.length} providers.`,
+        });
+      }
+      if (res.auditRecords) {
+        setSyncAudits(res.auditRecords);
+      }
       await loadData();
     } catch (err) {
-      setSyncMessage('Failed to trigger pricing catalog sync.');
+      setSyncMessage({ text: 'Failed to trigger pricing catalog sync.', isError: true });
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setSyncMessage(null), 5000);
+      setTimeout(() => setSyncMessage(null), 7000);
     }
   };
 
@@ -262,14 +279,14 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
         style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           marginBottom: '16px',
-          flexWrap: 'wrap',
-          gap: '12px',
+          flexWrap: 'nowrap',
+          gap: '16px',
         }}
       >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
               GPU &amp; Model Pricing
             </h1>
@@ -282,6 +299,7 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
                 padding: '2px 8px',
                 fontSize: '11px',
                 fontWeight: 600,
+                whiteSpace: 'nowrap',
               }}
             >
               Real-Time Cross-Cloud Intelligence
@@ -292,32 +310,64 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              onClick={() => setShowTracesModal(true)}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#38bdf8',
+                border: '1px solid #334155',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                fontWeight: 600,
+                fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              📋 View Sync Traces
+            </button>
+            <button
+              onClick={handleSync}
+              disabled={isSyncing}
+              style={{
+                backgroundColor: '#3b82f6',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '8px 14px',
+                fontWeight: 600,
+                fontSize: '12px',
+                cursor: isSyncing ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'background-color 0.2s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {isSyncing ? 'Syncing...' : '↻ Refresh Catalogs'}
+            </button>
+          </div>
           {syncMessage && (
-            <span style={{ color: '#10b981', fontSize: '12px', fontWeight: 500 }}>
-              {syncMessage}
+            <span
+              style={{
+                color: syncMessage.isError ? '#f87171' : '#10b981',
+                fontSize: '11px',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              {syncMessage.isError ? '⚠️' : '✓'} {syncMessage.text}
             </span>
           )}
-          <button
-            onClick={handleSync}
-            disabled={isSyncing}
-            style={{
-              backgroundColor: '#3b82f6',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '8px 14px',
-              fontWeight: 600,
-              fontSize: '12px',
-              cursor: isSyncing ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'background-color 0.2s',
-            }}
-          >
-            {isSyncing ? 'Syncing...' : '↻ Refresh Catalogs'}
-          </button>
         </div>
       </div>
 
@@ -333,6 +383,15 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
           history={historySummaries}
         />
       )}
+
+      {/* Sync Traces Modal Popup */}
+      <SyncTracesModal
+        isOpen={showTracesModal}
+        onClose={() => setShowTracesModal(false)}
+        syncAudits={syncAudits}
+        onRetrySync={handleSync}
+        isSyncing={isSyncing}
+      />
     </div>
   );
 }

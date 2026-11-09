@@ -3,6 +3,8 @@ import { DatabasePool } from './infrastructure/db/pool.js';
 import { runMigrations } from './infrastructure/db/migrator.js';
 import { PostgresJobRepository } from './infrastructure/db/job-repository.js';
 import { PostgresSecurityRepository } from './infrastructure/db/security-repository.js';
+import { PostgresFinOpsPricingRepository } from './infrastructure/db/postgres-finops-pricing-repository.js';
+import { PricingSyncScheduler } from './infrastructure/finops/pricing-scheduler.js';
 import { S3StorageClient } from './infrastructure/storage/s3-storage.js';
 import { SqsQueueClient } from './infrastructure/queue/sqs-queue.js';
 import { buildApp } from './app.js';
@@ -74,11 +76,25 @@ async function main() {
 
   // Build Fastify App
   const securityRepo = new PostgresSecurityRepository(db);
+  const finopsRepo = new PostgresFinOpsPricingRepository(db, config.SHOWCASE_MODE);
+
+  try {
+    const baselineCount = await finopsRepo.ensureHistoricalSnapshots();
+    console.log(`FinOps historical pricing baseline verified (${baselineCount} snapshots).`);
+  } catch (err) {
+    console.warn('Could not initialize FinOps historical pricing baseline:', err);
+  }
+
+  const pricingScheduler = new PricingSyncScheduler(finopsRepo);
+  pricingScheduler.start();
+  console.log('FinOps pricing synchronization scheduler started.');
+
   const app = buildApp({
     config,
     db,
     jobRepo,
     securityRepo,
+    finopsRepo,
     storageClient,
     queueClient,
     inferenceExecutor,
@@ -91,6 +107,7 @@ async function main() {
     process.on(sig, async () => {
       console.log(`Received ${sig}, closing server...`);
       try {
+        pricingScheduler.stop();
         await jobWorker.stop();
         await app.close();
         await db.close();

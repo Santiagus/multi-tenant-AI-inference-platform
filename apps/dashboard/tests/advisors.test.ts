@@ -87,6 +87,28 @@ describe('Model advisor ranking & public benchmarks', () => {
     const r = rankExecutionOptions(owned, [gpu({ id: 'fal', provider: 'fal' })], cons, () => 100);
     assert.equal(r.options.length, 0);
   });
+
+  it('deduplicates local_pytorch offerings across multiple snapshots or zones', () => {
+    const local1 = gpu({ id: 'local-1', provider: 'local_pytorch', hardwareSkuId: 'nvidia-rtx-5070-ti', zone: 'local-edge-workstation', normalizedHourlyUsd: 0 });
+    const local2 = gpu({ id: 'local-2', provider: 'local_pytorch', hardwareSkuId: 'nvidia-rtx-5070-ti', zone: 'local-workstation', normalizedHourlyUsd: 0 });
+    const cloud = gpu({ id: 'cloud-1', provider: 'runpod', hardwareSkuId: 'nvidia-rtx-5070-ti', zone: 'runpod-us-east', normalizedHourlyUsd: 0.35 });
+    const r = rankExecutionOptions(llama, [local1, local2, cloud], cons, () => 100);
+    const localOptions = r.options.filter((o) => o.gpu.provider === 'local_pytorch');
+    assert.equal(localOptions.length, 1);
+    assert.equal(localOptions[0].gpu.hardwareSkuId, 'nvidia-rtx-5070-ti');
+    assert.equal(localOptions[0].costPerJobUsd, 0);
+  });
+
+  it('includes public benchmark reference URL and exact reference job cost', () => {
+    const local = gpu({ id: 'local', provider: 'local_pytorch', hardwareSkuId: 'nvidia-rtx-5070-ti', normalizedHourlyUsd: 0 });
+    const r = rankExecutionOptions(llama, [local], cons, () => 100);
+    assert.equal(r.options.length, 1);
+    const opt = r.options[0];
+    assert.ok(opt.benchmark.referenceUrl.startsWith('https://'));
+    assert.ok(opt.benchmark.benchmarkSuite.length > 0);
+    assert.equal(opt.costPerJobUsd, 0);
+    assert.ok(opt.execSeconds > 0);
+  });
 });
 
 describe('Acquisition advisor', () => {

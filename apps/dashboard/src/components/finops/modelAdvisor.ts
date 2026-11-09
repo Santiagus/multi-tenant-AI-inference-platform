@@ -279,7 +279,7 @@ export function rankExecutionOptions(
   constraints: AdvisorConstraints,
   baseTokensPerSec: (gpu: GpuPricingItem) => number
 ): AdvisorResult {
-  const options: RankedOption[] = [];
+  const optionsMap = new Map<string, RankedOption>();
   const benchmark = getModelBenchmark(model);
   const taskTokens = constraints.jobTokens ?? benchmark.referenceTaskTokens;
 
@@ -332,7 +332,7 @@ export function rankExecutionOptions(
 
     const costPerJobUsd = (gpu.normalizedHourlyUsd / 3600) * execSeconds + storageCostPerJobUsd + networkCostPerJobUsd;
 
-    options.push({
+    const ranked: RankedOption = {
       gpu,
       tokensPerSec,
       costPerMillionUsd,
@@ -348,8 +348,24 @@ export function rankExecutionOptions(
       vpcCapable,
       securityLevel: secLevel,
       regionLabel: gpu.zone || `${gpu.provider}-global`,
-    });
+    };
+
+    // Deduplicate offerings:
+    // Local PyTorch is a unique local machine; cloud offerings are deduplicated per (provider, hardwareSkuId, pricingModel)
+    // unless a specific regional constraint is requested.
+    const dedupKey = gpu.provider === 'local_pytorch'
+      ? 'local_pytorch'
+      : constraints.region && constraints.region !== 'any'
+        ? `${gpu.provider}::${gpu.hardwareSkuId}::${gpu.pricingModel}::${gpu.zone}`
+        : `${gpu.provider}::${gpu.hardwareSkuId}::${gpu.pricingModel}`;
+
+    const existing = optionsMap.get(dedupKey);
+    if (!existing || ranked.costPerMillionUsd < existing.costPerMillionUsd) {
+      optionsMap.set(dedupKey, ranked);
+    }
   }
+
+  const options = Array.from(optionsMap.values());
 
   const pick = (list: RankedOption[], cmp: (a: RankedOption, b: RankedOption) => number) =>
     list.length > 0 ? [...list].sort(cmp)[0] : null;

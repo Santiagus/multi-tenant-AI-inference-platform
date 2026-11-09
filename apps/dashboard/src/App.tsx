@@ -22,6 +22,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('jobs');
   const [apiHealthy, setApiHealthy] = useState<boolean>(true);
   const [dataSource, setDataSource] = useState<'real' | 'mock'>('real');
+  const [stage, setStage] = useState<string>('LOCAL');
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isProcessingWorker, setIsProcessingWorker] = useState<boolean>(false);
@@ -56,6 +57,9 @@ export function App() {
       setApiHealthy(health.ok);
       if (health.dataSource) {
         setDataSource(health.dataSource);
+      }
+      if (health.environment) {
+        setStage(health.environment);
       }
 
       // 2. Jobs, DLQ, Providers, Economics, Sync Audits & Balances
@@ -176,6 +180,7 @@ export function App() {
         onTenantChange={setTenantId}
         apiHealthy={apiHealthy}
         dataSource={dataSource}
+        stage={stage}
         autoRefresh={autoRefresh}
         onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
         onManualRefresh={loadData}

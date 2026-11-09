@@ -9,7 +9,7 @@ import {
   getProviderBadgeLabel,
   ALL_PLATFORM_PROVIDERS,
 } from '../src/components/jobs/JobsView';
-import { DEFAULT_PROVIDER_FLEET } from '../src/components/finops/ProviderFleetBar';
+import { DEFAULT_PROVIDER_FLEET, formatCadenceInterval } from '../src/components/finops/ProviderFleetBar';
 import { computeProviderSyncMetrics } from '../src/components/providers/ProviderStatusView';
 import { CATALOG_MODELS } from '../src/components/finops/ModelRecommendationStudio';
 import { getTradingSession } from '../src/components/finops/HistoricalPriceChart';
@@ -219,6 +219,14 @@ describe('Provider Fleet & Real-Time Sync Telemetry', () => {
     const bedrock = DEFAULT_PROVIDER_FLEET.find((p) => p.provider === 'bedrock')!;
     assert.equal(bedrock.creditType, 'postpaid_invoice');
     assert.equal(bedrock.availableCreditsUsd, null);
+
+    // Verify formatCadenceInterval helper converts seconds to compact readable representations
+    assert.equal(formatCadenceInterval(900), '15m');
+    assert.equal(formatCadenceInterval(7200), '2h');
+    assert.equal(formatCadenceInterval(21600), '6h');
+    assert.equal(formatCadenceInterval(86400), '24h');
+    assert.equal(formatCadenceInterval(30), '30s');
+    assert.equal(formatCadenceInterval(0), 'realtime');
   });
 
   it('computes synced vs unsynced provider counts accurately for tab status visualization', () => {

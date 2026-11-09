@@ -20,6 +20,7 @@ describe('Dashboard Data Source Mode & Health API', () => {
       assert.equal(health.ok, true);
       assert.equal(health.status, 'ok');
       assert.equal(health.dataSource, 'real');
+      assert.equal(health.environment, 'LOCAL');
     } finally {
       globalThis.fetch = originalFetch;
     }

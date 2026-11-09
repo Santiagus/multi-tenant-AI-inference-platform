@@ -18,11 +18,19 @@ VALUES
     ('nvidia-rtx-5070-ti', 'NVIDIA GeForce RTX 5070 Ti', 'nvidia', 'Blackwell', 16, 95.0),
     ('nvidia-rtx-5090', 'NVIDIA GeForce RTX 5090', 'nvidia', 'Blackwell', 32, 190.0),
     ('nvidia-rtx-4090', 'NVIDIA GeForce RTX 4090', 'nvidia', 'Ada Lovelace', 24, 82.6),
+    ('nvidia-rtx-3090', 'NVIDIA GeForce RTX 3090', 'nvidia', 'Ampere', 24, 71.0),
+    ('nvidia-rtx-5080', 'NVIDIA GeForce RTX 5080', 'nvidia', 'Blackwell', 16, 115.0),
     ('nvidia-l4', 'NVIDIA L4 Tensor Core', 'nvidia', 'Ada Lovelace', 24, 30.3),
     ('nvidia-l40s', 'NVIDIA L40S', 'nvidia', 'Ada Lovelace', 48, 91.6),
     ('nvidia-a10g', 'NVIDIA A10G', 'nvidia', 'Ampere', 24, 31.2),
     ('nvidia-a100-80gb', 'NVIDIA A100 Tensor Core 80GB', 'nvidia', 'Ampere', 80, 77.97),
-    ('nvidia-h100-sxm', 'NVIDIA H100 SXM5 80GB', 'nvidia', 'Hopper', 80, 1979.0)
+    ('nvidia-h100-sxm', 'NVIDIA H100 SXM5 80GB', 'nvidia', 'Hopper', 80, 1979.0),
+    ('nvidia-h200-sxm', 'NVIDIA H200 SXM 141GB', 'nvidia', 'Hopper', 141, 1979.0),
+    ('nvidia-h100-nvl', 'NVIDIA H100 NVL 94GB', 'nvidia', 'Hopper', 94, 1670.0),
+    ('nvidia-rtx-6000-ada', 'NVIDIA RTX 6000 Ada Generation 48GB', 'nvidia', 'Ada Lovelace', 48, 91.1),
+    ('nvidia-t4', 'NVIDIA T4 Tensor Core 16GB', 'nvidia', 'Turing', 16, 65.0),
+    ('nvidia-v100', 'NVIDIA Tesla V100 32GB', 'nvidia', 'Volta', 32, 125.0),
+    ('nvidia-b200', 'NVIDIA Blackwell B200 192GB', 'nvidia', 'Blackwell', 192, 4500.0)
 ON CONFLICT (id) DO NOTHING;
 
 -- 2. Time-Series Provider Pricing & Availability Snapshots

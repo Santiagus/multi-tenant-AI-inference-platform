@@ -7,6 +7,14 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'api-service'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['api:3000']
+
 processors:
   batch:
     timeout: 5s
@@ -26,7 +34,7 @@ service:
       processors: [batch]
       exporters: [debug]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, prometheus]
       processors: [batch]
       exporters: [prometheus, debug]
 

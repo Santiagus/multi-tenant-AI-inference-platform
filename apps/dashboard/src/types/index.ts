@@ -292,6 +292,8 @@ export interface PricingSyncAudit {
   updateFrequencyDescription: string;
   status: string;
   syncedAt: string;
+  details?: Record<string, unknown> | null;
+  error?: string | null;
   availableCreditsUsd?: number | null;
   balanceStatus?: string;
 }
@@ -405,6 +407,32 @@ export interface CuratedModelDefinition {
   recommendedGpuSku: string;
   cheapestGpuSku: string;
   description: string;
+}
+
+export interface DistributedSpanRecord {
+  trace_id: string;
+  span_id: string;
+  parent_span_id?: string | null;
+  name: string;
+  kind: string;
+  service_name: string;
+  start_time: string;
+  end_time: string;
+  duration_ms: number;
+  status: 'OK' | 'ERROR';
+  error_message?: string;
+  attributes?: Record<string, unknown>;
+}
+
+export interface TraceDetailResponse {
+  trace_id: string;
+  tenant_id: string;
+  status: 'OK' | 'ERROR';
+  root_span_name: string | null;
+  stages: string[];
+  span_count: number;
+  duration_ms?: number;
+  spans: DistributedSpanRecord[];
 }
 
 

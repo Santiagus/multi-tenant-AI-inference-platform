@@ -3,6 +3,7 @@ interface HeaderProps {
   onTenantChange: (tenant: string) => void;
   apiHealthy: boolean;
   dataSource?: 'real' | 'mock';
+  stage?: string;
   autoRefresh: boolean;
   onAutoRefreshToggle: () => void;
   onManualRefresh: () => void;
@@ -11,11 +12,59 @@ interface HeaderProps {
   isTogglingShowcase?: boolean;
 }
 
+function getStageBadgeStyle(stage = 'LOCAL') {
+  const s = stage.toUpperCase();
+  if (s.includes('PROD')) {
+    return {
+      bg: 'rgba(239, 68, 68, 0.15)',
+      color: '#f87171',
+      border: '1px solid rgba(239, 68, 68, 0.4)',
+      label: 'PRODUCTION',
+      icon: '🚨',
+    };
+  }
+  if (s.includes('STAGE') || s.includes('STAGING')) {
+    return {
+      bg: 'rgba(245, 158, 11, 0.15)',
+      color: '#fbbf24',
+      border: '1px solid rgba(245, 158, 11, 0.4)',
+      label: 'STAGING',
+      icon: '🔶',
+    };
+  }
+  if (s.includes('TEST')) {
+    return {
+      bg: 'rgba(168, 85, 247, 0.15)',
+      color: '#c084fc',
+      border: '1px solid rgba(168, 85, 247, 0.4)',
+      label: 'TEST',
+      icon: '🧪',
+    };
+  }
+  if (s.includes('DEV')) {
+    return {
+      bg: 'rgba(59, 130, 246, 0.15)',
+      color: '#60a5fa',
+      border: '1px solid rgba(59, 130, 246, 0.4)',
+      label: 'DEV',
+      icon: '🛠️',
+    };
+  }
+  return {
+    bg: 'rgba(6, 182, 212, 0.18)',
+    color: '#22d3ee',
+    border: '1px solid rgba(6, 182, 212, 0.5)',
+    label: 'LOCAL',
+    icon: '💻',
+  };
+}
+
 export function Header({
   tenantId,
   onTenantChange,
-  apiHealthy,
+  apiHealthy: _apiHealthy,
   dataSource = 'real',
+  stage = 'LOCAL',
   autoRefresh,
   onAutoRefreshToggle,
   onManualRefresh,
@@ -24,6 +73,7 @@ export function Header({
   isTogglingShowcase = false,
 }: HeaderProps) {
   const isMock = dataSource === 'mock';
+  const stageStyle = getStageBadgeStyle(stage);
 
   return (
     <header
@@ -35,7 +85,7 @@ export function Header({
         width: '100%',
       }}
     >
-      {/* ROW 1: Platform Branding (Left) & Refresh / Demo Toggles (Right) */}
+      {/* ROW 1: AI Inference Platform & STAGE Badge (Left) | Refresh Controls & Enable Demo (Right) */}
       <div
         style={{
           display: 'flex',
@@ -47,7 +97,7 @@ export function Header({
           flexWrap: 'wrap',
         }}
       >
-        {/* Top Left: Logo & Platform Identity */}
+        {/* Top Left: Logo, Title, and Stage Badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div
             style={{
@@ -68,10 +118,32 @@ export function Header({
             AI
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <h1 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc', margin: 0, whiteSpace: 'nowrap' }}>
                 AI Inference Platform
               </h1>
+              {/* STAGE Badge */}
+              <span
+                data-testid="stage-badge"
+                title={`Active Deployment Stage: ${stageStyle.label}`}
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  backgroundColor: stageStyle.bg,
+                  color: stageStyle.color,
+                  border: stageStyle.border,
+                  padding: '2px 8px',
+                  borderRadius: '6px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  whiteSpace: 'nowrap',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                <span>{stageStyle.icon}</span>
+                <span>{stageStyle.label}</span>
+              </span>
               <span
                 style={{
                   fontSize: '10px',
@@ -328,12 +400,12 @@ export function Header({
               fontWeight: 500,
             }}
           >
-            Deployment: Docker Compose Local (Port 5173 ↔ 3000)
+            Stage: <strong style={{ color: stageStyle.color }}>{stageStyle.label}</strong> (Port 5173 ↔ 3000)
           </span>
         </div>
       </div>
 
-      {/* ROW 3: Services Status Buttons Linking to Their Panels */}
+      {/* ROW 3: Services Status Buttons Linking Directly to Deployed Panels */}
       <div
         style={{
           display: 'flex',
@@ -358,38 +430,7 @@ export function Header({
           Services:
         </span>
 
-        {/* 1. Control Plane API */}
-        <a
-          href="/healthz"
-          target="_blank"
-          rel="noreferrer"
-          title="Fastify Control Plane API (Port 3000) - Click to inspect /healthz probe"
-          style={{
-            fontSize: '11px',
-            color: apiHealthy ? '#34d399' : '#f87171',
-            backgroundColor: apiHealthy ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            border: `1px solid ${apiHealthy ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-            padding: '3px 8px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-          }}
-        >
-          <span
-            style={{
-              width: '6px',
-              height: '6px',
-              borderRadius: '50%',
-              backgroundColor: apiHealthy ? '#10b981' : '#ef4444',
-            }}
-          />
-          API 3000
-        </a>
-
-        {/* 2. Swagger UI */}
+        {/* 1. Swagger UI */}
         <a
           href="/docs"
           target="_blank"
@@ -400,133 +441,168 @@ export function Header({
             color: '#38bdf8',
             backgroundColor: 'rgba(56, 189, 248, 0.1)',
             border: '1px solid rgba(56, 189, 248, 0.3)',
-            padding: '3px 8px',
+            padding: '3px 9px',
             borderRadius: '5px',
             textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
             fontWeight: 600,
+            transition: 'background-color 0.15s ease',
           }}
         >
           <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#38bdf8' }} />
           Swagger UI
         </a>
 
-        {/* 3. Grafana Ops */}
+        {/* 2. Adminer (PostgreSQL Admin Panel) */}
         <a
-          href="http://localhost:3001"
+          href="http://localhost:8080/?pgsql=postgres&username=postgres&db=platform"
           target="_blank"
           rel="noreferrer"
-          title="Grafana Operational Dashboards & SLO Monitoring (Port 3001)"
+          title="Adminer PostgreSQL Database Panel (Port 8080) - Browse tables: jobs, tenants, provider_pricing_snapshots"
           style={{
             fontSize: '11px',
-            color: '#fbbf24',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            border: '1px solid rgba(245, 158, 11, 0.3)',
-            padding: '3px 8px',
+            color: '#22d3ee',
+            backgroundColor: 'rgba(34, 211, 238, 0.1)',
+            border: '1px solid rgba(34, 211, 238, 0.3)',
+            padding: '3px 9px',
             borderRadius: '5px',
             textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
             fontWeight: 600,
+            transition: 'background-color 0.15s ease',
           }}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#f59e0b' }} />
-          Grafana 3001
+          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#06b6d4' }} />
+          Adminer (Postgres 5432)
         </a>
 
-        {/* 4. Prometheus */}
-        <a
-          href="http://localhost:9090"
-          target="_blank"
-          rel="noreferrer"
-          title="Prometheus Metrics Engine & TSDB Query Browser (Port 9090)"
-          style={{
-            fontSize: '11px',
-            color: '#fb923c',
-            backgroundColor: 'rgba(251, 146, 60, 0.1)',
-            border: '1px solid rgba(251, 146, 60, 0.3)',
-            padding: '3px 8px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-          }}
-        >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#fb923c' }} />
-          Prometheus 9090
-        </a>
-
-        {/* 5. MinIO S3 Console */}
+        {/* 3. MinIO S3 Console */}
         <a
           href="http://localhost:9001"
           target="_blank"
           rel="noreferrer"
-          title="MinIO Object Storage Web Console (Port 9001) - platform-artifacts bucket"
+          title="MinIO Object Storage Web Console (Port 9001) - platform-artifacts bucket (minioadmin / minioadmin)"
           style={{
             fontSize: '11px',
             color: '#34d399',
             backgroundColor: 'rgba(52, 211, 153, 0.1)',
             border: '1px solid rgba(52, 211, 153, 0.3)',
-            padding: '3px 8px',
+            padding: '3px 9px',
             borderRadius: '5px',
             textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
             fontWeight: 600,
+            transition: 'background-color 0.15s ease',
           }}
         >
           <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#34d399' }} />
           MinIO Console 9001
         </a>
 
-        {/* 6. PostgreSQL */}
-        <div
-          title="PostgreSQL 16 Alpine (Port 5432) - Jobs, FinOps pricing snapshots, and tenant isolation"
-          style={{
-            fontSize: '11px',
-            color: '#22d3ee',
-            backgroundColor: 'rgba(34, 211, 238, 0.1)',
-            border: '1px solid rgba(34, 211, 238, 0.3)',
-            padding: '3px 8px',
-            borderRadius: '5px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-          }}
-        >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#06b6d4' }} />
-          Postgres 5432
-        </div>
-
-        {/* 7. ElasticMQ (SQS) */}
+        {/* 4. ElasticMQ SQS */}
         <a
-          href="http://localhost:9324"
+          href="http://localhost:9324/?Action=ListQueues"
           target="_blank"
           rel="noreferrer"
-          title="ElasticMQ SQS & DLQ Message Broker (Port 9324)"
+          title="ElasticMQ SQS & DLQ Message Broker (Port 9324) - AWS SQS API endpoint (ListQueues)"
           style={{
             fontSize: '11px',
             color: '#c084fc',
             backgroundColor: 'rgba(192, 132, 252, 0.1)',
             border: '1px solid rgba(192, 132, 252, 0.3)',
-            padding: '3px 8px',
+            padding: '3px 9px',
             borderRadius: '5px',
             textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
             fontWeight: 600,
+            transition: 'background-color 0.15s ease',
           }}
         >
           <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#a855f7' }} />
           ElasticMQ SQS 9324
+        </a>
+
+        {/* 5. Prometheus Graphs & Visualizer */}
+        <a
+          href="http://localhost:9090/graph?g0.expr=sum+by+(route)+(rate(http_server_requests_total%5B1m%5D))&g0.tab=0&g0.range_input=1h"
+          target="_blank"
+          rel="noreferrer"
+          title="Prometheus Metrics Engine & TSDB (Port 9090) - Click to visualize HTTP route throughput graph & metrics filters"
+          style={{
+            fontSize: '11px',
+            color: '#fb923c',
+            backgroundColor: 'rgba(251, 146, 60, 0.1)',
+            border: '1px solid rgba(251, 146, 60, 0.3)',
+            padding: '3px 9px',
+            borderRadius: '5px',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            fontWeight: 600,
+            transition: 'background-color 0.15s ease',
+          }}
+        >
+          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#fb923c' }} />
+          Prometheus Graphs 9090
+        </a>
+
+        {/* 6. Prometheus Alerts */}
+        <a
+          href="http://localhost:9090/alerts"
+          target="_blank"
+          rel="noreferrer"
+          title="Prometheus Active Alerting Rules (Port 9090) - Inspect 7 active platform inference alert rules & firing states"
+          style={{
+            fontSize: '11px',
+            color: '#f97316',
+            backgroundColor: 'rgba(249, 115, 22, 0.1)',
+            border: '1px solid rgba(249, 115, 22, 0.3)',
+            padding: '3px 9px',
+            borderRadius: '5px',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            fontWeight: 600,
+            transition: 'background-color 0.15s ease',
+          }}
+        >
+          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ea580c' }} />
+          Prometheus Alerts (7)
+        </a>
+
+        {/* 7. Grafana Dashboards */}
+        <a
+          href="http://localhost:3001/dashboards"
+          target="_blank"
+          rel="noreferrer"
+          title="Grafana Operational Dashboards & SLO Monitoring (Port 3001) - Click to view all dashboards"
+          style={{
+            fontSize: '11px',
+            color: '#fbbf24',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            padding: '3px 9px',
+            borderRadius: '5px',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            fontWeight: 600,
+            transition: 'background-color 0.15s ease',
+          }}
+        >
+          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#f59e0b' }} />
+          Grafana Dashboards
         </a>
 
         {/* 8. OpenTelemetry Collector */}
@@ -534,23 +610,24 @@ export function Header({
           href="http://localhost:8889/metrics"
           target="_blank"
           rel="noreferrer"
-          title="OpenTelemetry Collector (Ports 4317/4318, Prometheus Exporter 8889)"
+          title="OpenTelemetry Collector Prometheus Exporter (Port 8889) - Live OTel metrics stream"
           style={{
             fontSize: '11px',
             color: '#f472b6',
             backgroundColor: 'rgba(244, 114, 182, 0.1)',
             border: '1px solid rgba(244, 114, 182, 0.3)',
-            padding: '3px 8px',
+            padding: '3px 9px',
             borderRadius: '5px',
             textDecoration: 'none',
             display: 'inline-flex',
             alignItems: 'center',
             gap: '5px',
             fontWeight: 600,
+            transition: 'background-color 0.15s ease',
           }}
         >
           <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ec4899' }} />
-          OTel Collector 4318
+          OTel Metrics 8889
         </a>
       </div>
     </header>

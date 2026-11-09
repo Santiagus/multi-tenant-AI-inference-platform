@@ -273,6 +273,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.register(finopsRoutes, {
     finopsRepo,
     metrics,
+    tracer,
   });
 
   app.register(gitOpsRoutes, {

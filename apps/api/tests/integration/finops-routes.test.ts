@@ -153,7 +153,7 @@ describe('FinOps Neocloud Pricing & Availability Intelligence Routes', () => {
     assert.equal(body.balances.bedrock.status, 'POSTPAID_INVOICE');
   });
 
-  test('POST /v1/finops/sync initiates catalog synchronization', async () => {
+  test('POST /v1/finops/sync initiates catalog synchronization and emits distributed trace', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/finops/sync',
@@ -163,8 +163,46 @@ describe('FinOps Neocloud Pricing & Availability Intelligence Routes', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.ok, true);
+    assert.ok(body.trace_id);
+    assert.ok(body.trace_url);
+    assert.equal(body.trace_url, `/v1/traces/${body.trace_id}`);
     assert.ok(body.syncedProviders.includes('runpod'));
     assert.ok(body.syncedProviders.includes('vast_ai'));
+  });
+
+  test('GET /v1/finops/sync-audits returns enterprise audit logs and supports query filters', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/finops/sync-audits',
+      headers: { 'x-tenant-id': 'tenant-test' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.ok(typeof body.total === 'number');
+    assert.ok(body.synced_at);
+    assert.ok(Array.isArray(body.audits));
+
+    // Verify filter by status
+    const filteredRes = await app.inject({
+      method: 'GET',
+      url: '/v1/finops/sync-audits?status=SUCCESS',
+      headers: { 'x-tenant-id': 'tenant-test' },
+    });
+    assert.equal(filteredRes.statusCode, 200);
+    const filteredBody = JSON.parse(filteredRes.body);
+    assert.ok(filteredBody.audits.every((a: any) => a.status === 'SUCCESS'));
+
+    // Verify backwards-compatible alias /v1/finops/sync/traces
+    const aliasRes = await app.inject({
+      method: 'GET',
+      url: '/v1/finops/sync/traces',
+      headers: { 'x-tenant-id': 'tenant-test' },
+    });
+    assert.equal(aliasRes.statusCode, 200);
+    const aliasBody = JSON.parse(aliasRes.body);
+    assert.ok(Array.isArray(aliasBody.traces));
   });
 
   test('POST /v1/finops/recommend-options returns cheapest, fastest, balanced, and recommended options', async () => {

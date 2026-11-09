@@ -243,7 +243,7 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
                         fontSize: '12px',
                       }}
                     >
-                      Download Signed Asset ↗
+                      Download Signed Asset
                     </a>
                   </div>
                 ))}

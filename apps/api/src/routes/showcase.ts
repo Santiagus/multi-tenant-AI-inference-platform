@@ -101,12 +101,13 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
     async (_req, reply) => {
       try {
         const pool = typeof options.db.getPool === 'function' ? options.db.getPool() : undefined;
-        await runShowcaseSeed({ pool, clearExisting: true });
+        const stats = await runShowcaseSeed({ pool, clearExisting: true });
         options.setDataSource('real');
         return reply.status(200).send({
           ok: true,
           dataSource: 'real',
-          message: 'Showcase mock data purged successfully. Restored real data mode.',
+          message: 'Showcase mock data purged successfully. Real live provider catalog synchronized.',
+          stats,
         });
       } catch (err) {
         fastify.log.error(err, 'Failed to purge showcase data in DB');

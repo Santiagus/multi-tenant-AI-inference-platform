@@ -5,6 +5,7 @@ import type {
   PricingHistorySummary,
   PricingHistoryPoint,
 } from '../../domain/finops-pricing.js';
+import { REAL_HISTORICAL_PRICING } from '../finops/real-historical-prices.js';
 
 export interface IFinOpsPricingRepository {
   getLatestGpuPricing(filters?: {
@@ -26,11 +27,17 @@ export interface IFinOpsPricingRepository {
 
   getSyncAudits(): Promise<PricingSyncAudit[]>;
 
-  syncFromProviders(): Promise<{
+  syncFromProviders(options?: {
+    providers?: string[];
+  }): Promise<{
     syncedProviders: string[];
+    failedProviders?: Array<{ provider: string; error?: string; status: string; syncType?: string; details?: any }>;
+    auditRecords?: any[];
     recordsCount: number;
     syncedAt: string;
   }>;
+
+  ensureHistoricalSnapshots?(): Promise<number>;
 }
 
 export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository {
@@ -303,6 +310,86 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
         commitment: 'Sovereign EU ($0 commit)',
         recordedAt: isoNow,
       },
+      // Local Workstation
+      {
+        id: 'gpu-local-1',
+        provider: 'local_pytorch',
+        hardwareSkuId: 'nvidia-rtx-5070-ti',
+        hardwareDisplayName: 'RTX 5070 Ti (16GB)',
+        vramGb: 16,
+        zone: 'local-workstation',
+        pricingModel: 'on_demand',
+        rateMicrocents: 0,
+        billingUnit: 'hour',
+        normalizedHourlyMicrocents: 0,
+        normalizedHourlyUsd: 0.0,
+        obtainabilityScore: 1.0,
+        obtainabilityLabel: 'High',
+        interruptionRiskTier: 'guaranteed',
+        isAvailable: true,
+        commitment: 'Dedicated Local ($0 cloud)',
+        recordedAt: isoNow,
+      },
+      // AWS SageMaker
+      {
+        id: 'gpu-sm-1',
+        provider: 'sagemaker',
+        hardwareSkuId: 'nvidia-h100-sxm',
+        hardwareDisplayName: 'H100 SXM5 (80GB)',
+        vramGb: 80,
+        zone: 'us-east-1',
+        pricingModel: 'on_demand',
+        rateMicrocents: 367000000,
+        billingUnit: 'hour',
+        normalizedHourlyMicrocents: 367000000,
+        normalizedHourlyUsd: 3.67,
+        obtainabilityScore: 0.95,
+        obtainabilityLabel: 'High',
+        interruptionRiskTier: 'guaranteed',
+        isAvailable: true,
+        commitment: 'Enterprise SLA ($0 min)',
+        recordedAt: isoNow,
+      },
+      // CoreWeave
+      {
+        id: 'gpu-cw-1',
+        provider: 'coreweave',
+        hardwareSkuId: 'nvidia-h100-sxm',
+        hardwareDisplayName: 'H100 SXM5 (80GB)',
+        vramGb: 80,
+        zone: 'us-ord-1',
+        pricingModel: 'on_demand',
+        rateMicrocents: 315000000,
+        billingUnit: 'hour',
+        normalizedHourlyMicrocents: 315000000,
+        normalizedHourlyUsd: 3.15,
+        obtainabilityScore: 0.9,
+        obtainabilityLabel: 'High',
+        interruptionRiskTier: 'guaranteed',
+        isAvailable: true,
+        commitment: 'Reserved / Dynamic ($0 commit)',
+        recordedAt: isoNow,
+      },
+      // Hivenet Elastic P2P
+      {
+        id: 'gpu-hive-1',
+        provider: 'hivenet',
+        hardwareSkuId: 'nvidia-rtx-4090',
+        hardwareDisplayName: 'RTX 4090 (24GB)',
+        vramGb: 24,
+        zone: 'global-p2p',
+        pricingModel: 'spot_bid',
+        rateMicrocents: 40000000,
+        billingUnit: 'hour',
+        normalizedHourlyMicrocents: 40000000,
+        normalizedHourlyUsd: 0.40,
+        obtainabilityScore: 0.85,
+        obtainabilityLabel: 'High',
+        interruptionRiskTier: '5-10%',
+        isAvailable: true,
+        commitment: 'P2P Grid ($0 commit)',
+        recordedAt: isoNow,
+      },
     ];
 
     // 2. Open Models & Token Factory Availability & Pricing
@@ -535,138 +622,84 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
       },
     ];
 
-    // 4. Historical Pricing Data & Cadence Curves (7 Days History across Providers)
-    this.historySummaries = [
-      // H100 SXM5 multi-provider comparison
-      {
-        provider: 'runpod',
-        itemType: 'gpu',
-        itemId: 'nvidia-h100-sxm',
-        displayName: 'NVIDIA H100 SXM5 80GB (RunPod Secure & Community)',
-        updateCadence: 'Hourly dynamic availability shifts',
-        estimatedUpdateFrequencyMinutes: 60,
-        latestPriceUsd: 2.99,
-        priceChange24hPct: -4.3,
-        history: this.generatePoints(2.99, 0.20, 7, 4, 1.99),
-      },
-      {
-        provider: 'nebius',
-        itemType: 'gpu',
-        itemId: 'nvidia-h100-sxm',
-        displayName: 'NVIDIA H100 SXM5 80GB (Nebius Preemptible & On-Demand)',
-        updateCadence: 'Dynamic Neocloud Datacenter Sync (~5 min)',
-        estimatedUpdateFrequencyMinutes: 5,
-        latestPriceUsd: 2.85,
-        priceChange24hPct: -2.1,
-        history: this.generatePoints(2.85, 0.15, 7, 4, 1.85),
-      },
-      {
-        provider: 'coreweave',
-        itemType: 'gpu',
-        itemId: 'nvidia-h100-sxm',
-        displayName: 'NVIDIA H100 SXM5 80GB (CoreWeave Interruptible & Reserved)',
-        updateCadence: 'Kubernetes cloud virtual server sync (~5 min)',
-        estimatedUpdateFrequencyMinutes: 5,
-        latestPriceUsd: 3.15,
-        priceChange24hPct: 0.0,
-        history: this.generatePoints(3.15, 0.12, 7, 4, 2.05),
-      },
-      {
-        provider: 'sagemaker',
-        itemType: 'gpu',
-        itemId: 'nvidia-h100-sxm',
-        displayName: 'NVIDIA H100 SXM5 80GB (AWS SageMaker Spot / On-Demand)',
-        updateCadence: 'AWS EC2 Pricing API hourly schedule',
-        estimatedUpdateFrequencyMinutes: 60,
-        latestPriceUsd: 3.67,
-        priceChange24hPct: 1.2,
-        history: this.generatePoints(3.67, 0.25, 7, 4, 2.20),
-      },
+    // 4. Historical Pricing Data & Cadence Curves (7 Days History across Providers Grounded in Real Open Datasets)
+    const nowMs = Date.now();
+    const gpuSummaries: PricingHistorySummary[] = REAL_HISTORICAL_PRICING.records.map((rec) => {
+      const latestDayPoint = rec.dailyPoints[rec.dailyPoints.length - 1];
+      const earliestDayPoint = rec.dailyPoints[0];
+      const latestPriceUsd = latestDayPoint ? latestDayPoint.usdHr : 0.50;
+      const earliestPriceUsd = earliestDayPoint ? earliestDayPoint.usdHr : latestPriceUsd;
+      const priceChange24hPct = earliestPriceUsd > 0
+        ? Math.round(((latestPriceUsd - earliestPriceUsd) / earliestPriceUsd) * 1000) / 10
+        : 0;
 
-      // RTX 5090 Blackwell multi-provider comparison
-      {
-        provider: 'vast_ai',
-        itemType: 'gpu',
-        itemId: 'nvidia-rtx-5090',
-        displayName: 'NVIDIA RTX 5090 (Vast.ai Real-time Spot Auction)',
-        updateCadence: 'Real-time auction bid updates every 5-10 minutes',
-        estimatedUpdateFrequencyMinutes: 5,
-        latestPriceUsd: 0.55,
-        priceChange24hPct: -11.1,
-        history: this.generatePoints(0.55, 0.05, 7, 12, 0.34),
-      },
-      {
-        provider: 'runpod',
-        itemType: 'gpu',
-        itemId: 'nvidia-rtx-5090',
-        displayName: 'NVIDIA RTX 5090 (RunPod Community Spot)',
-        updateCadence: 'Live spot auction rebalance (~2 min)',
-        estimatedUpdateFrequencyMinutes: 2,
-        latestPriceUsd: 0.69,
-        priceChange24hPct: -5.4,
-        history: this.generatePoints(0.69, 0.06, 7, 12, 0.48),
-      },
+      const history: PricingHistoryPoint[] = [];
+      for (let h = 168; h >= 0; h--) {
+        const t = new Date(nowMs - h * 3600 * 1000);
+        const hourUtc = t.getUTCHours();
+        const day = t.getUTCDay();
+        const isWeekend = day === 0 || day === 6;
 
-      // L4 Serverless multi-provider comparison
-      {
-        provider: 'baseten',
-        itemType: 'gpu',
-        itemId: 'nvidia-l4',
-        displayName: 'NVIDIA L4 Serverless (Baseten Micro-metered)',
-        updateCadence: 'Fixed tier published schedule (monthly cadence)',
-        estimatedUpdateFrequencyMinutes: 1440,
-        latestPriceUsd: 0.85,
-        priceChange24hPct: 0.0,
-        history: this.generatePoints(0.85, 0.04, 7, 4, 0.50),
-      },
-      {
-        provider: 'nebius',
-        itemType: 'gpu',
-        itemId: 'nvidia-l4',
-        displayName: 'NVIDIA L4 (Nebius Studio Preemptible)',
-        updateCadence: 'Dynamic Neocloud sync (~5 min)',
-        estimatedUpdateFrequencyMinutes: 5,
-        latestPriceUsd: 0.75,
-        priceChange24hPct: -1.5,
-        history: this.generatePoints(0.75, 0.03, 7, 4, 0.45),
-      },
+        const dayOffset = Math.min(6, Math.max(0, 6 - Math.floor(h / 24)));
+        const dayPoint = rec.dailyPoints[dayOffset];
+        const baseSpot = dayPoint ? dayPoint.usdHr : latestPriceUsd;
 
-      // RTX 4090 multi-provider comparison
-      {
-        provider: 'vast_ai',
-        itemType: 'gpu',
-        itemId: 'nvidia-rtx-4090',
-        displayName: 'NVIDIA RTX 4090 (Vast.ai Unregulated Auction)',
-        updateCadence: 'Real-time spot auction (~1 min)',
-        estimatedUpdateFrequencyMinutes: 1,
-        latestPriceUsd: 0.45,
-        priceChange24hPct: -8.2,
-        history: this.generatePoints(0.45, 0.04, 7, 12, 0.28),
-      },
-      {
-        provider: 'runpod',
-        itemType: 'gpu',
-        itemId: 'nvidia-rtx-4090',
-        displayName: 'NVIDIA RTX 4090 (RunPod Secure / Community)',
-        updateCadence: 'Live spot auction (~2 min)',
-        estimatedUpdateFrequencyMinutes: 2,
-        latestPriceUsd: 0.59,
-        priceChange24hPct: -3.0,
-        history: this.generatePoints(0.59, 0.04, 7, 12, 0.39),
-      },
-      {
-        provider: 'hivenet',
-        itemType: 'gpu',
-        itemId: 'nvidia-rtx-4090',
-        displayName: 'NVIDIA RTX 4090 (Hivenet Elastic P2P Grid)',
-        updateCadence: 'Real-time P2P heartbeat (~1 min)',
-        estimatedUpdateFrequencyMinutes: 1,
-        latestPriceUsd: 0.40,
-        priceChange24hPct: -6.5,
-        history: this.generatePoints(0.40, 0.05, 7, 12, 0.25),
-      },
+        let spotUsd = 0;
+        if (rec.provider === 'local_pytorch') {
+          spotUsd = 0;
+        } else if (rec.provider === 'sagemaker') {
+          spotUsd = baseSpot;
+        } else {
+          let officeMultiplier: number;
+          if (hourUtc >= 13 && hourUtc <= 18) {
+            const progress = (hourUtc - 13) / 5;
+            officeMultiplier = 1.22 + 0.12 * Math.sin(progress * Math.PI);
+          } else if (hourUtc >= 8 && hourUtc < 13) {
+            const progress = (hourUtc - 8) / 5;
+            officeMultiplier = 0.98 + 0.24 * progress;
+          } else if (hourUtc > 18 && hourUtc <= 22) {
+            const progress = (hourUtc - 18) / 4;
+            officeMultiplier = 1.22 - 0.30 * progress;
+          } else {
+            const nightProgress = hourUtc > 22 ? (hourUtc - 22) / 10 : (hourUtc + 2) / 10;
+            officeMultiplier = 0.84 + 0.08 * Math.sin(nightProgress * Math.PI);
+          }
+          if (isWeekend) {
+            officeMultiplier *= 0.85;
+          }
+          const hourEpoch = Math.floor(t.getTime() / 3600_000);
+          const hash = Math.sin(hourEpoch * 12.9898 + (baseSpot * 78.233)) * 43758.5453;
+          const marketNoise = 1 + ((hash - Math.floor(hash)) - 0.5) * 0.05;
+          spotUsd = Math.max(0.01, Math.round(baseSpot * officeMultiplier * marketNoise * 100) / 100);
+        }
 
-      // DeepSeek V4.1 Flash multi-provider comparison
+        history.push({
+          recordedAt: t.toISOString(),
+          priceUsd: spotUsd,
+          spotPriceUsd: spotUsd,
+          availability: dayPoint?.source ? 'OpenDataset' : 'High',
+        });
+      }
+
+      return {
+        provider: rec.provider,
+        itemType: 'gpu',
+        itemId: rec.sku,
+        displayName: `${rec.sku} (${rec.provider})`,
+        updateCadence:
+          rec.provider === 'vast_ai'
+            ? 'Real-time spot auction (~1 min)'
+            : rec.provider === 'runpod'
+              ? 'Live spot auction (~2 min)'
+              : 'Dynamic Neocloud Datacenter Sync (~5 min)',
+        estimatedUpdateFrequencyMinutes: rec.provider === 'vast_ai' ? 5 : rec.provider === 'runpod' ? 2 : 5,
+        latestPriceUsd,
+        priceChange24hPct,
+        history,
+      };
+    });
+
+    const modelSummaries: PricingHistorySummary[] = [
       {
         provider: 'jarvislabs',
         itemType: 'model',
@@ -690,13 +723,15 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
         history: this.generatePoints(0.15, 0.01, 7, 4, 0.08),
       },
     ];
+
+    this.historySummaries = [...gpuSummaries, ...modelSummaries];
   }
 
   private generatePoints(
     basePrice: number,
     variance: number,
     days: number,
-    pointsPerDay: number,
+    pointsPerDay = 24,
     baseSpotPrice?: number
   ): PricingHistoryPoint[] {
     const points: PricingHistoryPoint[] = [];
@@ -705,16 +740,57 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
     const intervalMs = (days * 24 * 3600 * 1000) / totalPoints;
 
     for (let i = totalPoints; i >= 0; i--) {
-      const time = new Date(nowMs - i * intervalMs).toISOString();
-      const randomNoise = (Math.sin(i * 0.5) + Math.cos(i * 0.2)) * (variance / 2);
-      const onDemand = Math.max(0.01, +(basePrice + randomNoise * 0.5).toFixed(4));
-      const targetSpot = baseSpotPrice ?? +(basePrice * 0.65);
-      const spot = Math.max(0.01, +(targetSpot + randomNoise).toFixed(4));
+      const d = new Date(nowMs - i * intervalMs);
+      const time = d.toISOString();
+
+      if (basePrice === 0) {
+        points.push({
+          recordedAt: time,
+          priceUsd: 0,
+          spotPriceUsd: 0,
+          availability: 'Dedicated',
+        });
+        continue;
+      }
+
+      const hourUtc = d.getUTCHours();
+      const day = d.getUTCDay();
+      const isWeekend = day === 0 || day === 6;
+
+      // Diurnal office-hours demand curve:
+      // Peaks between 13:00 - 18:00 UTC (US/EU core office hours), valleys overnight (00:00 - 07:00 UTC)
+      let officeMultiplier: number;
+      if (hourUtc >= 13 && hourUtc <= 18) {
+        const progress = (hourUtc - 13) / 5;
+        officeMultiplier = 1.22 + 0.12 * Math.sin(progress * Math.PI);
+      } else if (hourUtc >= 8 && hourUtc < 13) {
+        const progress = (hourUtc - 8) / 5;
+        officeMultiplier = 0.98 + 0.24 * progress;
+      } else if (hourUtc > 18 && hourUtc <= 22) {
+        const progress = (hourUtc - 18) / 4;
+        officeMultiplier = 1.22 - 0.30 * progress;
+      } else {
+        const nightProgress = hourUtc > 22 ? (hourUtc - 22) / 10 : (hourUtc + 2) / 10;
+        officeMultiplier = 0.84 + 0.08 * Math.sin(nightProgress * Math.PI);
+      }
+
+      if (isWeekend) {
+        officeMultiplier *= 0.85;
+      }
+
+      const hourEpoch = Math.floor(d.getTime() / 3600_000);
+      const hash = Math.sin(hourEpoch * 12.9898 + basePrice * 37.1) * 43758.5453;
+      const noise = ((hash - Math.floor(hash)) - 0.5) * variance;
+
+      const targetSpot = (baseSpotPrice ?? +(basePrice * 0.65)) * officeMultiplier + noise;
+      const onDemand = Math.max(0.01, +(basePrice).toFixed(4));
+      const spot = Math.max(0.01, +(targetSpot).toFixed(4));
+
       points.push({
         recordedAt: time,
         priceUsd: onDemand,
         spotPriceUsd: spot,
-        availability: spot < targetSpot ? 'High' : 'Medium',
+        availability: spot < targetSpot * 1.05 ? 'High' : 'Medium',
       });
     }
     return points;
@@ -755,6 +831,7 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
   async getPricingHistory(options?: {
     provider?: string;
     itemId?: string;
+    hours?: number;
   }): Promise<PricingHistorySummary[]> {
     let result = [...this.historySummaries];
     if (options?.provider) {
@@ -763,6 +840,16 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
     if (options?.itemId) {
       result = result.filter((h) => h.itemId.toLowerCase() === options.itemId!.toLowerCase());
     }
+    if (options?.hours && options.hours > 0) {
+      const cutoff = Date.now() - options.hours * 3600 * 1000;
+      result = result.map((h) => ({
+        ...h,
+        history: h.history.filter((pt) => {
+          const t = Date.parse(pt.recordedAt);
+          return !Number.isNaN(t) && t >= cutoff;
+        }),
+      }));
+    }
     return result;
   }
 
@@ -770,17 +857,30 @@ export class InMemoryFinOpsPricingRepository implements IFinOpsPricingRepository
     return [...this.syncAudits];
   }
 
-  async syncFromProviders(): Promise<{
+  async syncFromProviders(options?: {
+    providers?: string[];
+  }): Promise<{
     syncedProviders: string[];
+    failedProviders?: Array<{ provider: string; error?: string; status: string; syncType?: string; details?: any }>;
+    auditRecords?: any[];
     recordsCount: number;
     syncedAt: string;
   }> {
+    const all = ['runpod', 'vast_ai', 'baseten', 'jarvislabs', 'nebius', 'fal', 'runware'];
+    const requested = options?.providers ? options.providers.map((p) => p.toLowerCase()) : null;
+    const syncedProviders = requested ? all.filter((p) => requested.includes(p)) : all;
     const now = new Date().toISOString();
     return {
-      syncedProviders: ['runpod', 'vast_ai', 'baseten', 'jarvislabs', 'nebius', 'fal', 'runware'],
+      syncedProviders,
+      failedProviders: [],
+      auditRecords: this.syncAudits.filter((a) => !requested || requested.includes(a.provider.toLowerCase())),
       recordsCount: this.gpuSnapshots.length + this.modelSnapshots.length,
       syncedAt: now,
     };
+  }
+
+  async ensureHistoricalSnapshots(): Promise<number> {
+    return this.historySummaries.length;
   }
 }
 

@@ -66,12 +66,17 @@ export class PlatformApiClient {
     return response.json() as Promise<T>;
   }
 
-  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock' }> {
+  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock'; environment: string }> {
     try {
-      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock' }>('/healthz');
-      return { ok: true, status: data.status || 'healthy', dataSource: data.dataSource || 'real' };
+      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock'; environment?: string }>('/healthz');
+      return {
+        ok: true,
+        status: data.status || 'healthy',
+        dataSource: data.dataSource || 'real',
+        environment: data.environment || 'LOCAL',
+      };
     } catch {
-      return { ok: false, status: 'unhealthy', dataSource: 'real' };
+      return { ok: false, status: 'unhealthy', dataSource: 'real', environment: 'LOCAL' };
     }
   }
 
@@ -265,11 +270,46 @@ export class PlatformApiClient {
   async syncPricing(): Promise<{
     ok: boolean;
     message: string;
+    trace_id?: string;
+    trace_url?: string;
+    traceparent?: string;
     syncedProviders: string[];
+    failedProviders?: Array<{ provider: string; error?: string; status: string; syncType?: string; details?: any }>;
+    auditRecords?: import('../types').PricingSyncAudit[];
     recordsCount: number;
     syncedAt: string;
   }> {
     return this.request('/v1/finops/sync', { method: 'POST' });
+  }
+
+  async getSyncAudits(params?: {
+    provider?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<{
+    ok: boolean;
+    total: number;
+    synced_at: string;
+    audits: import('../types').PricingSyncAudit[];
+  }> {
+    const q = new URLSearchParams();
+    if (params?.provider) q.set('provider', params.provider);
+    if (params?.status) q.set('status', params.status);
+    if (params?.limit) q.set('limit', String(params.limit));
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return this.request(`/v1/finops/sync-audits${qs}`);
+  }
+
+  async getSyncTraces(): Promise<{
+    ok: boolean;
+    traces: import('../types').PricingSyncAudit[];
+    syncedAt: string;
+  }> {
+    return this.request('/v1/finops/sync/traces');
+  }
+
+  async getTrace(traceId: string): Promise<import('../types').TraceDetailResponse> {
+    return this.request(`/v1/traces/${encodeURIComponent(traceId)}`);
   }
 
   async getCloudRecommendations(payload: {

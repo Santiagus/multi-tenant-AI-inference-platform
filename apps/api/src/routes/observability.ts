@@ -3,6 +3,7 @@ import type { DistributedTracer } from '../infrastructure/telemetry/tracer.js';
 import type { MetricsRegistry } from '../infrastructure/telemetry/metrics.js';
 import type { JobService } from '../application/job-service.js';
 import { parseTraceparent } from '../infrastructure/telemetry/tracer.js';
+import { NotFoundError } from '../domain/errors.js';
 
 export interface ObservabilityRoutesOptions {
   tracer: DistributedTracer;
@@ -89,6 +90,62 @@ export const observabilityRoutes: FastifyPluginAsync<ObservabilityRoutesOptions>
         stages,
         span_count: combinedSpans.length,
         spans: combinedSpans.map((s) => ({
+          trace_id: s.traceId,
+          span_id: s.spanId,
+          parent_span_id: s.parentSpanId,
+          name: s.name,
+          kind: s.kind,
+          service_name: s.serviceName,
+          start_time: s.startTimeIso,
+          end_time: s.endTimeIso,
+          duration_ms: s.durationMs,
+          status: s.status,
+          ...(s.errorMessage ? { error_message: s.errorMessage } : {}),
+          attributes: s.attributes,
+        })),
+      });
+    }
+  );
+
+  // GET /v1/traces/:traceId - Inspect distributed trace by 32-hex W3C Trace ID
+  fastify.get<{ Params: { traceId: string } }>(
+    '/v1/traces/:traceId',
+    {
+      schema: {
+        tags: ['Observability'],
+        summary: 'Inspect Distributed Trace by Trace ID',
+        description:
+          'Retrieves all W3C distributed trace spans and hierarchical timings associated with a 32-character hexadecimal trace ID.',
+        params: {
+          type: 'object',
+          properties: {
+            traceId: { type: 'string', description: 'W3C 32-character hexadecimal trace ID' },
+          },
+          required: ['traceId'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const traceId = req.params.traceId;
+      const spans = tracer.getSpansByTraceId(traceId, tenantId);
+
+      if (spans.length === 0) {
+        throw new NotFoundError(`Trace '${traceId}' not found for tenant '${tenantId}'`);
+      }
+
+      const stages = Array.from(new Set(spans.map((s) => s.name)));
+      const hasErrors = spans.some((s) => s.status === 'ERROR');
+
+      return reply.status(200).send({
+        trace_id: traceId,
+        tenant_id: tenantId,
+        status: hasErrors ? 'ERROR' : 'OK',
+        root_span_name: spans[0]?.name ?? null,
+        stages,
+        span_count: spans.length,
+        duration_ms: spans.reduce((max, s) => Math.max(max, s.durationMs), 0),
+        spans: spans.map((s) => ({
           trace_id: s.traceId,
           span_id: s.spanId,
           parent_span_id: s.parentSpanId,

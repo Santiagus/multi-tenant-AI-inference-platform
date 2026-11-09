@@ -604,6 +604,24 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     },
   },
 
+  'GET /v1/traces/:traceId': {
+    tags: ['Observability'],
+    summary: 'Inspect Distributed Trace by Trace ID',
+    description:
+      'Retrieves all W3C distributed trace spans and hierarchical timings associated with a 32-character hexadecimal trace ID.',
+    params: {
+      type: 'object',
+      properties: {
+        traceId: {
+          type: 'string',
+          description: 'W3C 32-character hexadecimal trace ID',
+          example: '4bf92f3577b34da6a3ce929d0e0e4736',
+        },
+      },
+      required: ['traceId'],
+    },
+  },
+
   // =========================================================================
   // Provider Routing
   // =========================================================================
@@ -979,6 +997,86 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     summary: 'Trigger Argo CD Declarative Sync',
     description:
       'Triggers a declarative Argo CD reconciliation cycle for the declared target environment manifests.',
+  },
+
+  // =========================================================================
+  // FinOps & Real-Time Pricing
+  // =========================================================================
+  'GET /v1/finops/gpu-pricing': {
+    tags: ['Provider Routing'],
+    summary: 'Query GPU Spot and On-Demand Pricing Across Providers',
+    description: 'Retrieves latest normalized hourly GPU pricing per provider, hardware SKU, and pricing model.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'runpod' },
+        hardware_sku: { type: 'string', example: 'rtx_4090' },
+        pricing_model: { type: 'string', example: 'spot_bid' },
+      },
+    },
+  },
+  'GET /v1/finops/model-pricing': {
+    tags: ['Provider Routing'],
+    summary: 'Query Open Model Pricing Across Providers',
+    description: 'Retrieves token-based and pay-per-call pricing across neocloud model hosts.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'nebius' },
+        execution_type: { type: 'string', example: 'token_factory' },
+      },
+    },
+  },
+  'GET /v1/finops/pricing-history': {
+    tags: ['Provider Routing'],
+    summary: 'Query Historical Spot Pricing Trends',
+    description: 'Retrieves historical price timeseries bucketed by hour for volatility analysis.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'vast_ai' },
+        item_id: { type: 'string', example: 'rtx_4090' },
+        hours: { type: 'integer', example: 24 },
+      },
+    },
+  },
+  'GET /v1/finops/balances': {
+    tags: ['Provider Routing'],
+    summary: 'Query Live Provider Account Balances Across Fleet',
+    description: 'Retrieves real-time account balances, credits, and spending quotas across all configured provider APIs.',
+  },
+  'POST /v1/finops/sync': {
+    tags: ['Provider Routing'],
+    summary: 'Synchronize Live Pricing Catalogs with Distributed Tracing',
+    description:
+      'Triggers live pricing synchronization across all connected neocloud and hardware providers, instrumented with OpenTelemetry distributed spans.',
+  },
+  'GET /v1/finops/sync-audits': {
+    tags: ['Provider Routing'],
+    summary: 'Query Provider Pricing Synchronization Audits',
+    description:
+      'Retrieves chronological audit logs, records count, and diagnostic failure traces for provider pricing synchronizations.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'vast_ai' },
+        status: { type: 'string', enum: ['SUCCESS', 'FAILED', 'SKIPPED'], example: 'FAILED' },
+        limit: { type: 'integer', example: 50 },
+      },
+    },
+  },
+  'POST /v1/finops/recommend-options': {
+    tags: ['Provider Routing'],
+    summary: 'Recommend Smart Cloud Execution Options',
+    description: 'Evaluates execution speed, hourly spot rates, and scale-to-zero runtime costs to recommend optimal deployment options.',
+    body: {
+      type: 'object',
+      properties: {
+        model_id: { type: 'string', example: 'meta-llama/Llama-3-8B-Instruct' },
+        prompt_tokens: { type: 'integer', example: 128 },
+        max_new_tokens: { type: 'integer', example: 64 },
+      },
+    },
   },
 };
 

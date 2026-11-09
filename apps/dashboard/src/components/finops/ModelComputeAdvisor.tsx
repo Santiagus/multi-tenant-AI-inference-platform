@@ -19,7 +19,7 @@ import { cleanHardwareName } from './formatHwName';
 import { RoutingView } from '../routing/RoutingView';
 import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
 import { TimeSeriesChart, type ChartSeries } from '../common/TimeSeriesChart';
-import { costHistoryForOption } from './priceHistory';
+import { costHistoryForOption, timingInsight } from './priceHistory';
 
 interface ModelComputeAdvisorProps {
   gpuPricing: GpuPricingItem[];
@@ -36,6 +36,7 @@ const SERIES_COLORS = [
   '#38bdf8', '#34d399', '#f472b6', '#fbbf24', '#a78bfa',
   '#fb923c', '#2dd4bf', '#ec4899', '#60a5fa', '#f87171',
   '#4ade80', '#c084fc', '#e879f9', '#22d3ee', '#facc15',
+  '#818cf8', '#f43f5e', '#10b981', '#06b6d4', '#eab308',
 ];
 
 const PURPOSES: Array<{ id: ModelPurpose; label: string }> = [
@@ -75,7 +76,7 @@ function PickCard({ title, color, opt, note }: { title: string; color: string; o
             {cleanHardwareName(opt.gpu.hardwareDisplayName, opt.gpu.vramGb)}
           </div>
           <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {opt.gpu.provider} · {opt.gpu.pricingModel.replace('_', ' ')} · ${opt.gpu.normalizedHourlyUsd.toFixed(2)}/hr
+            {opt.gpu.provider} · {opt.gpu.pricingModel.replace('_', ' ')} · {opt.costPerJobUsd === 0 ? '$0.00' : opt.costPerJobUsd < 0.001 ? `$${opt.costPerJobUsd.toFixed(5)}` : `$${opt.costPerJobUsd.toFixed(4)}`}/ref job
           </div>
           <div style={{ fontSize: '12px', color: '#e2e8f0', marginTop: '6px', fontWeight: 600 }}>
             {opt.tokensPerSec.toFixed(1)} tok/s · {fmtUsdPer1M(opt.costPerMillionUsd)} / 1M tok
@@ -124,6 +125,28 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
   const [sortDir, setSortDir] = useState<SortDirection>('asc');
   const [timeRangeHours, setTimeRangeHours] = useState<number>(168); // 7d default
   const [topNRows, setTopNRows] = useState<number>(6);
+
+  const resetFiltersToDefault = () => {
+    setWeightType('open');
+    setPurpose('all');
+    setModelId(CATALOG_MODELS[0].id);
+    setMinSecurityLevel('any');
+    setRequireVpc(false);
+    setDedicatedHardware(false);
+    setDataRetention('any');
+    setEncryption('any');
+    setRegion('any');
+    setRisk('any');
+    setExecutionType('all');
+    setLifecycle('all');
+    setJobPattern('all');
+    setPriority('normal');
+    setIncludeStorageAndNetwork(false);
+    setTimeRangeHours(168);
+    setTopNRows(6);
+    setSortKey('per1m');
+    setSortDir('asc');
+  };
 
   // Merge Curated Catalog with Models discovered via Provider APIs & Local PyTorch
   const allModels: CuratedModelDefinition[] = useMemo(() => {
@@ -223,16 +246,16 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
   const columns: Array<[string, string]> = useMemo(() => {
     const unitColLabel =
       benchmark && benchmark.concernUnitLabel !== '1M tok'
-        ? `$/${benchmark.concernUnitLabel}`
+        ? `Cost / ${benchmark.concernUnitLabel}`
         : 'Efficiency (tok/$)';
     return [
       ['hardware', 'Hardware'],
       ['provider', 'Provider · Mode'],
       ['tps', 'Bench tok/s'],
       ['per1m', '$/1M tok'],
+      ['benchJobCost', 'Bench Job Cost'],
       ['netCost', includeStorageAndNetwork ? 'Net $/1k Jobs (All-in)' : '$/1k Jobs (Compute)'],
       ['concernUnit', unitColLabel],
-      ['hourly', '$/hr now'],
       ['risk', 'Interruption Risk'],
       ['security', 'Security & Region'],
     ];
@@ -242,7 +265,7 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
     if (sortKey === col) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
       setSortKey(col);
-      setSortDir(col === 'tps' ? 'desc' : 'asc');
+      setSortDir(col === 'tps' || col === 'concernUnit' ? 'desc' : 'asc');
     }
   };
 
@@ -263,10 +286,10 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
           case 'provider': return `${r.opt.gpu.provider} ${r.opt.gpu.pricingModel}`;
           case 'tps': return r.opt.tokensPerSec;
           case 'per1m': return r.opt.costPerMillionUsd;
+          case 'benchJobCost': return r.opt.costPerJobUsd;
           case 'netCost': return r.opt.costPer1kJobsUsd;
           case 'concernUnit':
             return r.opt.concernUnitLabel !== '1M tok' ? r.opt.concernUnitCostUsd : r.opt.tokensPerDollar;
-          case 'hourly': return r.opt.gpu.normalizedHourlyUsd;
           case 'risk': return r.opt.gpu.interruptionRiskTier;
           case 'security': return `${r.opt.securityLevel} ${r.opt.regionLabel}`;
           default: return null;
@@ -280,8 +303,18 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
     return rows.slice(0, topNRows);
   }, [rows, topNRows]);
 
-  const label = (r: (typeof rows)[number]) =>
-    `${r.opt.gpu.provider} · ${cleanHardwareName(r.opt.gpu.hardwareDisplayName, r.opt.gpu.vramGb)}`;
+  const label = (r: (typeof rows)[number]) => {
+    const hw = cleanHardwareName(r.opt.gpu.hardwareDisplayName, r.opt.gpu.vramGb);
+    const mode =
+      r.opt.gpu.pricingModel === 'spot_bid'
+        ? 'Spot'
+        : r.opt.gpu.pricingModel === 'on_demand'
+          ? 'On-Demand'
+          : r.opt.gpu.pricingModel === 'serverless'
+            ? 'Serverless'
+            : r.opt.gpu.pricingModel;
+    return `${r.opt.gpu.provider} · ${hw} (${mode})`;
+  };
 
   // Exactly ONE chart series
   const costSeries: ChartSeries[] = useMemo(
@@ -296,12 +329,46 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
     [chartRows]
   );
 
+  const topOptionPoints = chartRows[0]?.points ?? [];
+  const topInsight = useMemo(() => timingInsight(topOptionPoints), [topOptionPoints]);
+
   const td = { padding: '9px 12px', color: '#e2e8f0' } as const;
 
   return (
     <div style={{ backgroundColor: '#0f172a', borderRadius: '12px', border: '1px solid #1e293b', padding: '16px 20px', marginBottom: '16px' }}>
       {/* ---------------- TOP FILTERS MATRIX (A, B, C & Cost Constraints) ---------------- */}
       <div style={{ backgroundColor: '#090d16', borderRadius: '10px', border: '1px solid #1e293b', padding: '14px 18px', marginBottom: '18px' }}>
+        {/* Filter Matrix Header & Reset Action */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1e293b', paddingBottom: '10px' }}>
+          <div>
+            <span style={{ fontSize: '13px', fontWeight: 800, color: '#f8fafc', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              🎯 Multi-Dimensional Workload &amp; Architecture Filters
+            </span>
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+              Filter by model requirements, security constraints, execution modalities, and all-in costs.
+            </div>
+          </div>
+          <button
+            onClick={resetFiltersToDefault}
+            style={{
+              backgroundColor: '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #334155',
+              borderRadius: '6px',
+              padding: '6px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'background-color 0.2s',
+            }}
+          >
+            ⟲ Reset All Filters to Default
+          </button>
+        </div>
+
         {/* Row A: Model Requirements */}
         <div style={{ borderBottom: '1px solid #1e293b', paddingBottom: '12px', marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -581,8 +648,13 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
             gap: '10px',
           }}
         >
-          <div style={{ fontSize: '12px', color: '#cbd5e1', fontWeight: 600 }}>
-            $/1M tok price history &amp; spot market volatility (USA · EU · ASIA trading sessions)
+          <div>
+            <div style={{ fontSize: '13px', color: '#f8fafc', fontWeight: 700 }}>
+              Historical Spot Price Trends ($/1M tokens)
+            </div>
+            <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+              Hourly spot &amp; on-demand token cost reflecting diurnal office-hours demand peaks (13:00–18:00 UTC)
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             {/* Time range selector */}
@@ -630,12 +702,107 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
         <TimeSeriesChart
           series={costSeries}
           height={240}
-          sessionMode="timestamp"
-          xFormat={(x) => new Date(x).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit' })}
+          xFormat={(x, spanMs) => {
+            const d = new Date(x);
+            const hours = `${String(d.getHours()).padStart(2, '0')}:00`;
+            const isNarrow =
+              spanMs !== undefined ? spanMs <= 36 * 3600 * 1000 : timeRangeHours <= 24;
+            if (isNarrow) {
+              return hours;
+            }
+            return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${hours}`;
+          }}
           yFormat={(y) => fmtUsdPer1M(y)}
           emptyMessage="No price history recorded for these filtered offerings yet. Trigger a catalog sync to record historical points."
         />
+
+        {topInsight.savingsPct > 5 && (
+          <div
+            style={{
+              backgroundColor: 'rgba(56, 189, 248, 0.05)',
+              borderTop: '1px solid #1e293b',
+              padding: '8px 14px',
+              fontSize: '11px',
+              color: '#cbd5e1',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '8px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>📈</span>
+              <span>
+                <strong>Office-Hours Volatility Insight:</strong> Spot token prices peak around{' '}
+                <strong style={{ color: '#fbbf24' }}>
+                  {String(topInsight.worstHour ?? 15).padStart(2, '0')}:00 UTC
+                </strong>{' '}
+                (US/EU core business hours). Off-peak runs around{' '}
+                <strong style={{ color: '#34d399' }}>
+                  {String(topInsight.bestHour ?? 4).padStart(2, '0')}:00 UTC
+                </strong>{' '}
+                or weekends reduce token cost by up to{' '}
+                <strong style={{ color: '#38bdf8' }}>{topInsight.savingsPct.toFixed(0)}%</strong>.
+              </span>
+            </div>
+            <span style={{ fontSize: '10px', color: '#64748b' }}>Hourly update cadence · Spot auction shifts</span>
+          </div>
+        )}
       </div>
+
+      {/* ---------------- STANDARDIZED BENCHMARK REFERENCE JOB SPECS ---------------- */}
+      {benchmark && (
+        <div
+          style={{
+            backgroundColor: '#0a101f',
+            border: '1px solid #1e3a8a',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            marginBottom: '12px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '16px' }}>📋</span>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#93c5fd' }}>
+                Standardized Benchmark Reference Job Specs
+              </div>
+              <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '2px' }}>
+                Suite: <strong style={{ color: '#f8fafc' }}>{benchmark.benchmarkSuite}</strong> · Standard Task: <span style={{ color: '#38bdf8', fontFamily: 'monospace' }}>{benchmark.taskProfile}</span> ({benchmark.referenceTaskTokens.toLocaleString()} tokens)
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+              Identical workload benchmark evaluated across all hardware options to measure throughput &amp; job cost.
+            </span>
+            <a
+              href={benchmark.referenceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#38bdf8',
+                border: '1px solid #38bdf8',
+                padding: '4px 10px',
+                borderRadius: '5px',
+                fontSize: '11px',
+                fontWeight: 600,
+                textDecoration: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Benchmark Source
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* ---------------- EXACTLY ONE COMPARISON TABLE ---------------- */}
       <div style={{ overflowX: 'auto', border: '1px solid #1e293b', borderRadius: '8px' }}>
@@ -680,11 +847,37 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
                     {r.opt.gpu.pricingModel.replace('_', ' ')}
                   </div>
                 </td>
-                <td style={{ ...td, color: '#c084fc', fontWeight: 600 }}>
-                  {r.opt.tokensPerSec.toFixed(1)} tok/s
+                <td style={td}>
+                  <a
+                    href={r.opt.benchmark.referenceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Public benchmark source: ${r.opt.benchmark.benchmarkSuite} (${r.opt.benchmark.taskProfile})`}
+                    style={{
+                      color: '#c084fc',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                      borderBottom: '1px dotted #c084fc',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {r.opt.tokensPerSec.toFixed(1)} tok/s
+                  </a>
                 </td>
                 <td style={{ ...td, color: '#34d399', fontWeight: 700 }}>
                   {fmtUsdPer1M(r.opt.costPerMillionUsd)}
+                </td>
+                <td style={td}>
+                  <div style={{ fontWeight: 700, color: r.opt.costPerJobUsd === 0 ? '#34d399' : '#f8fafc' }}>
+                    {r.opt.costPerJobUsd === 0
+                      ? '$0.00 (Local)'
+                      : r.opt.costPerJobUsd < 0.001
+                        ? `$${r.opt.costPerJobUsd.toFixed(5)}`
+                        : `$${r.opt.costPerJobUsd.toFixed(4)}`}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                    ~{r.opt.execSeconds >= 60 ? `${(r.opt.execSeconds / 60).toFixed(1)}m` : `${r.opt.execSeconds.toFixed(1)}s`} / ref job
+                  </div>
                 </td>
                 <td style={td}>
                   <div style={{ fontWeight: 700, color: '#10b981' }}>
@@ -697,11 +890,26 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
                   )}
                 </td>
                 <td style={td}>
-                  {r.opt.concernUnitLabel !== '1M tok'
-                    ? `$${r.opt.concernUnitCostUsd.toFixed(2)}`
-                    : `${(r.opt.tokensPerDollar / 1000).toFixed(0)}K tok/$`}
+                  {r.opt.concernUnitLabel !== '1M tok' ? (
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#f8fafc' }}>
+                        ${r.opt.concernUnitCostUsd.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#38bdf8' }}>
+                        ≈ ${r.opt.costPerJobUsd.toFixed(3)}/task · {r.opt.execSeconds >= 60 ? `${(r.opt.execSeconds / 60).toFixed(1)}m` : `${Math.round(r.opt.execSeconds)}s`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#f8fafc' }}>
+                        {(r.opt.tokensPerDollar / 1000).toFixed(0)}K tok/$
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                        ~{r.opt.execSeconds.toFixed(1)}s / task
+                      </div>
+                    </div>
+                  )}
                 </td>
-                <td style={td}>${r.opt.gpu.normalizedHourlyUsd.toFixed(2)}/hr</td>
                 <td style={td}>
                   <span
                     style={{

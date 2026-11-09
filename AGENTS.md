@@ -38,6 +38,7 @@ Consult a specific ADR in `docs/adr/` only when the task depends on that decisio
 - **Local-first, cloud-verifiable.** The default dev path runs without a GPU (mocks, CPU/small models). GPU work must have a path on a local RTX 5070 Ti or temporary cloud compute. Nothing depends on always-on paid infrastructure.
 - **No technology without a requirement.** Do not add Ray, Kubeflow, Istio, Spark, Databricks or similar unless a milestone demonstrates the need. Flyte is authorized specifically for the multi-stage batch/media DAG path alongside Kueue and Kyverno (Two-Path Architecture: SQS + KEDA for low-latency single-hop inference; Flyte + Kueue + Kyverno for multi-stage CPU/GPU pipelines).
 - **Vertical Mermaid diagrams.** Prioritize vertical top-down reading (`flowchart TD`) for Mermaid architecture and workflow diagrams whenever possible.
+- **Clean link typography.** Never use decorative Unicode arrow characters (such as `↗`, `➜`, `➔`, `➡`) when adding hyperlinks in UI components, markdown documentation or reports. Format links cleanly using standard text, semantic styling or subtle underline/dotted borders without noise characters.
 - **Path-agnostic and portable.** Never use machine-specific absolute paths (e.g. `file:///home/...`, `/home/...`, `/Users/...`, `C:\...`) in code, documentation, markdown links, scripts or tests. All internal paths, imports and links must be relative to the repository workspace so anyone cloning the repository can access them.
 
 ## Security and repository boundary

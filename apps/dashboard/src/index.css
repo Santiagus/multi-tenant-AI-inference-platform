@@ -86,16 +86,43 @@ code, pre, .font-mono {
   background: var(--bg-surface-hover);
 }
 
-/* Jobs Status Grid (Optimized for 1200x1920 portrait & single-row view) */
-.jobs-status-grid {
+/* Jobs Status Grid & 1200x1900 KPI Single-Row Grids */
+.jobs-status-grid,
+.kpi-grid-5 {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
-@media (max-width: 768px) {
-  .jobs-status-grid {
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+.kpi-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-container-1200 {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .jobs-status-grid,
+  .kpi-grid-5 {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+  .kpi-grid-4,
+  .kpi-grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 }
+
 
