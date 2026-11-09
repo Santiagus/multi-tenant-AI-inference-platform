@@ -137,6 +137,26 @@ export function App() {
     await loadData();
   };
 
+  const [isTogglingShowcase, setIsTogglingShowcase] = useState(false);
+
+  const handleToggleShowcase = async (action: 'seed' | 'purge') => {
+    setIsTogglingShowcase(true);
+    try {
+      if (action === 'seed') {
+        const res = await apiClient.seedShowcaseData();
+        setDataSource(res.dataSource);
+      } else {
+        const res = await apiClient.purgeShowcaseData();
+        setDataSource(res.dataSource);
+      }
+      await loadData();
+    } catch (err) {
+      console.error('Failed to toggle showcase data mode:', err);
+    } finally {
+      setIsTogglingShowcase(false);
+    }
+  };
+
   const handleSyncPricing = async () => {
     setIsSyncingPricing(true);
     try {
@@ -160,6 +180,8 @@ export function App() {
         onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
         onManualRefresh={loadData}
         isRefreshing={isRefreshing}
+        onToggleShowcase={handleToggleShowcase}
+        isTogglingShowcase={isTogglingShowcase}
       />
 
       <Navigation

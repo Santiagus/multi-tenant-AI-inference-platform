@@ -66,12 +66,12 @@ export class PlatformApiClient {
     return response.json() as Promise<T>;
   }
 
-  async getHealth(): Promise<{ ok: boolean; status: string }> {
+  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock' }> {
     try {
-      const data = await this.request<{ status: string }>('/healthz');
-      return { ok: true, status: data.status || 'healthy' };
+      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock' }>('/healthz');
+      return { ok: true, status: data.status || 'healthy', dataSource: data.dataSource || 'real' };
     } catch {
-      return { ok: false, status: 'unhealthy' };
+      return { ok: false, status: 'unhealthy', dataSource: 'real' };
     }
   }
 
@@ -239,6 +239,7 @@ export class PlatformApiClient {
   async getPricingHistory(options?: {
     provider?: string;
     item_id?: string;
+    hours?: number;
   }): Promise<{
     ok: boolean;
     count: number;
@@ -249,6 +250,7 @@ export class PlatformApiClient {
     const params = new URLSearchParams();
     if (options?.provider) params.set('provider', options.provider);
     if (options?.item_id) params.set('item_id', options.item_id);
+    if (options?.hours) params.set('hours', String(options.hours));
     const qs = params.toString();
     return this.request(`/v1/finops/pricing-history${qs ? `?${qs}` : ''}`);
   }
@@ -279,6 +281,31 @@ export class PlatformApiClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  async getShowcaseStatus(): Promise<{
+    dataSource: 'real' | 'mock';
+    isPopulated: boolean;
+    stats: { jobsCount: number; snapshotsCount: number; auditsCount: number };
+  }> {
+    return this.request('/v1/admin/showcase/status');
+  }
+
+  async seedShowcaseData(): Promise<{
+    ok: boolean;
+    dataSource: 'mock';
+    message: string;
+    stats: { jobsCount: number; snapshotsCount: number; auditsCount: number };
+  }> {
+    return this.request('/v1/admin/showcase/seed', { method: 'POST' });
+  }
+
+  async purgeShowcaseData(): Promise<{
+    ok: boolean;
+    dataSource: 'real';
+    message: string;
+  }> {
+    return this.request('/v1/admin/showcase/purge', { method: 'POST' });
   }
 }
 

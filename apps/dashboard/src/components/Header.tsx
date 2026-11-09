@@ -7,6 +7,8 @@ interface HeaderProps {
   onAutoRefreshToggle: () => void;
   onManualRefresh: () => void;
   isRefreshing: boolean;
+  onToggleShowcase?: (action: 'seed' | 'purge') => Promise<void>;
+  isTogglingShowcase?: boolean;
 }
 
 export function Header({
@@ -18,6 +20,8 @@ export function Header({
   onAutoRefreshToggle,
   onManualRefresh,
   isRefreshing,
+  onToggleShowcase,
+  isTogglingShowcase = false,
 }: HeaderProps) {
   const isMock = dataSource === 'mock';
   return (
@@ -230,48 +234,88 @@ export function Header({
           {apiHealthy ? 'Control Plane Online' : 'API Offline'}
         </div>
 
-        {/* Real vs Mock Data Indicator Badge on Top Right */}
-        <div
-          data-testid="data-source-badge"
-          title={
-            isMock
-              ? 'Injected demonstration dataset for showcase and offline preview'
-              : 'Live production/development data queried from connected APIs and PostgreSQL database'
-          }
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '11px',
-            fontWeight: 700,
-            color: isMock ? '#fbbf24' : '#34d399',
-            backgroundColor: isMock ? 'rgba(245, 158, 11, 0.12)' : 'rgba(16, 185, 129, 0.12)',
-            padding: '5px 10px',
-            borderRadius: '6px',
-            border: `1px solid ${isMock ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)'}`,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span
+        {/* Real vs Mock Data Indicator Badge & On-The-Fly Toggle Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div
+            data-testid="data-source-badge"
+            title={
+              isMock
+                ? 'Injected demonstration dataset for showcase and offline preview'
+                : 'Live production/development data queried from connected APIs and PostgreSQL database'
+            }
             style={{
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              backgroundColor: isMock ? '#f59e0b' : '#10b981',
-              boxShadow: isMock ? '0 0 5px #f59e0b' : '0 0 5px #10b981',
-            }}
-          />
-          <span>{isMock ? 'MOCK / SHOWCASE' : 'REAL DATA'}</span>
-          <span
-            style={{
-              fontSize: '10px',
-              fontWeight: 500,
-              color: isMock ? '#fde68a' : '#a7f3d0',
-              opacity: 0.9,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '11px',
+              fontWeight: 700,
+              color: isMock ? '#fbbf24' : '#34d399',
+              backgroundColor: isMock ? 'rgba(245, 158, 11, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+              padding: '5px 10px',
+              borderRadius: '6px',
+              border: `1px solid ${isMock ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)'}`,
+              whiteSpace: 'nowrap',
             }}
           >
-            {isMock ? '(Demo)' : '(Live DB)'}
-          </span>
+            <span
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                backgroundColor: isMock ? '#f59e0b' : '#10b981',
+                boxShadow: isMock ? '0 0 5px #f59e0b' : '0 0 5px #10b981',
+              }}
+            />
+            <span>{isMock ? 'MOCK / SHOWCASE' : 'REAL DATA'}</span>
+            <span
+              style={{
+                fontSize: '10px',
+                fontWeight: 500,
+                color: isMock ? '#fde68a' : '#a7f3d0',
+                opacity: 0.9,
+              }}
+            >
+              {isMock ? '(Demo)' : '(Live DB)'}
+            </span>
+          </div>
+
+          {onToggleShowcase && (
+            <button
+              onClick={() => onToggleShowcase(isMock ? 'purge' : 'seed')}
+              disabled={isTogglingShowcase || isRefreshing}
+              title={
+                isMock
+                  ? 'Purge showcase demo data and revert dashboard to real data mode'
+                  : 'Populate 30 inference jobs, 688 pricing fluctuation snapshots & audits on the fly'
+              }
+              style={{
+                backgroundColor: isMock ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                color: isMock ? '#fca5a5' : '#38bdf8',
+                border: `1px solid ${isMock ? 'rgba(239, 68, 68, 0.35)' : 'rgba(56, 189, 248, 0.35)'}`,
+                padding: '5px 10px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 600,
+                cursor: isTogglingShowcase || isRefreshing ? 'wait' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>{isMock ? '🗑️' : '✨'}</span>
+              <span>
+                {isTogglingShowcase
+                  ? isMock
+                    ? 'Clearing...'
+                    : 'Populating...'
+                  : isMock
+                    ? 'Clear Showcase'
+                    : 'Populate Showcase'}
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </header>

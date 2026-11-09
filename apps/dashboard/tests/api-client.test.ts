@@ -277,6 +277,15 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
 
       await client.getCloudRecommendations({ model_id: 'meta-llama/Llama-3-8B-Instruct' });
       assert.equal(capturedUrls[4], 'http://test.local/v1/finops/recommend-options');
+
+      await client.getShowcaseStatus();
+      assert.equal(capturedUrls[5], 'http://test.local/v1/admin/showcase/status');
+
+      await client.seedShowcaseData();
+      assert.equal(capturedUrls[6], 'http://test.local/v1/admin/showcase/seed');
+
+      await client.purgeShowcaseData();
+      assert.equal(capturedUrls[7], 'http://test.local/v1/admin/showcase/purge');
     } finally {
       globalThis.fetch = originalFetch;
     }
