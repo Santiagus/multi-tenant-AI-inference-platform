@@ -61,7 +61,13 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     logger: deps.config.NODE_ENV !== 'test',
   });
 
-  app.register(cors);
+  app.register(cors, {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'x-correlation-id', 'Accept'],
+    exposedHeaders: ['x-correlation-id', 'traceparent', 'x-response-time-ms'],
+  });
   app.register(sensible);
 
   // OpenAPI (Swagger) Specification and Interactive UI
@@ -76,8 +82,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
       },
       servers: [
         {
-          url: 'http://localhost:3000',
-          description: 'Local development server',
+          url: '/',
+          description: 'Current environment server (same-origin relative URL)',
         },
       ],
       components: {
