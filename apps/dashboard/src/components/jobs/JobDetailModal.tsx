@@ -15,8 +15,12 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
   const [isRetrying, setIsRetrying] = useState(false);
   if (!isOpen || !job) return null;
 
-  const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED';
-  const canRetry = job.status === 'FAILED' || job.status === 'CANCELLED';
+  const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED' || job.status === 'RETRYING';
+  const canRetry = job.status === 'FAILED' || job.status === 'CANCELLED' || job.status === 'RETRYING';
+
+  const maxRetries = job.max_retries ?? 3;
+  const retriesUsed = job.retry_count ?? 0;
+  const retriesLeft = Math.max(0, maxRetries - retriesUsed);
 
   // Cost and economics calculation
   const inTokens = job.usage?.prompt_tokens ?? 0;
@@ -255,6 +259,31 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
             </div>
           )}
 
+          {/* Status Alert if Retrying */}
+          {job.status === 'RETRYING' && (
+            <div
+              style={{
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                padding: '14px',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <span style={{ fontSize: '18px' }}>🔄</span>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '2px' }}>
+                  Transient Failure — Retry In Progress
+                </div>
+                <div style={{ fontSize: '13px', color: '#fde68a' }}>
+                  Attempt {retriesUsed} of {maxRetries} executed. <strong>{retriesLeft} {retriesLeft === 1 ? 'retry' : 'retries'} left</strong> before job is quarantined to the Dead-Letter Queue (DLQ).
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Error Message if Failed */}
           {job.error && (
             <div
@@ -298,8 +327,24 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
               <strong>Expires:</strong> {job.expires_at ? new Date(job.expires_at).toLocaleString() : 'No TTL'} |{' '}
               <strong>Completed:</strong> {job.completed_at ? new Date(job.completed_at).toLocaleString() : 'In-flight'}
             </div>
-            <div>
-              <strong>Retries:</strong> {job.retry_count} / {job.max_retries ?? 3} allowed
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span>
+                <strong>Retries:</strong> {retriesUsed} / {maxRetries} used
+              </span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  fontWeight: 700,
+                  backgroundColor: retriesLeft === 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                  color: retriesLeft === 0 ? '#f87171' : '#fbbf24',
+                  border: `1px solid ${retriesLeft === 0 ? 'rgba(239, 68, 68, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
+                }}
+              >
+                {retriesLeft} {retriesLeft === 1 ? 'retry' : 'retries'} left
+                {retriesLeft === 0 && ' (Next failure moves to DLQ)'}
+              </span>
             </div>
           </div>
         </div>
@@ -360,7 +405,7 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
                 }}
               >
                 <span>⚡</span>
-                {isRetrying ? 'Re-triggering...' : 'Trigger Manually / Retry'}
+                {isRetrying ? 'Re-triggering...' : job.status === 'RETRYING' ? 'Retry Now (Skip Backoff)' : 'Trigger Manually / Retry'}
               </button>
             )}
           </div>

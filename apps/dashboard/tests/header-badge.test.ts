@@ -34,6 +34,7 @@ describe('Dashboard Data Source Mode & Health API', () => {
           JSON.stringify({
             status: 'ok',
             dataSource: 'mock',
+            inferenceMode: 'real',
             timestamp: new Date().toISOString(),
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -42,6 +43,7 @@ describe('Dashboard Data Source Mode & Health API', () => {
       const health = await apiClient.getHealth();
       assert.equal(health.ok, true);
       assert.equal(health.dataSource, 'mock');
+      assert.equal(health.inferenceMode, 'real');
     } finally {
       globalThis.fetch = originalFetch;
     }

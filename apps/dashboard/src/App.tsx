@@ -22,10 +22,12 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('jobs');
   const [apiHealthy, setApiHealthy] = useState<boolean>(true);
   const [dataSource, setDataSource] = useState<'real' | 'mock'>('real');
+  const [inferenceMode, setInferenceMode] = useState<'mock' | 'real'>('mock');
   const [stage, setStage] = useState<string>('LOCAL');
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isProcessingWorker, setIsProcessingWorker] = useState<boolean>(false);
+  const [workerFeedback, setWorkerFeedback] = useState<string | null>(null);
   const [isSyncingPricing, setIsSyncingPricing] = useState<boolean>(false);
 
   // Core Data
@@ -57,6 +59,9 @@ export function App() {
       setApiHealthy(health.ok);
       if (health.dataSource) {
         setDataSource(health.dataSource);
+      }
+      if (health.inferenceMode) {
+        setInferenceMode(health.inferenceMode);
       }
       if (health.environment) {
         setStage(health.environment);
@@ -115,7 +120,7 @@ export function App() {
     routing_preference: RoutingPreference;
     priority: number;
     max_retries: number;
-    input: { prompt: string };
+    input: { prompt: string; parameters?: Record<string, unknown> };
   }) => {
     await apiClient.submitJob(tenantId, payload);
     await loadData();
@@ -136,13 +141,36 @@ export function App() {
     await loadData();
   };
 
+  const handleToggleInferenceMode = async (mode: 'mock' | 'real') => {
+    try {
+      const res = await apiClient.setInferenceMode(mode);
+      setInferenceMode(res.mode);
+      setWorkerFeedback(`Inference mode updated to ${res.mode.toUpperCase()}.`);
+    } catch (err: any) {
+      console.error('Failed to update inference mode:', err);
+      setWorkerFeedback(`Inference mode switch blocked: ${err?.message || 'Error'}`);
+    } finally {
+      setTimeout(() => setWorkerFeedback(null), 3500);
+    }
+  };
+
   const handleTriggerWorker = async () => {
     setIsProcessingWorker(true);
+    setWorkerFeedback(null);
     try {
-      await apiClient.processNextJob();
+      const res = await apiClient.processNextJob(inferenceMode);
       await loadData();
+      if (res.processed > 0) {
+        setWorkerFeedback(`Processed ${res.processed} queued job via ${inferenceMode.toUpperCase()} inference.`);
+      } else {
+        setWorkerFeedback('Queue is empty (no pending jobs in SQS).');
+      }
+    } catch (err: any) {
+      console.error('Failed to trigger worker process-next:', err);
+      setWorkerFeedback(`Worker process-next failed: ${err?.message || 'Error'}`);
     } finally {
       setIsProcessingWorker(false);
+      setTimeout(() => setWorkerFeedback(null), 4000);
     }
   };
 
@@ -190,6 +218,12 @@ export function App() {
         onTenantChange={setTenantId}
         apiHealthy={apiHealthy}
         dataSource={dataSource}
+        inferenceMode={inferenceMode}
+        onToggleInferenceMode={handleToggleInferenceMode}
+        onProcessNext={handleTriggerWorker}
+        isProcessingWorker={isProcessingWorker}
+        inFlightCount={inFlightCount}
+        workerFeedback={workerFeedback}
         stage={stage}
         autoRefresh={autoRefresh}
         onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
@@ -221,6 +255,9 @@ export function App() {
             onReapExpired={handleReapExpiredJobs}
             onTriggerWorker={handleTriggerWorker}
             isProcessingWorker={isProcessingWorker}
+            inferenceMode={inferenceMode}
+            onToggleInferenceMode={handleToggleInferenceMode}
+            workerFeedback={workerFeedback}
           />
         )}
 

@@ -17,13 +17,16 @@ interface JobsViewProps {
     routing_preference: RoutingPreference;
     priority: number;
     max_retries: number;
-    input: { prompt: string };
+    input: { prompt: string; parameters?: Record<string, unknown> };
   }) => Promise<void>;
   onCancelJob: (jobId: string) => Promise<void>;
   onRetryJob?: (jobId: string) => Promise<void>;
   onReapExpired?: () => Promise<void>;
   onTriggerWorker: () => Promise<void>;
   isProcessingWorker: boolean;
+  inferenceMode?: 'mock' | 'real';
+  onToggleInferenceMode?: (mode: 'mock' | 'real') => Promise<void>;
+  workerFeedback?: string | null;
 }
 
 export const ALL_PLATFORM_PROVIDERS = [
@@ -167,6 +170,9 @@ export function JobsView({
   onReapExpired,
   onTriggerWorker,
   isProcessingWorker,
+  inferenceMode = 'mock',
+  onToggleInferenceMode,
+  workerFeedback = null,
 }: JobsViewProps) {
   const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
@@ -1227,23 +1233,112 @@ export function JobsView({
             </button>
           )}
 
+          {/* Local Mock vs Real Inference Mode Toggle */}
+          <div
+            title="Toggle local worker execution between fast mock (0 VRAM) and real local PyTorch/GPU execution"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: '#1e293b',
+              borderRadius: '8px',
+              padding: '3px',
+              border: '1px solid #334155',
+            }}
+          >
+            <button
+              onClick={() => onToggleInferenceMode?.('mock')}
+              style={{
+                backgroundColor: inferenceMode === 'mock' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
+                color: inferenceMode === 'mock' ? '#a5b4fc' : '#64748b',
+                border: inferenceMode === 'mock' ? '1px solid #6366f1' : '1px solid transparent',
+                borderRadius: '6px',
+                padding: '6px 10px',
+                fontSize: '12px',
+                fontWeight: inferenceMode === 'mock' ? 700 : 500,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>⚡</span>
+              <span>Mock</span>
+            </button>
+            <button
+              onClick={() => onToggleInferenceMode?.('real')}
+              style={{
+                backgroundColor: inferenceMode === 'real' ? 'rgba(239, 68, 68, 0.25)' : 'transparent',
+                color: inferenceMode === 'real' ? '#f87171' : '#64748b',
+                border: inferenceMode === 'real' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
+                borderRadius: '6px',
+                padding: '6px 10px',
+                fontSize: '12px',
+                fontWeight: inferenceMode === 'real' ? 700 : 500,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>🔥</span>
+              <span>Real PyTorch</span>
+            </button>
+          </div>
+
           <button
+            data-testid="jobs-process-next-button"
             onClick={onTriggerWorker}
             disabled={isProcessingWorker}
             style={{
-              backgroundColor: '#1e293b',
+              backgroundColor: 'rgba(56, 189, 248, 0.15)',
               color: '#38bdf8',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-              padding: '8px 14px',
+              border: '1px solid rgba(56, 189, 248, 0.45)',
+              padding: '8px 15px',
               borderRadius: '8px',
               fontSize: '13px',
-              fontWeight: 600,
+              fontWeight: 700,
               cursor: isProcessingWorker ? 'wait' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
             }}
-            title="Triggers background worker to poll and process next queued job from SQS"
+            title="POST /v1/worker/process-next - Triggers background worker to poll and process next queued job from SQS"
           >
-            {isProcessingWorker ? 'Executing Job...' : '⚡ Trigger Worker'}
+            <span>{isProcessingWorker ? '⏳' : '▶'}</span>
+            <span>{isProcessingWorker ? 'Processing...' : 'Process Next (Worker)'}</span>
+            {stats.queued > 0 && (
+              <span
+                style={{
+                  backgroundColor: '#0284c7',
+                  color: '#ffffff',
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  padding: '2px 6px',
+                  borderRadius: '10px',
+                }}
+              >
+                {stats.queued}
+              </span>
+            )}
           </button>
+
+          {workerFeedback && (
+            <span
+              style={{
+                fontSize: '12px',
+                color: workerFeedback.includes('failed') ? '#f87171' : '#38bdf8',
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                border: '1px solid #334155',
+                padding: '6px 12px',
+                borderRadius: '6px',
+              }}
+            >
+              {workerFeedback}
+            </span>
+          )}
 
           <button
             onClick={() => setIsSubmitModalOpen(true)}
@@ -1402,7 +1497,25 @@ export function JobsView({
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
                       <td style={{ padding: '10px 10px' }}>
-                        <StatusBadge status={job.status} size="sm" />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' }}>
+                          <StatusBadge status={job.status} size="sm" />
+                          {job.status === 'RETRYING' && (
+                            <span
+                              style={{
+                                fontSize: '10px',
+                                color: '#fbbf24',
+                                fontWeight: 700,
+                                backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={`${job.retry_count} of ${job.max_retries ?? 3} retries used`}
+                            >
+                              {Math.max(0, (job.max_retries ?? 3) - job.retry_count)} left
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontSize: '12px' }}>
                         <button
@@ -1524,14 +1637,14 @@ export function JobsView({
                         style={{ padding: '10px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {job.status === 'FAILED' && onRetryJob ? (
+                        {(job.status === 'FAILED' || job.status === 'RETRYING') && onRetryJob ? (
                           <button
                             onClick={async () => {
                               await onRetryJob(job.job_id);
                               onRefresh();
                             }}
                             style={{
-                              backgroundColor: '#4f46e5',
+                              backgroundColor: job.status === 'RETRYING' ? '#d97706' : '#4f46e5',
                               color: '#ffffff',
                               border: 'none',
                               padding: '4px 8px',
@@ -1539,12 +1652,16 @@ export function JobsView({
                               fontSize: '11px',
                               fontWeight: 600,
                               cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
                             }}
-                            title="Re-enqueue and retry this failed job"
+                            title={job.status === 'RETRYING' ? 'Force immediate retry without waiting for backoff timer' : 'Re-enqueue and retry this failed job'}
                           >
-                            ⚡ Retry
+                            <span>⚡</span>
+                            <span>{job.status === 'RETRYING' ? 'Retry Now' : 'Retry'}</span>
                           </button>
-                        ) : (job.status === 'QUEUED' || job.status === 'PROCESSING') ? (
+                        ) : (job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED') ? (
                           <button
                             onClick={async () => {
                               await onCancelJob(job.job_id);

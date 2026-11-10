@@ -10,19 +10,22 @@ interface SubmitJobModalProps {
     routing_preference: RoutingPreference;
     priority: number;
     max_retries: number;
-    input: { prompt: string };
+    input: {
+      prompt: string;
+      parameters?: Record<string, unknown>;
+    };
   }) => Promise<void>;
 }
 
 const POPULAR_MODELS = [
-  { id: 'meta-llama/Llama-3-8B-Instruct', label: 'Llama 3 8B Instruct (Text / General)', purpose: 'text_to_text' },
-  { id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', label: 'TinyLlama 1.1B Chat (Low Latency)', purpose: 'text_to_text' },
+  { id: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', label: 'TinyLlama 1.1B Chat (Cached Local · Real Weights)', purpose: 'text_to_text' },
+  { id: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen 2.5 7B Instruct (Cached Local · Real 7B LLM)', purpose: 'text_to_text' },
+  { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', label: 'DeepSeek-R1 Distill Qwen 7B (Cached Local · Reasoning)', purpose: 'code_reasoning' },
+  { id: 'meta-llama/Llama-3-8B-Instruct', label: 'Llama 3 8B Instruct (Reference / Gated)', purpose: 'text_to_text' },
+  { id: 'stabilityai/sd-turbo', label: 'SD-Turbo (Cached Local · Fast Image Gen)', purpose: 'text_to_image' },
+  { id: 'magespace/FLUX.1-schnell-bnb-nf4', label: 'FLUX.1 schnell NF4 (Cached Local · 12B)', purpose: 'text_to_image' },
+  { id: 'openai/clip-vit-large-patch14', label: 'CLIP ViT-Large-Patch14 (Cached Local · Multimodal)', purpose: 'media_photo' },
   { id: 'mistralai/Mistral-7B-Instruct-v0.2', label: 'Mistral 7B Instruct v0.2 (Text)', purpose: 'text_to_text' },
-  { id: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek-R1 Distill 70B (Code & Reasoning)', purpose: 'code_reasoning' },
-  { id: 'runwayml/stable-diffusion-v1-5', label: 'Stable Diffusion v1.5 (Image Gen)', purpose: 'text_to_image' },
-  { id: 'stabilityai/stable-diffusion-xl-base-1.0', label: 'SDXL Base 1.0 (High-Res Image)', purpose: 'text_to_image' },
-  { id: 'THUDM/CogVideoX-5b', label: 'CogVideoX 5B (Text-to-Video)', purpose: 'text_to_video' },
-  { id: 'openai/whisper-large-v3', label: 'Whisper Large v3 (Audio Speech-to-Text)', purpose: 'speech_to_text' },
   { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (AWS Bedrock / Proprietary)', purpose: 'text_to_text' },
 ];
 
@@ -30,8 +33,9 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
   const [purposeFilter, setPurposeFilter] = useState<string>('all');
   const [modelId, setModelId] = useState(POPULAR_MODELS[0].id);
   const [customModel, setCustomModel] = useState('');
-  const [prompt, setPrompt] = useState('Explain how multi-tenant AI inference routing protects gross margin.');
+  const [prompt, setPrompt] = useState('What are the most popular dishes in Spain?');
   const [routingPreference, setRoutingPreference] = useState<RoutingPreference>('auto');
+  const [useProductionWeights, setUseProductionWeights] = useState<boolean>(true);
   const [priority, setPriority] = useState(5);
   const [maxRetries, setMaxRetries] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,7 +99,10 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
         routing_preference: routingPreference,
         priority,
         max_retries: maxRetries,
-        input: { prompt },
+        input: {
+          prompt,
+          parameters: useProductionWeights ? { weights: 'production', max_new_tokens: 128 } : undefined,
+        },
       });
       onClose();
     } catch (err: any) {
@@ -389,6 +396,63 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
             />
           </div>
 
+          {/* Quick Inference Mode Selector & Routing Preference */}
+          <div style={{ marginBottom: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <label style={{ fontSize: '13px', color: '#94a3b8', fontWeight: 600 }}>
+                Local Execution Mode Shortcut:
+              </label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoutingPreference('mock');
+                    setSelectedOptionId(null);
+                  }}
+                  style={{
+                    backgroundColor: routingPreference === 'mock' ? 'rgba(99, 102, 241, 0.35)' : '#1e293b',
+                    color: routingPreference === 'mock' ? '#a5b4fc' : '#94a3b8',
+                    border: `1px solid ${routingPreference === 'mock' ? '#6366f1' : '#334155'}`,
+                    padding: '3px 9px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>⚡</span>
+                  <span>Mock (Instant 0 VRAM)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoutingPreference('local/gpu');
+                    setSelectedOptionId(null);
+                  }}
+                  style={{
+                    backgroundColor: routingPreference === 'local/gpu' || routingPreference === 'local_first' ? 'rgba(239, 68, 68, 0.25)' : '#1e293b',
+                    color: routingPreference === 'local/gpu' || routingPreference === 'local_first' ? '#f87171' : '#94a3b8',
+                    border: `1px solid ${routingPreference === 'local/gpu' || routingPreference === 'local_first' ? 'rgba(239, 68, 68, 0.5)' : '#334155'}`,
+                    padding: '3px 9px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span>🔥</span>
+                  <span>Real Local (PyTorch / GPU)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* Routing Preference & Priority */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div>
@@ -471,6 +535,41 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
                 </select>
               </div>
             </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: '14px',
+              padding: '10px 14px',
+              backgroundColor: useProductionWeights ? 'rgba(99, 102, 241, 0.12)' : '#1e293b',
+              border: `1px solid ${useProductionWeights ? '#6366f1' : '#334155'}`,
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onClick={() => setUseProductionWeights(!useProductionWeights)}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🔥 Pretrained Model Checkpoint</span>
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '4px', backgroundColor: useProductionWeights ? '#4338ca' : '#475569', color: '#e0e7ff' }}>
+                  {useProductionWeights ? 'Real Weights Active' : 'Reference / Synthetic'}
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                Loads actual Hugging Face model weights on GPU (e.g. TinyLlama, Qwen) for genuine autoregressive generation.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={useProductionWeights}
+              onChange={(e) => setUseProductionWeights(e.target.checked)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ accentColor: '#6366f1', width: '18px', height: '18px', cursor: 'pointer' }}
+            />
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>

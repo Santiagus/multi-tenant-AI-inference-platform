@@ -137,10 +137,44 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
     try {
       const client = new PlatformApiClient('http://test.local');
       await client.cancelJob('tenant-default', 'job-1');
-      await client.processNextJob();
+      await client.processNextJob('mock');
 
       assert.equal(calledUrls[0], 'http://test.local/v1/jobs/job-1/cancel');
       assert.equal(calledUrls[1], 'http://test.local/v1/worker/process-next');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('getInferenceMode and setInferenceMode send expected requests', async () => {
+    const originalFetch = globalThis.fetch;
+    const captured: Array<{ url: string; method: string; body?: string }> = [];
+
+    globalThis.fetch = async (url: any, init?: RequestInit) => {
+      captured.push({
+        url: String(url),
+        method: init?.method || 'GET',
+        body: init?.body ? String(init.body) : undefined,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, mode: 'real', message: 'Set' }),
+      } as Response;
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+      const getRes = await client.getInferenceMode();
+      assert.equal(getRes.mode, 'real');
+      assert.equal(captured[0].url, 'http://test.local/v1/worker/inference-mode');
+      assert.equal(captured[0].method, 'GET');
+
+      const setRes = await client.setInferenceMode('real');
+      assert.equal(setRes.ok, true);
+      assert.equal(captured[1].url, 'http://test.local/v1/worker/inference-mode');
+      assert.equal(captured[1].method, 'POST');
+      assert.ok(captured[1].body?.includes('"mode":"real"'));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -230,6 +264,34 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
           assert.equal(err.name, 'ApiError');
           assert.equal(err.status, 400);
           assert.equal(err.message, 'Validation failed on prompt');
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('ApiError handles non-JSON plain text or HTML error bodies without stream already read error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      return new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/html' },
+      });
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+      await assert.rejects(
+        async () => {
+          await client.submitJob('tenant-default', { model_id: 'test' });
+        },
+        (err: any) => {
+          assert.equal(err.name, 'ApiError');
+          assert.equal(err.status, 502);
+          assert.ok(err.message.includes('502 Bad Gateway'));
           return true;
         }
       );

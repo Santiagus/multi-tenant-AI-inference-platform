@@ -3,6 +3,12 @@ interface HeaderProps {
   onTenantChange: (tenant: string) => void;
   apiHealthy: boolean;
   dataSource?: 'real' | 'mock';
+  inferenceMode?: 'mock' | 'real';
+  onToggleInferenceMode?: (mode: 'mock' | 'real') => Promise<void>;
+  onProcessNext?: () => Promise<void>;
+  isProcessingWorker?: boolean;
+  inFlightCount?: number;
+  workerFeedback?: string | null;
   stage?: string;
   autoRefresh: boolean;
   onAutoRefreshToggle: () => void;
@@ -64,6 +70,12 @@ export function Header({
   onTenantChange,
   apiHealthy: _apiHealthy,
   dataSource = 'real',
+  inferenceMode = 'mock',
+  onToggleInferenceMode,
+  onProcessNext,
+  isProcessingWorker = false,
+  inFlightCount = 0,
+  workerFeedback = null,
   stage = 'LOCAL',
   autoRefresh,
   onAutoRefreshToggle,
@@ -290,6 +302,119 @@ export function Header({
               {isMock ? '(Demo)' : '(Live DB)'}
             </span>
           </div>
+
+          {/* Local Mock vs Real Inference Mode Toggle */}
+          <div
+            data-testid="inference-mode-toggle"
+            title="Toggle local worker execution: Mock (instant, synthetic telemetry) vs Real (PyTorch / NVIDIA RTX 5070 Ti / CPU)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: '#1e293b',
+              borderRadius: '6px',
+              padding: '2px',
+              border: '1px solid #334155',
+            }}
+          >
+            <button
+              onClick={() => onToggleInferenceMode?.('mock')}
+              style={{
+                backgroundColor: inferenceMode === 'mock' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
+                color: inferenceMode === 'mock' ? '#a5b4fc' : '#64748b',
+                border: inferenceMode === 'mock' ? '1px solid #6366f1' : '1px solid transparent',
+                borderRadius: '4px',
+                padding: '4px 9px',
+                fontSize: '11px',
+                fontWeight: inferenceMode === 'mock' ? 700 : 500,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>⚡</span>
+              <span>Mock</span>
+            </button>
+            <button
+              onClick={() => onToggleInferenceMode?.('real')}
+              style={{
+                backgroundColor: inferenceMode === 'real' ? 'rgba(239, 68, 68, 0.25)' : 'transparent',
+                color: inferenceMode === 'real' ? '#f87171' : '#64748b',
+                border: inferenceMode === 'real' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
+                borderRadius: '4px',
+                padding: '4px 9px',
+                fontSize: '11px',
+                fontWeight: inferenceMode === 'real' ? 700 : 500,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>🔥</span>
+              <span>Real PyTorch</span>
+            </button>
+          </div>
+
+          {/* Process Next (Worker Trigger) Button */}
+          {onProcessNext && (
+            <button
+              data-testid="header-process-next"
+              onClick={onProcessNext}
+              disabled={isProcessingWorker}
+              title="POST /v1/worker/process-next - Triggers worker tick to dequeue and process next queued job from SQS (no terminal / Swagger required)"
+              style={{
+                backgroundColor: 'rgba(56, 189, 248, 0.16)',
+                color: '#38bdf8',
+                border: '1px solid rgba(56, 189, 248, 0.45)',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 700,
+                cursor: isProcessingWorker ? 'wait' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>{isProcessingWorker ? '⏳' : '▶'}</span>
+              <span>{isProcessingWorker ? 'Processing...' : 'Process Next'}</span>
+              {inFlightCount !== undefined && inFlightCount > 0 && (
+                <span
+                  style={{
+                    backgroundColor: '#0284c7',
+                    color: '#ffffff',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    padding: '1px 5px',
+                    borderRadius: '10px',
+                  }}
+                >
+                  {inFlightCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {workerFeedback && (
+            <span
+              style={{
+                fontSize: '11px',
+                color: workerFeedback.includes('failed') ? '#f87171' : '#38bdf8',
+                backgroundColor: 'rgba(15, 23, 42, 0.8)',
+                border: '1px solid #334155',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {workerFeedback}
+            </span>
+          )}
         </div>
       </div>
 

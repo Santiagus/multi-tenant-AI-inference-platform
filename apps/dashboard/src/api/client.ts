@@ -48,17 +48,54 @@ export class PlatformApiClient {
 
     if (!response.ok) {
       let errorData: unknown;
-      try {
-        errorData = await response.json();
-      } catch {
-        errorData = await response.text();
+      if (typeof response.clone === 'function') {
+        try {
+          const cloned = response.clone();
+          errorData = await cloned.json();
+        } catch {
+          try {
+            errorData = await response.text();
+          } catch {
+            errorData = response.statusText;
+          }
+        }
+      } else {
+        try {
+          if (typeof response.json === 'function') {
+            errorData = await response.json();
+          } else if (typeof response.text === 'function') {
+            const raw = await response.text();
+            try {
+              errorData = JSON.parse(raw);
+            } catch {
+              errorData = raw;
+            }
+          }
+        } catch {
+          if (typeof response.text === 'function') {
+            try {
+              errorData = await response.text();
+            } catch {
+              errorData = response.statusText;
+            }
+          }
+        }
       }
+
       const message =
         typeof errorData === 'object' && errorData !== null && 'title' in errorData
           ? (errorData as { title: string }).title
           : typeof errorData === 'object' && errorData !== null && 'message' in errorData
             ? (errorData as { message: string }).message
-            : `API Error ${response.status}: ${response.statusText}`;
+            : typeof errorData === 'object' && errorData !== null && 'error' in errorData
+              ? typeof (errorData as any).error === 'string'
+                ? (errorData as any).error
+                : typeof (errorData as any).error?.message === 'string'
+                  ? (errorData as any).error.message
+                  : `API Error ${response.status}: ${response.statusText}`
+              : typeof errorData === 'string' && errorData.trim().length > 0
+                ? errorData
+                : `API Error ${response.status}: ${response.statusText}`;
 
       throw new ApiError(response.status, message, errorData);
     }
@@ -66,17 +103,18 @@ export class PlatformApiClient {
     return response.json() as Promise<T>;
   }
 
-  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock'; environment: string }> {
+  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock'; environment: string; inferenceMode: 'mock' | 'real' }> {
     try {
-      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock'; environment?: string }>('/healthz');
+      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock'; environment?: string; inferenceMode?: 'mock' | 'real' }>('/healthz');
       return {
         ok: true,
         status: data.status || 'healthy',
         dataSource: data.dataSource || 'real',
         environment: data.environment || 'LOCAL',
+        inferenceMode: data.inferenceMode || 'mock',
       };
     } catch {
-      return { ok: false, status: 'unhealthy', dataSource: 'real', environment: 'LOCAL' };
+      return { ok: false, status: 'unhealthy', dataSource: 'real', environment: 'LOCAL', inferenceMode: 'mock' };
     }
   }
 
@@ -150,10 +188,30 @@ export class PlatformApiClient {
     return this.request<{ messages: DlqMessage[] }>('/v1/jobs/dlq', {}, tenantId);
   }
 
-  async processNextJob(): Promise<{ processed: number }> {
-    return this.request<{ processed: number }>('/v1/worker/process-next', {
-      method: 'POST',
-    });
+  async getInferenceMode(): Promise<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }> {
+    return this.request<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }>(
+      '/v1/worker/inference-mode'
+    );
+  }
+
+  async setInferenceMode(mode: 'mock' | 'real'): Promise<{ ok: boolean; mode: 'mock' | 'real'; message: string }> {
+    return this.request<{ ok: boolean; mode: 'mock' | 'real'; message: string }>(
+      '/v1/worker/inference-mode',
+      {
+        method: 'POST',
+        body: JSON.stringify({ mode }),
+      }
+    );
+  }
+
+  async processNextJob(mode?: 'mock' | 'real', count?: number): Promise<{ processed: number; inferenceMode?: 'mock' | 'real'; outcomes?: unknown[] }> {
+    return this.request<{ processed: number; inferenceMode?: 'mock' | 'real'; outcomes?: unknown[] }>(
+      '/v1/worker/process-next',
+      {
+        method: 'POST',
+        body: JSON.stringify({ mode, count }),
+      }
+    );
   }
 
   async getProviders(): Promise<ProviderCatalogResponse> {
