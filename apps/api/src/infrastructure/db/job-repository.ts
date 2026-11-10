@@ -15,6 +15,7 @@ export interface UpdateJobOptions {
   expectedCurrentStatuses?: JobStatusType[];
   progress?: JobProgress | null;
   progressPct?: number | null;
+  inputPayload?: Record<string, unknown> | null;
   outputPayload?: Record<string, unknown> | null;
   outputUri?: string | null;
   errorCode?: string | null;
@@ -190,6 +191,10 @@ export class PostgresJobRepository implements IJobRepository {
     if (updates.progressPct !== undefined) {
       setClauses.push(`progress_pct = $${paramIndex++}`);
       values.push(updates.progressPct);
+    }
+    if (updates.inputPayload !== undefined) {
+      setClauses.push(`input_payload = $${paramIndex++}`);
+      values.push(updates.inputPayload ? JSON.stringify(updates.inputPayload) : null);
     }
     if (updates.outputPayload !== undefined) {
       setClauses.push(`output_payload = $${paramIndex++}`);
@@ -391,6 +396,7 @@ export class InMemoryJobRepository implements IJobRepository {
     if (updates.status !== undefined) job.status = updates.status;
     if (updates.progress !== undefined) job.progress = updates.progress;
     if (updates.progressPct !== undefined) job.progressPct = updates.progressPct;
+    if (updates.inputPayload !== undefined) job.inputPayload = updates.inputPayload;
     if (updates.outputPayload !== undefined) job.outputPayload = updates.outputPayload;
     if (updates.outputUri !== undefined) job.outputUri = updates.outputUri;
     if (updates.errorCode !== undefined) job.errorCode = updates.errorCode;

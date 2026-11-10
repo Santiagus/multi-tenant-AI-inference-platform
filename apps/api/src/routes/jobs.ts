@@ -319,6 +319,15 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
             provider: job.provider,
             retry_count: job.retryCount,
             max_retries: job.maxRetries,
+            retries_used:
+              ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+              ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+              job.retryCount,
+            is_manual_retry: Boolean(
+              ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.manually_retried as boolean | undefined) ??
+              ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.manual_retry as boolean | undefined) ??
+              job.progress?.message?.includes('Manually re-triggered')
+            ),
             created_at: job.createdAt.toISOString(),
             started_at: job.startedAt?.toISOString() ?? null,
             completed_at: job.completedAt?.toISOString() ?? null,
@@ -542,6 +551,15 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       provider: job.provider,
       retry_count: job.retryCount,
       max_retries: job.maxRetries,
+      retries_used:
+        ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+        ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+        job.retryCount,
+      is_manual_retry: Boolean(
+        ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.manually_retried as boolean | undefined) ??
+        ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.manual_retry as boolean | undefined) ??
+        job.progress?.message?.includes('Manually re-triggered')
+      ),
       created_at: job.createdAt.toISOString(),
       started_at: job.startedAt?.toISOString() ?? null,
       completed_at: job.completedAt?.toISOString() ?? null,

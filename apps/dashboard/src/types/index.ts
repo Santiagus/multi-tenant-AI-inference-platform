@@ -59,6 +59,8 @@ export interface JobItem {
   hardware?: string;
   retry_count: number;
   max_retries?: number;
+  retries_used?: number;
+  is_manual_retry?: boolean;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
