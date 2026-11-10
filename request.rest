@@ -1664,6 +1664,25 @@ GET {{baseUrl}}/v1/jobs/{{mockJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 13.17 Inspect Local Inference Execution Mode (Mock vs Real PyTorch/GPU)
+GET {{baseUrl}}/v1/worker/inference-mode
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 13.18 Toggle Local Inference Execution Mode
+POST {{baseUrl}}/v1/worker/inference-mode
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "mode": "mock"
+}
+
 ### ==============================================================================
 ### USE CASE 14: Security Boundary, ABAC, Tenant Isolation & Rate Limiting (M09)
 ### Zero-trust authentication, scoped permissions, rate limits, and audit logs

@@ -586,6 +586,18 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     description: 'Retrieves messages that exhausted maximum retry attempts and were routed to the Dead-Letter Queue.',
   },
 
+  'GET /v1/worker/inference-mode': {
+    tags: ['Jobs'],
+    summary: 'Get Inference Execution Mode',
+    description: 'Returns whether local inference is in mock (synthetic, 0 VRAM) or real (PyTorch / GPU) mode.',
+  },
+
+  'POST /v1/worker/inference-mode': {
+    tags: ['Jobs'],
+    summary: 'Set Inference Execution Mode',
+    description: 'Toggles between mock and real local inference execution.',
+  },
+
   'POST /v1/worker/process-next': {
     tags: ['Jobs'],
     summary: 'Process Next Queued Job (Worker Trigger)',

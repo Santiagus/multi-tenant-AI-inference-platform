@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { DatabasePool } from '../infrastructure/db/pool.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import type { IQueueClient } from '../infrastructure/queue/queue-client.js';
+import { getInferenceExecutionMode } from '../application/job-worker.js';
 
 export interface HealthRouteOptions {
   db: { isHealthy: () => Promise<boolean> };
@@ -44,9 +45,11 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fasti
     async (_req, reply) => {
       const dataSource = getDataSource();
       const environment = getStage();
+      const inferenceMode = getInferenceExecutionMode();
       return reply.status(200).send({
         status: 'ok',
         dataSource,
+        inferenceMode,
         environment,
         timestamp: new Date().toISOString(),
       });
@@ -73,10 +76,12 @@ export const healthRoutes: FastifyPluginAsync<HealthRouteOptions> = async (fasti
       const statusCode = isReady ? 200 : 503;
       const dataSource = getDataSource();
       const environment = getStage();
+      const inferenceMode = getInferenceExecutionMode();
 
       return reply.status(statusCode).send({
         status: isReady ? 'ready' : 'unhealthy',
         dataSource,
+        inferenceMode,
         environment,
         timestamp: new Date().toISOString(),
         components: {

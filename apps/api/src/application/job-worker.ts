@@ -378,9 +378,35 @@ export function isMockInferenceEnabled(): boolean {
   return true;
 }
 
+let runtimeInferenceModeOverride: 'mock' | 'real' | null = null;
+
+export function getInferenceExecutionMode(): 'mock' | 'real' {
+  if (runtimeInferenceModeOverride !== null) {
+    return runtimeInferenceModeOverride;
+  }
+  return shouldRunRealInference() ? 'real' : 'mock';
+}
+
+export function setInferenceExecutionMode(mode: 'mock' | 'real'): void {
+  if (mode === 'real' && isTestEnvironment()) {
+    throw new Error('Real inference is strictly forbidden during testing. Mock inference must remain active.');
+  }
+  runtimeInferenceModeOverride = mode;
+}
+
+export function resetInferenceExecutionMode(): void {
+  runtimeInferenceModeOverride = null;
+}
+
 export function shouldRunRealInference(): boolean {
   // Real inference is strictly forbidden in test execution
   if (isTestEnvironment()) {
+    return false;
+  }
+  if (runtimeInferenceModeOverride === 'real') {
+    return true;
+  }
+  if (runtimeInferenceModeOverride === 'mock') {
     return false;
   }
   if (process.env.FORCE_REAL_INFERENCE === 'true' || process.env.FORCE_REAL_INFERENCE === '1') {
@@ -722,6 +748,9 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
     if (pref === 'local/cpu') {
       updatedParams.device = 'cpu';
       updatedParams.provider = 'local_pytorch';
+      if (!updatedParams.weights && getInferenceExecutionMode() === 'real') {
+        updatedParams.weights = 'production';
+      }
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
@@ -734,6 +763,9 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
     if (pref === 'local/gpu') {
       updatedParams.device = 'cuda';
       updatedParams.provider = 'local_pytorch';
+      if (!updatedParams.weights && getInferenceExecutionMode() === 'real') {
+        updatedParams.weights = 'production';
+      }
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
@@ -804,7 +836,23 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       );
     }
 
-    // 6. Fast mock executor fallback for unspecified 'auto' jobs
+    // 6. Real inference dispatch for 'auto' jobs if real inference mode is active
+    if (getInferenceExecutionMode() === 'real' && job.modelId !== 'mock') {
+      if (!updatedParams.provider) {
+        updatedParams.provider = 'local_pytorch';
+      }
+      if (!updatedParams.weights) {
+        updatedParams.weights = 'production';
+      }
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled,
+        onProgress
+      );
+    }
+
+    // Fast mock executor fallback for unspecified 'auto' jobs
     return this.mockExecutor.execute(job, resolvedInput, checkCancelled, onProgress);
   }
 }

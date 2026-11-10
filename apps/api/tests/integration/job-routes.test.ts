@@ -317,6 +317,36 @@ describe('Job Routes & Lifecycle Integration', () => {
     await app.close();
   });
 
+  test('GET and POST /v1/worker/inference-mode inspects and toggles local execution mode', async () => {
+    const { app } = createTestApp();
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: '/v1/worker/inference-mode',
+    });
+    assert.equal(getRes.statusCode, 200);
+    const getBody = JSON.parse(getRes.body);
+    assert.ok(getBody.mode === 'mock' || getBody.mode === 'real');
+    assert.equal(getBody.isTest, true);
+
+    const postMock = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/inference-mode',
+      payload: { mode: 'mock' },
+    });
+    assert.equal(postMock.statusCode, 200);
+    assert.equal(JSON.parse(postMock.body).mode, 'mock');
+
+    const postInvalid = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/inference-mode',
+      payload: { mode: 'invalid-mode' },
+    });
+    assert.equal(postInvalid.statusCode, 400);
+
+    await app.close();
+  });
+
   test('POST /v1/jobs accepts instant mock, real CPU, real GPU, and cloud routing preferences', async () => {
     const { app, jobRepo } = createTestApp();
 

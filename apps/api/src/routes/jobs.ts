@@ -3,7 +3,13 @@ import path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { JobService } from '../application/job-service.js';
-import { type JobWorker, getJobOutputModality } from '../application/job-worker.js';
+import {
+  type JobWorker,
+  getJobOutputModality,
+  getInferenceExecutionMode,
+  setInferenceExecutionMode,
+  isTestEnvironment,
+} from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ForbiddenError, ValidationError } from '../domain/errors.js';
@@ -376,8 +382,64 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     }
   );
 
+  // GET /v1/worker/inference-mode - Get current local inference execution mode (mock vs real)
+  fastify.get(
+    '/v1/worker/inference-mode',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Get Inference Execution Mode',
+        description: 'Returns whether local inference is in mock (synthetic, 0 VRAM) or real (PyTorch / GPU) mode.',
+      },
+    },
+    async (_req, reply) => {
+      const mode = getInferenceExecutionMode();
+      return reply.status(200).send({
+        mode,
+        isTest: isTestEnvironment(),
+        description:
+          mode === 'real'
+            ? 'Real local inference active (executes Python/PyTorch subprocess on host GPU/CPU).'
+            : 'Mock inference active (instant simulated responses with synthetic telemetry).',
+      });
+    }
+  );
+
+  // POST /v1/worker/inference-mode - Set local inference execution mode (mock vs real)
+  fastify.post<{ Body?: { mode?: 'mock' | 'real' } }>(
+    '/v1/worker/inference-mode',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Set Inference Execution Mode',
+        description: 'Toggles between mock and real local inference execution.',
+      },
+    },
+    async (req, reply) => {
+      const targetMode = req.body?.mode;
+      if (targetMode !== 'mock' && targetMode !== 'real') {
+        return reply.status(400).send({
+          error: 'Invalid inference mode. Must be "mock" or "real".',
+        });
+      }
+
+      try {
+        setInferenceExecutionMode(targetMode);
+        return reply.status(200).send({
+          ok: true,
+          mode: getInferenceExecutionMode(),
+          message: `Local inference execution mode set to ${targetMode}.`,
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          error: err.message || 'Failed to set inference execution mode',
+        });
+      }
+    }
+  );
+
   // POST /v1/worker/process-next - Deterministically process next queued job(s)
-  fastify.post(
+  fastify.post<{ Body?: { mode?: 'mock' | 'real'; count?: number } }>(
     '/v1/worker/process-next',
     {
       schema: {
@@ -386,10 +448,19 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         description: 'Deterministically triggers execution of the next queued job from ElasticMQ / SQS.',
       },
     },
-    async (_req, reply) => {
-      const outcomes = await jobWorker.processNextBatch(1);
+    async (req, reply) => {
+      if (req.body?.mode && (req.body.mode === 'mock' || req.body.mode === 'real')) {
+        try {
+          setInferenceExecutionMode(req.body.mode);
+        } catch {
+          // Keep current if prohibited in test environment
+        }
+      }
+      const count = Math.max(1, Math.min(Number(req.body?.count || 1), 10));
+      const outcomes = await jobWorker.processNextBatch(count);
       return reply.status(200).send({
         processed: outcomes.length,
+        inferenceMode: getInferenceExecutionMode(),
         outcomes,
       });
     }

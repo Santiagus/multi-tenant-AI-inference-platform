@@ -29,7 +29,7 @@ const PUBLIC_PATH_PREFIXES = [
   '/documentation',
   '/swagger',
   '/redoc',
-  '/v1/worker/process-next',
+  '/v1/worker',
   '/v1/admin/showcase',
 ];
 
