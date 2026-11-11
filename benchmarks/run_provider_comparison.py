@@ -202,9 +202,10 @@ def submit_and_await_job(
         )
 
     result = job.get("result") or {}
-    metadata = {}
+    metadata: dict[str, Any] = {}
     if isinstance(result, dict):
-        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else result
+        raw_meta = result.get("metadata")
+        metadata = raw_meta if isinstance(raw_meta, dict) else result
 
     inference_ms = float(job.get("duration_ms") or metadata.get("compute_duration_ms") or e2e_ms)
     queue_wait = max(0.0, e2e_ms - inference_ms)
@@ -259,16 +260,16 @@ def probe_provider_api(
         if not estimate_if_no_adapter:
             return []
         # Estimated fallback so FinOps panels still get a comparable row.
-        samples = simulate_provider_samples(
+        estimated = simulate_provider_samples(
             profile, prompt=prompt, max_new_tokens=max_new_tokens, load_concurrency=load_concurrency
         )
-        for s in samples:
+        for s in estimated:
             s.evidence = "estimated"
             s.notes = (
                 "No live worker adapter registered; estimated from characteristic FinOps profile "
                 "(not a measured control-plane run)."
             )
-        return samples
+        return estimated
 
     samples: list[ProbeSample] = []
     # Cold then warm sequential on the same provider.
