@@ -117,7 +117,7 @@ const ALL_PROVIDER_META: Record<
   { hardwareDesc: string; badgeColor: string; defaultCostMicrocents: number; maxConcurrency: number }
 > = {
   local_pytorch: {
-    hardwareDesc: 'Local NVIDIA GeForce RTX 5070 Ti (16GB GDDR7)',
+    hardwareDesc: 'Local CUDA / CPU (detected at runtime)',
     badgeColor: '#10b981',
     defaultCostMicrocents: 0,
     maxConcurrency: 4,

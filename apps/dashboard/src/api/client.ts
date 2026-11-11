@@ -188,6 +188,13 @@ export class PlatformApiClient {
     return this.request<{ messages: DlqMessage[] }>('/v1/jobs/dlq', {}, tenantId);
   }
 
+  async discardDlqMessage(
+    tenantId: string,
+    messageId: string
+  ): Promise<{ ok: boolean; message_id: string; job_id: string; tenant_id: string }> {
+    return this.request(`/v1/jobs/dlq/${encodeURIComponent(messageId)}`, { method: 'DELETE' }, tenantId);
+  }
+
   async getInferenceMode(): Promise<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }> {
     return this.request<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }>(
       '/v1/worker/inference-mode'
@@ -424,6 +431,15 @@ export class PlatformApiClient {
     message: string;
   }> {
     return this.request('/v1/admin/showcase/purge', { method: 'POST' });
+  }
+
+  async purgeTenantData(tenantId: string): Promise<{
+    ok: boolean;
+    tenantId: string;
+    deletedCount: number;
+    message: string;
+  }> {
+    return this.request(`/v1/admin/tenants/${encodeURIComponent(tenantId)}/purge`, { method: 'POST' });
   }
 }
 

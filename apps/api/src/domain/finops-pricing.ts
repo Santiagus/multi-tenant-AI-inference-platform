@@ -207,11 +207,11 @@ export function computeModelCloudRecommendations(params: {
       const localTokSec = 105;
       const execMs = Math.round((maxNewTokens / localTokSec) * 1000 + 40);
       options.push({
-        id: 'local-rtx-5070ti',
+        id: 'local-pytorch',
         category: 'cheapest',
         provider: 'local_pytorch',
-        displayName: 'Local PyTorch (RTX 5070 Ti)',
-        hardwareOrExecution: 'NVIDIA GeForce RTX 5070 Ti (16GB)',
+        displayName: 'Local PyTorch',
+        hardwareOrExecution: 'Local CUDA / CPU',
         vramGb: 16,
         pricingModel: 'on_demand',
         hourlyRateUsd: 0.0,
@@ -221,7 +221,7 @@ export function computeModelCloudRecommendations(params: {
         tokensPerSec: localTokSec,
         obtainabilityLabel: 'High',
         interruptionRiskTier: 'guaranteed',
-        finopsInsight: 'Zero cloud cost, zero egress, sub-second latency on dedicated RTX 5070 Ti.',
+        finopsInsight: 'Zero cloud cost, zero egress, sub-second latency on local PyTorch worker.',
         routingPreference: 'local_first',
         coldStartEstimatedMs: 0,
       });
@@ -387,8 +387,8 @@ export function computeModelCloudRecommendations(params: {
   let recommended = balanced;
   if (h100Opt?.isPowerfulGpuFastExecutionWin) {
     recommended = h100Opt;
-  } else if (options.some((o) => o.id === 'local-rtx-5070ti')) {
-    recommended = options.find((o) => o.id === 'local-rtx-5070ti')!;
+  } else if (options.some((o) => o.id === 'local-pytorch')) {
+    recommended = options.find((o) => o.id === 'local-pytorch')!;
   }
 
   // Update categories for clarity

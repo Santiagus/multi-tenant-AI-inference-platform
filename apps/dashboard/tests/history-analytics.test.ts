@@ -176,7 +176,7 @@ describe('price history timing & trading sessions', () => {
   });
 
   it('resolves continuous 7-day hourly history across all filtered providers and hardware SKUs', () => {
-    const nowMs = 1794278400000; // arbitrary fixed epoch
+    const nowMs = Date.now();
     const makeHistory = (baseUsd: number) => {
       const pts = [];
       for (let h = 168; h >= 0; h--) {

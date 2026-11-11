@@ -327,7 +327,30 @@ export class JobService {
 
   async listDlqMessages(tenantId: string, maxMessages = 10): Promise<ReceivedDlqMessage[]> {
     const messages = await this.queueClient.receiveDlqMessages(maxMessages);
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    if (isAllTenants) return messages;
     return messages.filter((msg) => msg.body.tenantId === tenantId);
+  }
+
+  /**
+   * Removes a poison-pill envelope from the DLQ after operator review.
+   * Does not mutate the durable FAILED job row — discard is queue hygiene only.
+   */
+  async discardDlqMessage(tenantId: string, messageId: string): Promise<ReceivedDlqMessage> {
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    const messages = await this.queueClient.receiveDlqMessages(10);
+    const target = messages.find((msg) => msg.messageId === messageId);
+
+    if (!target) {
+      throw new NotFoundError(`DLQ message '${messageId}' not found`, 'DLQ_MESSAGE_NOT_FOUND');
+    }
+
+    if (!isAllTenants && target.body.tenantId !== tenantId) {
+      throw new NotFoundError(`DLQ message '${messageId}' not found`, 'DLQ_MESSAGE_NOT_FOUND');
+    }
+
+    await this.queueClient.deleteDlqMessage(target.receiptHandle);
+    return target;
   }
 
   /**

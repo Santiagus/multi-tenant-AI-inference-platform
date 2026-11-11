@@ -314,6 +314,30 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(dlqBody.messages[0].job_id, badJobId);
     assert.equal(dlqBody.messages[0].error_code, 'INVALID_MODEL_PARAMETERS');
 
+    const discardRes = await app.inject({
+      method: 'DELETE',
+      url: `/v1/jobs/dlq/${dlqBody.messages[0].message_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(discardRes.statusCode, 200);
+    assert.equal(JSON.parse(discardRes.body).ok, true);
+
+    const dlqAfter = await app.inject({
+      method: 'GET',
+      url: '/v1/jobs/dlq',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(JSON.parse(dlqAfter.body).messages.length, 0);
+
+    // Durable FAILED job remains after DLQ discard
+    const failedJob = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${badJobId}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(failedJob.statusCode, 200);
+    assert.equal(JSON.parse(failedJob.body).status, 'FAILED');
+
     await app.close();
   });
 

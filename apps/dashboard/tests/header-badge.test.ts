@@ -81,4 +81,26 @@ describe('Dashboard Data Source Mode & Health API', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('client invokes purgeTenantData endpoint successfully', async () => {
+    const originalFetch = globalThis.fetch;
+    const actionsCalled: string[] = [];
+    try {
+      globalThis.fetch = async (url: any, opts: any) => {
+        actionsCalled.push(`${opts?.method || 'GET'} ${url}`);
+        return new Response(JSON.stringify({ ok: true, tenantId: 'tenant-dev', deletedCount: 5 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+
+      const res = await apiClient.purgeTenantData('tenant-dev');
+      assert.equal(res.ok, true);
+      assert.equal(res.tenantId, 'tenant-dev');
+      assert.equal(res.deletedCount, 5);
+      assert.equal(actionsCalled[0], 'POST /v1/admin/tenants/tenant-dev/purge');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

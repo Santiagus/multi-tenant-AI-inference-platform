@@ -21,7 +21,6 @@ export function App() {
   const [tenantId, setTenantId] = useState<string>('tenant-default');
   const [activeTab, setActiveTab] = useState<ActiveTab>('jobs');
   const [apiHealthy, setApiHealthy] = useState<boolean>(true);
-  const [dataSource, setDataSource] = useState<'real' | 'mock'>('real');
   const [inferenceMode, setInferenceMode] = useState<'mock' | 'real'>('mock');
   const [stage, setStage] = useState<string>('LOCAL');
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
@@ -57,9 +56,6 @@ export function App() {
       // 1. Health
       const health = await apiClient.getHealth();
       setApiHealthy(health.ok);
-      if (health.dataSource) {
-        setDataSource(health.dataSource);
-      }
       if (health.inferenceMode) {
         setInferenceMode(health.inferenceMode);
       }
@@ -115,6 +111,12 @@ export function App() {
   }, [autoRefresh, loadData]);
 
   // Handlers
+  const writeTenantFor = (jobId?: string) => {
+    if (tenantId !== 'ALL') return tenantId;
+    if (!jobId) return 'tenant-default';
+    return jobs.find((job) => job.job_id === jobId)?.tenant_id || 'tenant-default';
+  };
+
   const handleSubmitJob = async (payload: {
     model_id: string;
     routing_preference: RoutingPreference;
@@ -122,23 +124,45 @@ export function App() {
     max_retries: number;
     input: { prompt: string; parameters?: Record<string, unknown> };
   }) => {
-    await apiClient.submitJob(tenantId, payload);
+    await apiClient.submitJob(writeTenantFor(), payload);
     await loadData();
   };
 
   const handleCancelJob = async (jobId: string) => {
-    await apiClient.cancelJob(tenantId, jobId);
+    await apiClient.cancelJob(writeTenantFor(jobId), jobId);
     await loadData();
   };
 
   const handleRetryJob = async (jobId: string) => {
-    await apiClient.retryJob(tenantId, jobId);
+    await apiClient.retryJob(writeTenantFor(jobId), jobId);
     await loadData();
   };
 
   const handleReapExpiredJobs = async () => {
     await apiClient.reapExpiredJobs();
     await loadData();
+  };
+
+  const handleDiscardDlqMessage = async (messageId: string, messageTenantId: string) => {
+    const tenantForWrite =
+      tenantId === 'ALL' || tenantId === 'all' || tenantId === '*'
+        ? messageTenantId
+        : tenantId;
+    await apiClient.discardDlqMessage(tenantForWrite, messageId);
+    await loadData();
+  };
+
+  const handleInspectJobFromDlq = async (jobId: string, messageTenantId: string) => {
+    const tenantForRead =
+      tenantId === 'ALL' || tenantId === 'all' || tenantId === '*'
+        ? messageTenantId
+        : tenantId;
+    try {
+      return await apiClient.getJob(tenantForRead, jobId);
+    } catch (err) {
+      console.error('Failed to load job for DLQ inspection:', err);
+      return null;
+    }
   };
 
   const handleToggleInferenceMode = async (mode: 'mock' | 'real') => {
@@ -179,26 +203,6 @@ export function App() {
     await loadData();
   };
 
-  const [isTogglingShowcase, setIsTogglingShowcase] = useState(false);
-
-  const handleToggleShowcase = async (action: 'seed' | 'purge') => {
-    setIsTogglingShowcase(true);
-    try {
-      if (action === 'seed') {
-        const res = await apiClient.seedShowcaseData();
-        setDataSource(res.dataSource);
-      } else {
-        const res = await apiClient.purgeShowcaseData();
-        setDataSource(res.dataSource);
-      }
-      await loadData();
-    } catch (err) {
-      console.error('Failed to toggle showcase data mode:', err);
-    } finally {
-      setIsTogglingShowcase(false);
-    }
-  };
-
   const handleSyncPricing = async () => {
     setIsSyncingPricing(true);
     try {
@@ -211,26 +215,48 @@ export function App() {
     }
   };
 
+  const [isPurgingTenant, setIsPurgingTenant] = useState(false);
+  const [isSeedingShowcase, setIsSeedingShowcase] = useState(false);
+
+  const handlePurgeTenantData = async () => {
+    setIsPurgingTenant(true);
+    try {
+      await apiClient.purgeTenantData(tenantId);
+      await loadData();
+    } catch (err) {
+      console.error('Failed to purge tenant data:', err);
+    } finally {
+      setIsPurgingTenant(false);
+    }
+  };
+
+  const handleSeedShowcaseData = async () => {
+    setIsSeedingShowcase(true);
+    try {
+      await apiClient.seedShowcaseData();
+      await loadData();
+    } catch (err) {
+      console.error('Failed to seed showcase data:', err);
+    } finally {
+      setIsSeedingShowcase(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header
         tenantId={tenantId}
         onTenantChange={setTenantId}
         apiHealthy={apiHealthy}
-        dataSource={dataSource}
-        inferenceMode={inferenceMode}
-        onToggleInferenceMode={handleToggleInferenceMode}
-        onProcessNext={handleTriggerWorker}
-        isProcessingWorker={isProcessingWorker}
-        inFlightCount={inFlightCount}
-        workerFeedback={workerFeedback}
         stage={stage}
         autoRefresh={autoRefresh}
         onAutoRefreshToggle={() => setAutoRefresh(!autoRefresh)}
         onManualRefresh={loadData}
         isRefreshing={isRefreshing}
-        onToggleShowcase={handleToggleShowcase}
-        isTogglingShowcase={isTogglingShowcase}
+        onPurgeTenantData={handlePurgeTenantData}
+        isPurgingTenant={isPurgingTenant}
+        onSeedShowcaseData={handleSeedShowcaseData}
+        isSeedingShowcase={isSeedingShowcase}
       />
 
       <Navigation
@@ -253,11 +279,14 @@ export function App() {
             onCancelJob={handleCancelJob}
             onRetryJob={handleRetryJob}
             onReapExpired={handleReapExpiredJobs}
+            onDiscardDlqMessage={handleDiscardDlqMessage}
+            onInspectJobFromDlq={handleInspectJobFromDlq}
             onTriggerWorker={handleTriggerWorker}
             isProcessingWorker={isProcessingWorker}
             inferenceMode={inferenceMode}
             onToggleInferenceMode={handleToggleInferenceMode}
             workerFeedback={workerFeedback}
+            viewingAllTenants={tenantId === 'ALL'}
           />
         )}
 

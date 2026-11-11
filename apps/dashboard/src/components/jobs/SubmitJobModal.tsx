@@ -29,6 +29,24 @@ const POPULAR_MODELS = [
   { id: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku (AWS Bedrock / Proprietary)', purpose: 'text_to_text' },
 ];
 
+export function resolveAutoMatchOption(
+  recommendations: ModelCloudOptionsResponse | null
+): CloudOption | null {
+  return recommendations?.recommendations?.recommended || null;
+}
+
+export function formatAutoDropdownLabel(autoProposal: CloudOption | null): string {
+  return `auto (Deterministic Engine${autoProposal ? ` → Proposal: ${autoProposal.displayName}` : ''})`;
+}
+
+export function isOptionAutoMatch(
+  key: string,
+  itemId: string,
+  autoProposalId?: string
+): boolean {
+  return key === 'recommended' || (Boolean(autoProposalId) && itemId === autoProposalId);
+}
+
 export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProps) {
   const [purposeFilter, setPurposeFilter] = useState<string>('all');
   const [modelId, setModelId] = useState(POPULAR_MODELS[0].id);
@@ -64,7 +82,7 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
           setRecommendations(res);
           if (res.recommendations?.recommended) {
             setSelectedOptionId(res.recommendations.recommended.id);
-            setRoutingPreference(res.recommendations.recommended.routingPreference as RoutingPreference);
+            setRoutingPreference((prev) => (prev === 'auto' ? 'auto' : (res.recommendations.recommended.routingPreference as RoutingPreference)));
           }
         }
       })
@@ -82,9 +100,15 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
 
   if (!isOpen) return null;
 
-  const handleSelectOption = (option: CloudOption) => {
+  const autoProposal = resolveAutoMatchOption(recommendations);
+
+  const handleSelectOption = (option: CloudOption, isAutoMatch?: boolean) => {
     setSelectedOptionId(option.id);
-    setRoutingPreference(option.routingPreference as RoutingPreference);
+    if (isAutoMatch) {
+      setRoutingPreference('auto');
+    } else {
+      setRoutingPreference(option.routingPreference as RoutingPreference);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -121,7 +145,9 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
       ]
     : [];
 
-  const selectedOpt = recommendations?.allOptions.find((o) => o.id === selectedOptionId);
+  const selectedOpt =
+    recommendations?.allOptions.find((o) => o.id === selectedOptionId) ||
+    (routingPreference === 'auto' ? autoProposal : null);
 
   return (
     <div
@@ -315,24 +341,61 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
             >
               {recList.map(({ key, label, item, color }) => {
                 if (!item) return null;
-                const isSelected = selectedOptionId === item.id;
+                const isAutoMatch = isOptionAutoMatch(key, item.id, autoProposal?.id);
+                const isSelected =
+                  routingPreference === 'auto'
+                    ? isAutoMatch
+                    : selectedOptionId === item.id;
+                const activeColor = routingPreference === 'auto' && isAutoMatch ? '#6366f1' : color;
                 return (
                   <div
                     key={key}
-                    onClick={() => handleSelectOption(item)}
+                    onClick={() => handleSelectOption(item, isAutoMatch)}
                     style={{
                       backgroundColor: isSelected ? '#1e293b' : '#0f172a',
-                      border: `1.5px solid ${isSelected ? color : '#334155'}`,
+                      border: `1.5px solid ${isSelected ? activeColor : '#334155'}`,
                       borderRadius: '8px',
                       padding: '10px',
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
-                      boxShadow: isSelected ? `0 0 10px ${color}30` : 'none',
+                      boxShadow: isSelected
+                        ? (routingPreference === 'auto' && isAutoMatch ? '0 0 10px rgba(99, 102, 241, 0.4)' : `0 0 10px ${color}30`)
+                        : 'none',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ color, fontSize: '11px', fontWeight: 700 }}>{label}</span>
-                      {isSelected && <span style={{ color, fontSize: '11px' }}>✓</span>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', gap: '4px' }}>
+                      <span style={{ color: routingPreference === 'auto' && isAutoMatch ? '#a5b4fc' : color, fontSize: '11px', fontWeight: 700 }}>
+                        {label}
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {isAutoMatch && (
+                          <span
+                            data-testid="auto-match-badge"
+                            title="Matched by the deterministic routing engine when AUTO routing is chosen"
+                            style={{
+                              backgroundColor: 'rgba(99, 102, 241, 0.25)',
+                              color: '#a5b4fc',
+                              border: '1px solid #6366f1',
+                              borderRadius: '4px',
+                              padding: '1px 5px',
+                              fontSize: '9px',
+                              fontWeight: 700,
+                              letterSpacing: '0.4px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '2px',
+                            }}
+                          >
+                            <span>🎯</span>
+                            <span>AUTO Match</span>
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span style={{ color: routingPreference === 'auto' && isAutoMatch ? '#a5b4fc' : color, fontSize: '11px', fontWeight: 700 }}>
+                            ✓
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={{ color: '#f8fafc', fontWeight: 600, fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {item.displayName}
@@ -352,8 +415,8 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
             {selectedOpt && (
               <div
                 style={{
-                  backgroundColor: '#1e293b80',
-                  border: '1px solid #334155',
+                  backgroundColor: routingPreference === 'auto' ? 'rgba(99, 102, 241, 0.12)' : '#1e293b80',
+                  border: `1px solid ${routingPreference === 'auto' ? '#6366f1' : '#334155'}`,
                   borderRadius: '8px',
                   padding: '8px 12px',
                   fontSize: '11px',
@@ -363,8 +426,25 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
                   gap: '8px',
                 }}
               >
-                <span style={{ fontSize: '14px' }}>💡</span>
+                <span style={{ fontSize: '14px' }}>{routingPreference === 'auto' ? '🎯' : '💡'}</span>
                 <div>
+                  {routingPreference === 'auto' && (
+                    <span
+                      style={{
+                        backgroundColor: 'rgba(99, 102, 241, 0.25)',
+                        color: '#818cf8',
+                        border: '1px solid #6366f1',
+                        borderRadius: '3px',
+                        padding: '1px 5px',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        marginRight: '6px',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      AUTO Proposal
+                    </span>
+                  )}
                   <span style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedOpt.displayName}: </span>
                   {selectedOpt.finopsInsight}
                 </div>
@@ -400,9 +480,34 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
           <div style={{ marginBottom: '14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
               <label style={{ fontSize: '13px', color: '#94a3b8', fontWeight: 600 }}>
-                Local Execution Mode Shortcut:
+                Execution Routing Shortcut:
               </label>
               <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  data-testid="shortcut-auto-button"
+                  onClick={() => {
+                    setRoutingPreference('auto');
+                    if (autoProposal) setSelectedOptionId(autoProposal.id);
+                  }}
+                  style={{
+                    backgroundColor: routingPreference === 'auto' ? 'rgba(99, 102, 241, 0.35)' : '#1e293b',
+                    color: routingPreference === 'auto' ? '#a5b4fc' : '#94a3b8',
+                    border: `1px solid ${routingPreference === 'auto' ? '#6366f1' : '#334155'}`,
+                    padding: '3px 9px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                  title={autoProposal ? `AUTO proposal: ${autoProposal.displayName}` : 'Deterministic AUTO match'}
+                >
+                  <span>🎯</span>
+                  <span>AUTO Match{autoProposal ? ` (${autoProposal.displayName.split(' ')[0]})` : ''}</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -462,8 +567,13 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
               <select
                 value={routingPreference}
                 onChange={(e) => {
-                  setRoutingPreference(e.target.value as RoutingPreference);
-                  setSelectedOptionId(null);
+                  const val = e.target.value as RoutingPreference;
+                  setRoutingPreference(val);
+                  if (val === 'auto' && autoProposal) {
+                    setSelectedOptionId(autoProposal.id);
+                  } else {
+                    setSelectedOptionId(null);
+                  }
                 }}
                 style={{
                   width: '100%',
@@ -476,7 +586,9 @@ export function SubmitJobModal({ isOpen, onClose, onSubmit }: SubmitJobModalProp
                   outline: 'none',
                 }}
               >
-                <option value="auto">auto (Deterministic Engine)</option>
+                <option value="auto">
+                  {formatAutoDropdownLabel(autoProposal || null)}
+                </option>
                 <option value="local_first">local_first (Local RTX 5070 Ti)</option>
                 <option value="cost_optimized">cost_optimized (Lowest Cost)</option>
                 <option value="low_latency">low_latency (SLO Priority)</option>

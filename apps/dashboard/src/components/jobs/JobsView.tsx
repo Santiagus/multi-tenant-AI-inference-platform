@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, type CSSProperties } from 'react';
 import { StatCard } from '../common/StatCard';
 import { StatusBadge } from '../common/Badge';
 import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
@@ -22,15 +22,19 @@ interface JobsViewProps {
   onCancelJob: (jobId: string) => Promise<void>;
   onRetryJob?: (jobId: string) => Promise<void>;
   onReapExpired?: () => Promise<void>;
+  onDiscardDlqMessage?: (messageId: string, tenantId: string) => Promise<void>;
+  onInspectJobFromDlq?: (jobId: string, tenantId: string) => Promise<JobItem | null>;
   onTriggerWorker: () => Promise<void>;
   isProcessingWorker: boolean;
   inferenceMode?: 'mock' | 'real';
   onToggleInferenceMode?: (mode: 'mock' | 'real') => Promise<void>;
   workerFeedback?: string | null;
+  /** True when the header tenant filter is All Tenants. Per-tenant aggregation is only meaningful then. */
+  viewingAllTenants?: boolean;
 }
 
 export const ALL_PLATFORM_PROVIDERS = [
-  { id: 'local_pytorch', name: 'Local PyTorch' },
+  { id: 'local', name: 'Local' },
   { id: 'runpod', name: 'RunPod' },
   { id: 'vast_ai', name: 'Vast.ai' },
   { id: 'baseten', name: 'Baseten' },
@@ -46,9 +50,36 @@ export const ALL_PLATFORM_PROVIDERS = [
   { id: 'sagemaker', name: 'AWS SageMaker' },
 ];
 
+/** Collapse legacy local adapter ids (local_pytorch / local_cpu_worker) into `local`. */
+export function normalizeProviderId(provider: string | null | undefined, routing = ''): string {
+  const p = (provider || '').toLowerCase();
+  if (!p || p === 'local_pytorch' || p === 'local_cpu_worker' || p === 'local') return 'local';
+  if (routing.includes('local') && !p) return 'local';
+  return p;
+}
+
+const PLACEMENT_EXECUTION_MODES = new Set([
+  'on_demand',
+  'spot',
+  'serverless',
+  'token_factory',
+  'local',
+  'pay_per_call',
+]);
+
 export function getJobExecutionMode(j: JobItem): string {
-  if (j.execution_mode) return j.execution_mode;
-  if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') return 'local';
+  // Placement economics only — ignore inference mock/live labels if present on execution_mode.
+  if (j.execution_mode && PLACEMENT_EXECUTION_MODES.has(j.execution_mode)) {
+    return j.execution_mode;
+  }
+  if (
+    j.routing_preference.includes('local') ||
+    j.provider === 'local_pytorch' ||
+    j.provider === 'local' ||
+    j.provider === 'local_cpu_worker'
+  ) {
+    return 'local';
+  }
   if (j.provider === 'jarvislabs') return 'token_factory';
   if (j.provider === 'baseten' || j.provider === 'wavespeed') return 'serverless';
   if (j.provider === 'runware' || j.provider === 'fal') return 'pay_per_call';
@@ -56,17 +87,195 @@ export function getJobExecutionMode(j: JobItem): string {
   return 'on_demand';
 }
 
+function getJobResultMetadata(j: JobItem): Record<string, unknown> {
+  const result = (j.result ?? {}) as Record<string, unknown>;
+  const nested = (result.metadata as Record<string, unknown> | undefined) ?? {};
+  // Showcase / worker payloads often put hardware + engine on the result root and again under metadata.
+  return { ...result, ...nested } as Record<string, unknown>;
+}
+
+/**
+ * Normalize worker engine ids into short UI labels.
+ * When the worker stored `auto`, derive the concrete engine from the telemetry backend name.
+ */
+export function formatEngineLabel(
+  engineExecuted: string,
+  backend = '',
+  engineRequested = ''
+): string {
+  const executed = engineExecuted.toLowerCase().trim();
+  const requested = engineRequested.toLowerCase().trim();
+  const b = backend.toLowerCase().trim();
+
+  const mapConcrete = (value: string): string | null => {
+    if (!value || value === 'auto') return null;
+    if (value === 'torch-compile' || value === 'torch_compile' || value === 'compile') return 'Pytorch 2.x';
+    if (value === 'torchscript' || value === 'torch_script') return 'torchscript';
+    if (value === 'torchscript_auto' || value === 'torchscript-auto') return 'TorchScript_auto';
+    if (value === 'eager') return 'eager';
+    if (value === 'numpy' || value === 'numpy_fallback') return 'numpy';
+    return value;
+  };
+
+  const concrete = mapConcrete(executed);
+  if (concrete) return concrete;
+
+  if (b.includes('numpy')) return 'numpy';
+  if (b.includes('torch_compile') || b.includes('torch-compile') || /compile/.test(b)) {
+    return 'Pytorch 2.x';
+  }
+  if (b.includes('torchscript')) {
+    return requested === 'auto' || executed === 'auto' ? 'TorchScript_auto' : 'torchscript';
+  }
+  if (b.startsWith('pytorch') || b === 'local_cpu_worker' || b.endsWith('_cpu') || b.endsWith('_cuda')) {
+    // AUTO/EAGER backends are named pytorch_{quant_}{cpu|cuda} — treat as eager.
+    return 'eager';
+  }
+
+  const fromRequested = mapConcrete(requested);
+  if (fromRequested) return fromRequested;
+
+  return 'eager';
+}
+
+/**
+ * Resolves whether a job ran (or was requested as) mock vs real inference.
+ * Prefers worker-persisted metadata over routing preference; returns null when unknown.
+ */
+export function getJobInferenceMode(j: JobItem): 'mock' | 'real' | null {
+  if (j.inference_mode === 'mock' || j.inference_mode === 'real') return j.inference_mode;
+  if (typeof j.is_mocked === 'boolean') return j.is_mocked ? 'mock' : 'real';
+
+  const metadata = getJobResultMetadata(j);
+
+  if (typeof metadata.is_mocked === 'boolean') {
+    return metadata.is_mocked ? 'mock' : 'real';
+  }
+
+  const execMode = String(metadata.execution_mode ?? '').toLowerCase();
+  if (execMode === 'mock') return 'mock';
+  if (execMode === 'live' || execMode === 'real') return 'real';
+
+  if (j.routing_preference === 'mock') return 'mock';
+
+  // Painted showcase jobs are simulated fixtures (mock economics / no live worker pass).
+  if (j.job_id.startsWith('00000000-') || metadata.showcase === true) return 'mock';
+
+  if (metadata.production_weights === true || metadata.weights === 'production') return 'real';
+
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
+  const vramPeak = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
+  if (vramPeak > 64 && (j.duration_ms ?? 0) > 100) return 'real';
+
+  // Legacy local_cpu_worker / ultra-short local passes without explicit flags were mock paths.
+  if (
+    (j.provider === 'local_cpu_worker' || j.provider === 'local_pytorch' || j.provider === 'local') &&
+    (j.duration_ms ?? 0) > 0 &&
+    (j.duration_ms ?? 0) <= 50
+  ) {
+    return 'mock';
+  }
+
+  // Terminal jobs that never wrote worker metadata: treat ultra-short / never-started as mock demos.
+  if (
+    (j.status === 'FAILED' || j.status === 'CANCELLED') &&
+    (j.duration_ms ?? 0) > 0 &&
+    (j.duration_ms ?? 0) <= 50
+  ) {
+    return 'mock';
+  }
+
+  return null;
+}
+
+const HARDWARE_VRAM_GB: Record<string, number> = {
+  'RTX 5070 Ti': 16,
+  'RTX 4090': 24,
+  'RTX 5090 Blackwell': 32,
+  'RTX 5090': 32,
+  'L4 Tensor Core': 24,
+  L4: 24,
+  'H200 SXM': 141,
+  H200: 141,
+  'H100 SXM5': 80,
+  H100: 80,
+  'A100 80GB': 80,
+  A100: 80,
+  L40S: 48,
+  A6000: 48,
+  'Inferentia2 / G5': 24,
+};
+
 export function formatHardwareName(hw: string): string {
   if (!hw) return '';
-  return hw
+  let cleaned = hw
     .replace(/^NVIDIA\s+(GeForce\s+)?/i, '')
-    .replace(/\s*\(\d+GB[^\)]*\)/gi, '')
     .replace(/Token Factory MaaS.*/i, 'Token Factory')
     .replace(/Distributed Tensor Core Pipeline.*/i, 'Tensor Core Pipeline')
     .replace(/AWS Bedrock Managed Neural Cluster/i, 'AWS Bedrock')
     .replace(/AWS Inferentia2 \/ G5 Tensor Cluster/i, 'Inferentia2 / G5')
     .replace(/CPU Xeon\/EPYC Fallback/i, 'CPU Fallback')
+    .replace(/^Intel\/AMD\s*CPU$/i, 'CPU')
     .trim();
+
+  // Normalize "24GB" / "(24GB VRAM)" → keep bare name, then re-attach canonical VRAM.
+  const existingGb = cleaned.match(/(\d+)\s*GB/i)?.[1];
+  cleaned = cleaned
+    .replace(/\s*\(\s*\d+\s*GB[^\)]*\)/gi, '')
+    .replace(/\s+\d+\s*GB\b/gi, '')
+    .trim();
+
+  // Short CPU SKUs: "AMD Ryzen 9 7900 12-Core Processor" → "Ryzen 9 7900"
+  if (/ryzen|epyc|xeon|core\s*i\d|intel\/amd|\bcpu\b|fallback/i.test(cleaned)) {
+    cleaned = cleaned
+      .replace(/\(R\)|\(TM\)/gi, '')
+      .replace(/\b\d+-Core Processor\b/i, '')
+      .replace(/\bProcessor\b/i, '')
+      .replace(/^AMD\s+/i, '')
+      .replace(/^Intel\s+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned || /^cpu$/i.test(cleaned)) return cleaned || 'CPU';
+    return cleaned;
+  }
+
+  if (/token factory/i.test(cleaned) || /bedrock/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  let vram = existingGb ? Number(existingGb) : undefined;
+  if (!vram) {
+    for (const [name, gb] of Object.entries(HARDWARE_VRAM_GB)) {
+      if (cleaned === name || cleaned.startsWith(name) || name.startsWith(cleaned)) {
+        vram = gb;
+        break;
+      }
+    }
+  }
+
+  return vram ? `${cleaned} (${vram} GB)` : cleaned;
+}
+
+/** Device class + engine, e.g. GPU/torchscript or CPU/eager — never the provider id. */
+export function getJobComputeLabel(j: JobItem): string {
+  const metadata = getJobResultMetadata(j);
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
+  const rawExecuted = String(metadata.engine_executed ?? metadata.engine ?? '');
+  const rawRequested = String(metadata.engine_requested ?? '');
+  const backend = String(telemetry.backend ?? metadata.backend ?? '');
+  const engine = formatEngineLabel(rawExecuted, backend, rawRequested);
+
+  const deviceType = String(telemetry.device_type ?? metadata.device ?? '').toLowerCase();
+  const hw = getJobHardware(j);
+  const isCpu =
+    j.routing_preference.includes('cpu') ||
+    j.provider === 'local_cpu_worker' ||
+    deviceType === 'cpu' ||
+    /cpu|ryzen|epyc|xeon|core\s*i\d/i.test(hw) ||
+    /_cpu\b|cpu_worker/i.test(backend) ||
+    /cpu/i.test(rawExecuted);
+
+  return `${isCpu ? 'CPU' : 'GPU'}/${engine}`;
 }
 
 export function formatModelName(modelId: string): string {
@@ -92,7 +301,8 @@ export function formatTimeAgo(dateString: string): string {
 export function getProviderBadgeLabel(j: JobItem): { label: string; isAuto: boolean } {
   const isAuto = !j.provider || j.routing_preference?.toLowerCase() === 'auto';
   if (!isAuto && j.provider) {
-    return { label: j.provider.toUpperCase(), isAuto: false };
+    const normalized = normalizeProviderId(j.provider, j.routing_preference);
+    return { label: normalized.toUpperCase(), isAuto: false };
   }
 
   const prov = j.provider;
@@ -126,20 +336,28 @@ export function getProviderBadgeLabel(j: JobItem): { label: string; isAuto: bool
 }
 
 export function getJobHardware(j: JobItem): string {
+  const metadata = getJobResultMetadata(j);
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
   let hw = '';
-  if ((j.result as any)?.hardware) hw = (j.result as any).hardware;
-  else if ((j.result as any)?.device) hw = (j.result as any).device;
+  if (typeof metadata.hardware === 'string' && metadata.hardware) hw = metadata.hardware;
+  else if (typeof telemetry.device_name === 'string' && telemetry.device_name) hw = telemetry.device_name;
+  else if ((j.result as any)?.device) hw = String((j.result as any).device);
   else if (j.hardware) hw = j.hardware;
   else if (j.routing_preference.includes('cpu')) hw = 'CPU Fallback';
-  else if (j.routing_preference.includes('local') || j.provider === 'local_pytorch') {
-    hw = 'RTX 5070 Ti';
-  } else if (j.provider === 'runpod') {
-    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek')) {
+  else if (
+    j.routing_preference.includes('local') ||
+    j.provider === 'local_pytorch' ||
+    j.provider === 'local' ||
+    j.provider === 'local_cpu_worker'
+  ) {
+    hw = j.routing_preference.includes('cpu') || j.provider === 'local_cpu_worker' ? 'CPU Fallback' : 'RTX 5070 Ti';
+  } else if (j.provider === 'runpod' || (!j.provider && j.routing_preference.includes('runpod'))) {
+    if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek') || j.model_id.includes('deepseek')) {
       hw = 'H100 SXM5';
     } else {
       hw = 'RTX 4090';
     }
-  } else if (j.provider === 'vast_ai') {
+  } else if (j.provider === 'vast_ai' || (!j.provider && j.routing_preference.includes('vast'))) {
     hw = 'RTX 5090 Blackwell';
   } else if (j.provider === 'baseten') {
     hw = 'L4 Tensor Core';
@@ -149,10 +367,23 @@ export function getJobHardware(j: JobItem): string {
     hw = 'Token Factory';
   } else if (j.provider === 'fal' || j.provider === 'runware') {
     hw = 'Tensor Core Pipeline';
-  } else if (j.provider === 'bedrock') {
+  } else if (j.provider === 'bedrock' || (!j.provider && j.routing_preference.includes('bedrock'))) {
     hw = 'AWS Bedrock';
-  } else if (j.provider === 'sagemaker') {
+  } else if (j.provider === 'sagemaker' || (!j.provider && j.routing_preference.includes('sagemaker'))) {
     hw = 'Inferentia2 / G5';
+  } else if (j.provider === 'coreweave' || j.provider === 'hivenet' || j.provider === 'wavespeed') {
+    hw = 'H100 SXM5';
+  } else if (!j.provider) {
+    // Failed/cancelled before provider claim — still show a planned SKU from routing/model.
+    if (j.routing_preference.includes('gpu') || j.routing_preference.includes('local')) {
+      hw = 'RTX 5070 Ti';
+    } else if (j.model_id.includes('70B') || j.model_id.includes('DeepSeek') || j.model_id.includes('deepseek')) {
+      hw = 'H100 SXM5';
+    } else if (j.status === 'FAILED' || j.status === 'CANCELLED') {
+      hw = 'RTX 4090';
+    } else {
+      hw = '';
+    }
   } else {
     hw = 'H100 SXM5';
   }
@@ -168,11 +399,12 @@ export function JobsView({
   onCancelJob,
   onRetryJob,
   onReapExpired,
+  onDiscardDlqMessage,
+  onInspectJobFromDlq,
   onTriggerWorker,
   isProcessingWorker,
-  inferenceMode = 'mock',
-  onToggleInferenceMode,
   workerFeedback = null,
+  viewingAllTenants = false,
 }: JobsViewProps) {
   const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
@@ -183,9 +415,17 @@ export function JobsView({
   const [tenantFilter, setTenantFilter] = useState<string>('ALL');
   const [providerFilter, setProviderFilter] = useState<string>('ALL');
   const [modeFilter, setModeFilter] = useState<string>('ALL');
+  const [inferenceFilter, setInferenceFilter] = useState<string>('ALL');
+  const [computeFilter, setComputeFilter] = useState<string>('ALL');
   const [breakdownTab, setBreakdownTab] = useState<'model' | 'tenant' | 'provider' | 'gpu'>('model');
   const [showModelStats, setShowModelStats] = useState<boolean>(true);
   const [expandedJobIds, setExpandedJobIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (viewingAllTenants) return;
+    setTenantFilter('ALL');
+    setBreakdownTab((tab) => (tab === 'tenant' ? 'model' : tab));
+  }, [viewingAllTenants]);
 
   const toggleExpandJobId = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -389,17 +629,7 @@ export function JobsView({
     > = {};
 
     for (const j of jobs) {
-      const prov =
-        j.provider ||
-        (j.routing_preference.includes('local')
-          ? 'local_pytorch'
-          : j.routing_preference.includes('runpod')
-            ? 'runpod'
-            : j.routing_preference.includes('bedrock')
-              ? 'bedrock'
-              : j.routing_preference.includes('sagemaker')
-                ? 'sagemaker'
-                : 'local_pytorch');
+      const prov = normalizeProviderId(j.provider, j.routing_preference);
 
       if (!map[prov]) {
         map[prov] = {
@@ -511,6 +741,17 @@ export function JobsView({
           return false;
         }
       }
+      if (inferenceFilter !== 'ALL') {
+        const inference = getJobInferenceMode(job);
+        if (inference !== inferenceFilter) {
+          return false;
+        }
+      }
+      if (computeFilter !== 'ALL') {
+        if (getJobComputeLabel(job) !== computeFilter) {
+          return false;
+        }
+      }
       if (modelFilter !== 'ALL' && job.model_id !== modelFilter) {
         return false;
       }
@@ -518,18 +759,9 @@ export function JobsView({
         return false;
       }
       if (providerFilter !== 'ALL') {
-        const prov =
-          job.provider ||
-          (job.routing_preference.includes('local')
-            ? 'local_pytorch'
-            : job.routing_preference.includes('runpod')
-              ? 'runpod'
-              : job.routing_preference.includes('bedrock')
-                ? 'bedrock'
-                : job.routing_preference.includes('sagemaker')
-                  ? 'sagemaker'
-                  : 'local_pytorch');
-        if (prov !== providerFilter) return false;
+        const prov = normalizeProviderId(job.provider, job.routing_preference);
+        const wanted = normalizeProviderId(providerFilter);
+        if (prov !== wanted) return false;
       }
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
@@ -541,7 +773,25 @@ export function JobsView({
       }
       return true;
     });
-  }, [jobs, statusFilter, modeFilter, modelFilter, tenantFilter, providerFilter, searchQuery]);
+  }, [
+    jobs,
+    statusFilter,
+    modeFilter,
+    inferenceFilter,
+    computeFilter,
+    modelFilter,
+    tenantFilter,
+    providerFilter,
+    searchQuery,
+  ]);
+
+  const computeFilterOptions = useMemo(() => {
+    const labels = new Set<string>();
+    for (const job of jobs) {
+      labels.add(getJobComputeLabel(job));
+    }
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [jobs]);
 
   // Model table sort
   const [modelSortKey, setModelSortKey] = useState<string>('total');
@@ -575,7 +825,13 @@ export function JobsView({
     } else {
       setJobSortKey(col);
       setJobSortDir(
-        col === 'job_id' || col === 'model_id' || col === 'status' || col === 'provider' || col === 'mode'
+        col === 'job_id' ||
+        col === 'model_id' ||
+        col === 'status' ||
+        col === 'hardware' ||
+        col === 'mode' ||
+        col === 'inference' ||
+        col === 'tenant_id'
           ? 'asc'
           : 'desc'
       );
@@ -585,6 +841,8 @@ export function JobsView({
   const sortedJobs = useMemo(() => {
     return genericSort(filteredJobs, jobSortKey, jobSortDir, (item, key) => {
       if (key === 'mode') return getJobExecutionMode(item);
+      if (key === 'hardware') return `${getJobComputeLabel(item)} ${getJobHardware(item)}`;
+      if (key === 'inference') return getJobInferenceMode(item) ?? '';
       if (key === 'progress') return item.progress_pct ?? (item.status === 'SUCCEEDED' ? 100 : 0);
       if (key === 'tokens') {
         const inTok = item.usage?.prompt_tokens ?? 0;
@@ -596,6 +854,20 @@ export function JobsView({
       return (item as unknown as Record<string, unknown>)[key];
     });
   }, [filteredJobs, jobSortKey, jobSortDir]);
+
+  const headerFilterStyle: CSSProperties = {
+    width: '100%',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    backgroundColor: '#0f172a',
+    color: '#e2e8f0',
+    border: '1px solid #334155',
+    padding: '3px 4px',
+    borderRadius: '4px',
+    fontSize: '10px',
+    outline: 'none',
+    cursor: 'pointer',
+  };
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -689,21 +961,23 @@ export function JobsView({
             >
               Models ({modelStats.length})
             </button>
-            <button
-              onClick={() => setBreakdownTab('tenant')}
-              style={{
-                backgroundColor: breakdownTab === 'tenant' ? '#3b82f6' : '#1e293b',
-                color: breakdownTab === 'tenant' ? '#ffffff' : '#94a3b8',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '4px 10px',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Tenants ({tenantStats.length})
-            </button>
+            {viewingAllTenants && (
+              <button
+                onClick={() => setBreakdownTab('tenant')}
+                style={{
+                  backgroundColor: breakdownTab === 'tenant' ? '#3b82f6' : '#1e293b',
+                  color: breakdownTab === 'tenant' ? '#ffffff' : '#94a3b8',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Tenants ({tenantStats.length})
+              </button>
+            )}
             <button
               onClick={() => setBreakdownTab('provider')}
               style={{
@@ -824,6 +1098,10 @@ export function JobsView({
 
         {showModelStats && (
           <div style={{ overflowX: 'auto' }}>
+            <style>{`
+              tr.agg-row { cursor: pointer; }
+              tr.agg-row:hover { background-color: rgba(148, 163, 184, 0.08); }
+            `}</style>
             {breakdownTab === 'model' && (
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
                 <thead>
@@ -849,14 +1127,19 @@ export function JobsView({
                     <SortableHeader column="costUsd" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Compute Cost ($)
                     </SortableHeader>
-                    <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedModelStats.map((m) => {
                     const isSelected = modelFilter === m.modelId;
                     return (
-                      <tr key={m.modelId} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent' }}>
+                      <tr
+                        key={m.modelId}
+                        className="agg-row"
+                        title={isSelected ? 'Click to clear the model filter' : 'Click to filter jobs by this model'}
+                        onClick={() => setModelFilter(isSelected ? 'ALL' : m.modelId)}
+                        style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : undefined }}
+                      >
                         <td style={{ padding: '10px 16px', fontWeight: 600, color: '#f8fafc', fontFamily: 'monospace' }}>{m.modelId}</td>
                         <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{m.total}</td>
                         <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{m.queued + m.processing + m.retrying}</td>
@@ -868,23 +1151,6 @@ export function JobsView({
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{m.avgDuration > 0 ? `${m.avgDuration} ms` : '—'}</td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{m.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${m.costUsd}</td>
-                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                          <button
-                            onClick={() => setModelFilter(isSelected ? 'ALL' : m.modelId)}
-                            style={{
-                              backgroundColor: isSelected ? '#6366f1' : '#1e293b',
-                              color: isSelected ? '#ffffff' : '#94a3b8',
-                              border: `1px solid ${isSelected ? '#6366f1' : '#334155'}`,
-                              padding: '4px 10px',
-                              borderRadius: '6px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {isSelected ? '✓ Filtered' : 'Filter'}
-                          </button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -903,14 +1169,19 @@ export function JobsView({
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Compute Spend ($)</th>
-                    <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tenantStats.map((t) => {
                     const isSelected = tenantFilter === t.tenantId;
                     return (
-                      <tr key={t.tenantId} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(16, 185, 129, 0.1)' : 'transparent' }}>
+                      <tr
+                        key={t.tenantId}
+                        className="agg-row"
+                        title={isSelected ? 'Click to clear the tenant filter' : 'Click to filter jobs by this tenant'}
+                        onClick={() => setTenantFilter(isSelected ? 'ALL' : t.tenantId)}
+                        style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(16, 185, 129, 0.1)' : undefined }}
+                      >
                         <td style={{ padding: '10px 16px', fontWeight: 600, color: '#10b981', fontFamily: 'monospace' }}>{t.tenantId}</td>
                         <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{t.total}</td>
                         <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{t.queued + t.processing + t.retrying}</td>
@@ -922,23 +1193,6 @@ export function JobsView({
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{t.avgDuration > 0 ? `${t.avgDuration} ms` : '—'}</td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{t.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${t.costUsd}</td>
-                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                          <button
-                            onClick={() => setTenantFilter(isSelected ? 'ALL' : t.tenantId)}
-                            style={{
-                              backgroundColor: isSelected ? '#10b981' : '#1e293b',
-                              color: isSelected ? '#ffffff' : '#94a3b8',
-                              border: `1px solid ${isSelected ? '#10b981' : '#334155'}`,
-                              padding: '4px 10px',
-                              borderRadius: '6px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {isSelected ? '✓ Filtered' : 'Filter'}
-                          </button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -957,14 +1211,19 @@ export function JobsView({
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Cost ($)</th>
-                    <th style={{ padding: '10px 16px', fontWeight: 600, textAlign: 'right' }}>Filter</th>
                   </tr>
                 </thead>
                 <tbody>
                   {providerStats.map((p) => {
                     const isSelected = providerFilter === p.provider;
                     return (
-                      <tr key={p.provider} style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.1)' : 'transparent' }}>
+                      <tr
+                        key={p.provider}
+                        className="agg-row"
+                        title={isSelected ? 'Click to clear the provider filter' : 'Click to filter jobs by this provider'}
+                        onClick={() => setProviderFilter(isSelected ? 'ALL' : p.provider)}
+                        style={{ borderBottom: '1px solid #1e293b', backgroundColor: isSelected ? 'rgba(168, 85, 247, 0.1)' : undefined }}
+                      >
                         <td style={{ padding: '10px 16px', fontWeight: 700, color: '#c084fc' }}>{p.provider.toUpperCase()}</td>
                         <td style={{ padding: '10px 16px', color: '#e2e8f0', fontWeight: 600 }}>{p.total}</td>
                         <td style={{ padding: '10px 16px', color: '#fbbf24' }}>{p.inFlight}</td>
@@ -976,23 +1235,6 @@ export function JobsView({
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{p.avgDuration > 0 ? `${p.avgDuration} ms` : '—'}</td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{p.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${p.costUsd}</td>
-                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                          <button
-                            onClick={() => setProviderFilter(isSelected ? 'ALL' : p.provider)}
-                            style={{
-                              backgroundColor: isSelected ? '#a855f7' : '#1e293b',
-                              color: isSelected ? '#ffffff' : '#94a3b8',
-                              border: `1px solid ${isSelected ? '#a855f7' : '#334155'}`,
-                              padding: '4px 10px',
-                              borderRadius: '6px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {isSelected ? '✓ Filtered' : 'Filter'}
-                          </button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -1033,168 +1275,19 @@ export function JobsView({
         )}
       </div>
 
-      {/* Action Bar & Controls */}
+      {/* Worker / enqueue controls (row actions live in the job detail modal) */}
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
           alignItems: 'center',
+          gap: '10px',
           flexWrap: 'wrap',
-          gap: '14px',
           backgroundColor: '#0f172a',
-          padding: '16px',
+          padding: '12px 16px',
           borderRadius: '12px',
           border: '1px solid #1e293b',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1 }}>
-          <input
-            type="text"
-            placeholder="Search by Job ID, Model, or Provider..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              backgroundColor: '#1e293b',
-              color: '#f8fafc',
-              border: '1px solid #334155',
-              padding: '8px 14px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              minWidth: '240px',
-              outline: 'none',
-            }}
-          />
-
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{
-              backgroundColor: '#1e293b',
-              color: '#f8fafc',
-              border: '1px solid #334155',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              outline: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="ALL">All Statuses ({stats.total})</option>
-            <option value="FAILED">Failed ({stats.failed})</option>
-            <option value="QUEUED">Queued ({stats.queued})</option>
-            <option value="IN_FLIGHT">In Flight ({stats.processing + stats.retrying})</option>
-            <option value="SUCCEEDED">Succeeded ({stats.succeeded})</option>
-            <option value="PROCESSING">Processing ({stats.processing})</option>
-            <option value="RETRYING">Retrying ({stats.retrying})</option>
-            <option value="CANCELLED">Cancelled ({stats.cancelled})</option>
-          </select>
-
-          {modelStats.length > 0 && (
-            <select
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer',
-                maxWidth: '220px',
-              }}
-            >
-              <option value="ALL">All Models ({modelStats.length})</option>
-              {modelStats.map((m) => (
-                <option key={m.modelId} value={m.modelId}>
-                  {m.modelId.split('/').pop() || m.modelId} ({m.total})
-                </option>
-              ))}
-            </select>
-          )}
-
-          {tenantStats.length > 1 && (
-            <select
-              value={tenantFilter}
-              onChange={(e) => setTenantFilter(e.target.value)}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer',
-                maxWidth: '180px',
-              }}
-            >
-              <option value="ALL">All Tenants ({tenantStats.length})</option>
-              {tenantStats.map((t) => (
-                <option key={t.tenantId} value={t.tenantId}>
-                  {t.tenantId} ({t.total})
-                </option>
-              ))}
-            </select>
-          )}
-
-          <select
-            value={modeFilter}
-            onChange={(e) => setModeFilter(e.target.value)}
-            style={{
-              backgroundColor: '#1e293b',
-              color: '#f8fafc',
-              border: '1px solid #334155',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              outline: 'none',
-              cursor: 'pointer',
-              maxWidth: '180px',
-            }}
-          >
-            <option value="ALL">All Modes</option>
-            <option value="spot">Spot / Preemptible</option>
-            <option value="on_demand">On-Demand</option>
-            <option value="serverless">Serverless</option>
-            <option value="token_factory">Token Factory</option>
-            <option value="pay_per_call">Pay-Per-Call</option>
-            <option value="local">Local Dedicated</option>
-          </select>
-
-          <select
-            value={providerFilter}
-            onChange={(e) => setProviderFilter(e.target.value)}
-            style={{
-              backgroundColor: '#1e293b',
-              color: '#f8fafc',
-              border: '1px solid #334155',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              fontSize: '13px',
-              outline: 'none',
-              cursor: 'pointer',
-              maxWidth: '180px',
-            }}
-          >
-            <option value="ALL">All Providers</option>
-            {ALL_PLATFORM_PROVIDERS.map((p) => {
-              const count = jobs.filter(
-                (j) =>
-                  (j.provider || (j.routing_preference.includes('local') ? 'local_pytorch' : 'runpod')) ===
-                  p.id
-              ).length;
-              return (
-                <option key={p.id} value={p.id}>
-                  {p.name} {count > 0 ? `(${count})` : ''}
-                </option>
-              );
-            })}
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
             onClick={() => setIsDlqModalOpen(true)}
             style={{
@@ -1232,60 +1325,6 @@ export function JobsView({
               ⏳ Reap Stale
             </button>
           )}
-
-          {/* Local Mock vs Real Inference Mode Toggle */}
-          <div
-            title="Toggle local worker execution between fast mock (0 VRAM) and real local PyTorch/GPU execution"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              backgroundColor: '#1e293b',
-              borderRadius: '8px',
-              padding: '3px',
-              border: '1px solid #334155',
-            }}
-          >
-            <button
-              onClick={() => onToggleInferenceMode?.('mock')}
-              style={{
-                backgroundColor: inferenceMode === 'mock' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
-                color: inferenceMode === 'mock' ? '#a5b4fc' : '#64748b',
-                border: inferenceMode === 'mock' ? '1px solid #6366f1' : '1px solid transparent',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                fontSize: '12px',
-                fontWeight: inferenceMode === 'mock' ? 700 : 500,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>⚡</span>
-              <span>Mock</span>
-            </button>
-            <button
-              onClick={() => onToggleInferenceMode?.('real')}
-              style={{
-                backgroundColor: inferenceMode === 'real' ? 'rgba(239, 68, 68, 0.25)' : 'transparent',
-                color: inferenceMode === 'real' ? '#f87171' : '#64748b',
-                border: inferenceMode === 'real' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                fontSize: '12px',
-                fontWeight: inferenceMode === 'real' ? 700 : 500,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>🔥</span>
-              <span>Real PyTorch</span>
-            </button>
-          </div>
 
           <button
             data-testid="jobs-process-next-button"
@@ -1354,14 +1393,17 @@ export function JobsView({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
+              marginLeft: 'auto',
             }}
           >
             + Submit Job
           </button>
-        </div>
+          {viewingAllTenants && (
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>Submits as tenant-default</span>
+          )}
       </div>
 
-      {/* Jobs Table */}
+      {/* Jobs Table — filters live in column headers for 1200×1900 fit */}
       <div
         style={{
           backgroundColor: '#0f172a',
@@ -1372,7 +1414,7 @@ export function JobsView({
         }}
       >
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+          <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
             <thead>
               <tr style={{ backgroundColor: '#1e293b', borderBottom: '1px solid #334155', color: '#94a3b8' }}>
                 <SortableHeader
@@ -1380,7 +1422,24 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '9%' }}
+                  filter={
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      style={headerFilterStyle}
+                      aria-label="Filter by status"
+                    >
+                      <option value="ALL">All</option>
+                      <option value="FAILED">Failed</option>
+                      <option value="QUEUED">Queued</option>
+                      <option value="IN_FLIGHT">In Flight</option>
+                      <option value="SUCCEEDED">Succeeded</option>
+                      <option value="PROCESSING">Processing</option>
+                      <option value="RETRYING">Retrying</option>
+                      <option value="CANCELLED">Cancelled</option>
+                    </select>
+                  }
                 >
                   Status
                 </SortableHeader>
@@ -1389,7 +1448,26 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '6.5rem' }}
+                  filter={
+                    <input
+                      type="text"
+                      placeholder="00000000"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{
+                        ...headerFilterStyle,
+                        cursor: 'text',
+                        width: '8.5ch',
+                        minWidth: '8.5ch',
+                        maxWidth: '8.5ch',
+                        fontFamily: 'monospace',
+                        fontSize: '11px',
+                      }}
+                      aria-label="Search by job id prefix"
+                      title="Filter by job id (prefix)"
+                    />
+                  }
                 >
                   Job ID
                 </SortableHeader>
@@ -1398,34 +1476,127 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: viewingAllTenants ? '14%' : '16%' }}
+                  filter={
+                    <select
+                      value={modelFilter}
+                      onChange={(e) => setModelFilter(e.target.value)}
+                      style={headerFilterStyle}
+                      aria-label="Filter by model"
+                    >
+                      <option value="ALL">All</option>
+                      {modelStats.map((m) => (
+                        <option key={m.modelId} value={m.modelId}>
+                          {m.modelId.split('/').pop() || m.modelId}
+                        </option>
+                      ))}
+                    </select>
+                  }
                 >
                   Model
                 </SortableHeader>
+                {viewingAllTenants && (
+                  <SortableHeader
+                    column="tenant_id"
+                    currentSortKey={jobSortKey}
+                    currentSortDir={jobSortDir}
+                    onSort={handleJobSort}
+                    style={{ padding: '8px 6px', width: '10%' }}
+                    filter={
+                      <select
+                        value={tenantFilter}
+                        onChange={(e) => setTenantFilter(e.target.value)}
+                        style={headerFilterStyle}
+                        aria-label="Filter by tenant"
+                      >
+                        <option value="ALL">All</option>
+                        {tenantStats.map((t) => (
+                          <option key={t.tenantId} value={t.tenantId}>
+                            {t.tenantId}
+                          </option>
+                        ))}
+                      </select>
+                    }
+                  >
+                    Tenant
+                  </SortableHeader>
+                )}
                 <SortableHeader
-                  column="provider"
+                  column="hardware"
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '14%' }}
+                  filter={
+                    <select
+                      value={computeFilter}
+                      onChange={(e) => setComputeFilter(e.target.value)}
+                      style={headerFilterStyle}
+                      aria-label="Filter by compute engine"
+                    >
+                      <option value="ALL">All</option>
+                      {computeFilterOptions.map((label) => (
+                        <option key={label} value={label}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  }
                 >
-                  Provider &amp; Hardware
+                  Compute / HW
                 </SortableHeader>
                 <SortableHeader
                   column="mode"
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '10%' }}
+                  filter={
+                    <select
+                      value={modeFilter}
+                      onChange={(e) => setModeFilter(e.target.value)}
+                      style={headerFilterStyle}
+                      aria-label="Filter by placement mode"
+                    >
+                      <option value="ALL">All</option>
+                      <option value="spot">Spot</option>
+                      <option value="on_demand">On-Demand</option>
+                      <option value="serverless">Serverless</option>
+                      <option value="token_factory">Token Factory</option>
+                      <option value="pay_per_call">Pay-Per-Call</option>
+                      <option value="local">Local</option>
+                    </select>
+                  }
                 >
-                  Mode
+                  Placement
+                </SortableHeader>
+                <SortableHeader
+                  column="inference"
+                  currentSortKey={jobSortKey}
+                  currentSortDir={jobSortDir}
+                  onSort={handleJobSort}
+                  style={{ padding: '8px 6px', width: '8%' }}
+                  filter={
+                    <select
+                      value={inferenceFilter}
+                      onChange={(e) => setInferenceFilter(e.target.value)}
+                      style={headerFilterStyle}
+                      aria-label="Filter by inference mode"
+                    >
+                      <option value="ALL">All</option>
+                      <option value="mock">Mock</option>
+                      <option value="real">Real</option>
+                    </select>
+                  }
+                >
+                  Inference
                 </SortableHeader>
                 <SortableHeader
                   column="progress"
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '8%' }}
                 >
                   Progress
                 </SortableHeader>
@@ -1434,7 +1605,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '8%' }}
                 >
                   Duration
                 </SortableHeader>
@@ -1443,33 +1614,32 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '9%' }}
                 >
-                  Tokens &amp; Cost
+                  Tokens
                 </SortableHeader>
                 <SortableHeader
                   column="created_at"
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '10px 10px' }}
+                  style={{ padding: '8px 6px', width: '9%' }}
                 >
                   Submitted
                 </SortableHeader>
-                <th style={{ padding: '10px 10px', textAlign: 'right', color: '#94a3b8', fontWeight: 600 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && jobs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={viewingAllTenants ? 11 : 10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     Loading inference jobs...
                   </td>
                 </tr>
               ) : sortedJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
-                    No inference jobs match the current filters. Click "+ Submit Job" to enqueue one.
+                  <td colSpan={viewingAllTenants ? 11 : 10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                    No inference jobs match the current filters. Click a row for job actions, or "+ Submit Job" to enqueue one.
                   </td>
                 </tr>
               ) : (
@@ -1480,8 +1650,9 @@ export function JobsView({
                   const costUsd = ((job.usage?.cost_microcents ?? 0) / 100_000_000).toFixed(5);
                   const progressPct = job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0);
                   const mode = getJobExecutionMode(job);
+                  const inference = getJobInferenceMode(job);
                   const hardware = getJobHardware(job);
-                  const { label: providerBadge, isAuto } = getProviderBadgeLabel(job);
+                  const computeLabel = getJobComputeLabel(job);
                   const isIdExpanded = expandedJobIds.has(job.job_id);
 
                   return (
@@ -1496,7 +1667,7 @@ export function JobsView({
                       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#1e293b')}
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
-                      <td style={{ padding: '10px 10px' }}>
+                      <td style={{ padding: '8px 6px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start' }}>
                           <StatusBadge status={job.status} size="sm" />
                           {job.status === 'RETRYING' && (
@@ -1517,7 +1688,7 @@ export function JobsView({
                           )}
                         </div>
                       </td>
-                      <td style={{ padding: '10px 10px', fontFamily: 'monospace', fontSize: '12px' }}>
+                      <td style={{ padding: '8px 6px', fontFamily: 'monospace', fontSize: '12px' }}>
                         <button
                           type="button"
                           onClick={(e) => toggleExpandJobId(job.job_id, e)}
@@ -1541,32 +1712,42 @@ export function JobsView({
                         </button>
                       </td>
                       <td
-                        style={{ padding: '10px 10px', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap' }}
+                        style={{ padding: '8px 6px', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap' }}
                         title={job.model_id}
                       >
                         {formatModelName(job.model_id)}
                       </td>
-                      <td style={{ padding: '10px 10px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span
-                            style={{
-                              fontSize: '11px',
-                              padding: '2px 7px',
-                              borderRadius: '4px',
-                              backgroundColor: isAuto ? 'rgba(99, 102, 241, 0.15)' : 'rgba(56, 189, 248, 0.1)',
-                              color: isAuto ? '#818cf8' : '#38bdf8',
-                              fontWeight: 700,
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {providerBadge}
-                          </span>
+                      {viewingAllTenants && (
+                        <td style={{ padding: '8px 6px', fontFamily: 'monospace', color: '#10b981', whiteSpace: 'nowrap' }}>
+                          {job.tenant_id || 'tenant-default'}
+                        </td>
+                      )}
+                      <td style={{ padding: '8px 6px' }}>
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: computeLabel.startsWith('CPU')
+                              ? 'rgba(148, 163, 184, 0.15)'
+                              : 'rgba(56, 189, 248, 0.12)',
+                            color: computeLabel.startsWith('CPU') ? '#cbd5e1' : '#38bdf8',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            display: 'inline-block',
+                          }}
+                          title="Device class / execution engine"
+                        >
+                          {computeLabel}
                         </div>
-                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px', whiteSpace: 'nowrap' }}>
-                          {hardware}
+                        <div
+                          style={{ color: '#94a3b8', fontSize: '10px', marginTop: '3px', whiteSpace: 'nowrap' }}
+                          title={hardware}
+                        >
+                          {hardware || '—'}
                         </div>
                       </td>
-                      <td style={{ padding: '10px 10px' }}>
+                      <td style={{ padding: '8px 6px' }}>
                         <span
                           style={{
                             fontSize: '11px',
@@ -1599,9 +1780,39 @@ export function JobsView({
                           {mode.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 10px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '40px', height: '5px', backgroundColor: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
+                      <td style={{ padding: '8px 6px' }}>
+                        {inference ? (
+                          <span
+                            title={
+                              inference === 'mock'
+                                ? 'Executed with mock inference (instant / zero VRAM)'
+                                : 'Executed with real inference (PyTorch / cloud provider)'
+                            }
+                            style={{
+                              fontSize: '11px',
+                              padding: '2px 7px',
+                              borderRadius: '4px',
+                              fontWeight: 700,
+                              whiteSpace: 'nowrap',
+                              backgroundColor:
+                                inference === 'mock' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                              color: inference === 'mock' ? '#fbbf24' : '#34d399',
+                              border: `1px solid ${
+                                inference === 'mock' ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)'
+                              }`,
+                            }}
+                          >
+                            {inference === 'mock' ? 'MOCK' : 'REAL'}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: '#64748b' }} title="Inference mode not recorded yet">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <div style={{ width: '28px', height: '4px', backgroundColor: '#334155', borderRadius: '2px', overflow: 'hidden' }}>
                             <div
                               style={{
                                 width: `${progressPct}%`,
@@ -1610,13 +1821,13 @@ export function JobsView({
                               }}
                             />
                           </div>
-                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>{progressPct}%</span>
+                          <span style={{ fontSize: '10px', color: '#94a3b8' }}>{progressPct}%</span>
                         </div>
                       </td>
-                      <td style={{ padding: '10px 10px', color: '#e2e8f0', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      <td style={{ padding: '8px 6px', color: '#e2e8f0', fontSize: '12px', whiteSpace: 'nowrap' }}>
                         {job.duration_ms !== null ? `${job.duration_ms} ms` : '—'}
                       </td>
-                      <td style={{ padding: '10px 10px', fontSize: '12px' }}>
+                      <td style={{ padding: '8px 6px', fontSize: '12px' }}>
                         {totalTok > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
                             <span style={{ color: '#f8fafc', fontWeight: 600 }}>{totalTok.toLocaleString()} tok</span>
@@ -1627,62 +1838,11 @@ export function JobsView({
                         )}
                       </td>
                       <td
-                        style={{ padding: '10px 10px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                        style={{ padding: '8px 6px', fontSize: '12px', whiteSpace: 'nowrap' }}
                         title={new Date(job.created_at).toLocaleString()}
                       >
                         <div style={{ color: '#e2e8f0', fontWeight: 500 }}>{formatTimeAgo(job.created_at)}</div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>{new Date(job.created_at).toLocaleTimeString()}</div>
-                      </td>
-                      <td
-                        style={{ padding: '10px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {(job.status === 'FAILED' || job.status === 'RETRYING') && onRetryJob ? (
-                          <button
-                            onClick={async () => {
-                              await onRetryJob(job.job_id);
-                              onRefresh();
-                            }}
-                            style={{
-                              backgroundColor: job.status === 'RETRYING' ? '#d97706' : '#4f46e5',
-                              color: '#ffffff',
-                              border: 'none',
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
-                            title={job.status === 'RETRYING' ? 'Force immediate retry without waiting for backoff timer' : 'Re-enqueue and retry this failed job'}
-                          >
-                            <span>⚡</span>
-                            <span>{job.status === 'RETRYING' ? 'Retry Now' : 'Retry'}</span>
-                          </button>
-                        ) : (job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED') ? (
-                          <button
-                            onClick={async () => {
-                              await onCancelJob(job.job_id);
-                              onRefresh();
-                            }}
-                            style={{
-                              backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                              color: '#f87171',
-                              border: '1px solid rgba(239, 68, 68, 0.3)',
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        ) : (
-                          <span style={{ color: '#475569', fontSize: '11px' }}>—</span>
-                        )}
                       </td>
                     </tr>
                   );
@@ -1727,6 +1887,15 @@ export function JobsView({
         messages={dlqMessages}
         isLoading={isLoading}
         onRefresh={onRefresh}
+        onDiscardMessage={onDiscardDlqMessage}
+        onInspectJob={async (jobId, tenantId) => {
+          const fromList = jobs.find((j) => j.job_id === jobId) ?? null;
+          const job = fromList ?? (onInspectJobFromDlq ? await onInspectJobFromDlq(jobId, tenantId) : null);
+          if (job) {
+            setIsDlqModalOpen(false);
+            setSelectedJob(job);
+          }
+        }}
       />
     </div>
   );

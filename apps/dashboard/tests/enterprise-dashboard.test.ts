@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getJobExecutionMode,
+  getJobInferenceMode,
   getJobHardware,
+  getJobComputeLabel,
   formatHardwareName,
   formatModelName,
   formatTimeAgo,
@@ -45,6 +47,149 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     assert.equal(getJobExecutionMode({ ...baseJob, routing_preference: 'local' }), 'local');
     assert.equal(getJobExecutionMode({ ...baseJob, provider: 'bedrock' }), 'on_demand');
     assert.equal(getJobExecutionMode({ ...baseJob, execution_mode: 'serverless' }), 'serverless');
+    // mock/live labels must not override placement economics
+    assert.equal(getJobExecutionMode({ ...baseJob, execution_mode: 'mock', provider: 'runpod' }), 'spot');
+  });
+
+  it('resolves mock vs real inference mode from metadata, API fields, and routing', () => {
+    const baseJob: JobItem = {
+      job_id: 'job-inf',
+      tenant_id: 't-1',
+      status: 'SUCCEEDED',
+      model_id: 'meta-llama/Llama-3-8B-Instruct',
+      correlation_id: null,
+      trace_id: null,
+      traceparent: null,
+      routing_preference: 'local/gpu',
+      priority: 5,
+      provider: 'local_pytorch',
+      retry_count: 0,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      duration_ms: 12,
+    };
+
+    assert.equal(getJobInferenceMode({ ...baseJob, inference_mode: 'mock' }), 'mock');
+    assert.equal(getJobInferenceMode({ ...baseJob, inference_mode: 'real' }), 'real');
+    assert.equal(getJobInferenceMode({ ...baseJob, is_mocked: true }), 'mock');
+    assert.equal(getJobInferenceMode({ ...baseJob, is_mocked: false }), 'real');
+    assert.equal(
+      getJobInferenceMode({
+        ...baseJob,
+        result: { metadata: { is_mocked: true, execution_mode: 'mock' } },
+      }),
+      'mock'
+    );
+    assert.equal(
+      getJobInferenceMode({
+        ...baseJob,
+        result: { metadata: { is_mocked: false, execution_mode: 'live' } },
+      }),
+      'real'
+    );
+    assert.equal(getJobInferenceMode({ ...baseJob, routing_preference: 'mock' }), 'mock');
+    assert.equal(getJobInferenceMode({ ...baseJob, job_id: '00000000-0000-4000-a000-000000000001' }), 'mock');
+    // Ultra-short local durations without metadata are treated as mock legacy paths.
+    assert.equal(getJobInferenceMode(baseJob), 'mock');
+    assert.equal(getJobInferenceMode({ ...baseJob, duration_ms: 2500 }), null);
+  });
+
+  it('labels compute as CPU/GPU + engine and appends VRAM to hardware', () => {
+    const baseJob: JobItem = {
+      job_id: 'job-hw',
+      tenant_id: 't-1',
+      status: 'SUCCEEDED',
+      model_id: 'meta-llama/Llama-3-8B-Instruct',
+      correlation_id: null,
+      trace_id: null,
+      traceparent: null,
+      routing_preference: 'local/gpu',
+      priority: 5,
+      provider: 'local',
+      retry_count: 0,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      duration_ms: 120,
+      result: { metadata: { engine_executed: 'torchscript', device: 'cuda' } },
+    };
+
+    assert.equal(getJobComputeLabel(baseJob), 'GPU/torchscript');
+    assert.match(getJobHardware(baseJob), /RTX 5070 Ti \(16 GB\)/);
+    assert.match(formatHardwareName('NVIDIA GeForce RTX 4090'), /RTX 4090 \(24 GB\)/);
+    assert.equal(
+      getJobComputeLabel({
+        ...baseJob,
+        routing_preference: 'local/cpu',
+        provider: 'local',
+        result: { metadata: { engine_executed: 'eager', device: 'cpu' } },
+      }),
+      'CPU/eager'
+    );
+    // engine_executed=auto should resolve via telemetry backend, not display "Auto"
+    assert.equal(
+      getJobComputeLabel({
+        ...baseJob,
+        result: {
+          metadata: {
+            engine_executed: 'auto',
+            engine_requested: 'auto',
+            telemetry: { backend: 'pytorch_cuda', device_type: 'cuda', device_name: 'NVIDIA GeForce RTX 5070 Ti' },
+          },
+        },
+      }),
+      'GPU/eager'
+    );
+    assert.equal(
+      getJobComputeLabel({
+        ...baseJob,
+        result: {
+          metadata: {
+            engine_executed: 'auto',
+            engine_requested: 'auto',
+            telemetry: {
+              backend: 'pytorch_torchscript_cuda',
+              device_type: 'cuda',
+              device_name: 'NVIDIA GeForce RTX 5070 Ti',
+            },
+          },
+        },
+      }),
+      'GPU/TorchScript_auto'
+    );
+    assert.equal(
+      getJobComputeLabel({
+        ...baseJob,
+        result: { metadata: { engine_executed: 'torch-compile', device: 'cuda' } },
+      }),
+      'GPU/Pytorch 2.x'
+    );
+    assert.equal(
+      formatHardwareName('AMD Ryzen 9 7900 12-Core Processor'),
+      'Ryzen 9 7900'
+    );
+    assert.equal(formatHardwareName('Intel/AMD CPU'), 'CPU');
+    // Failed/cancelled still surface planned HW + inference when metadata is sparse
+    assert.match(
+      getJobHardware({
+        ...baseJob,
+        status: 'CANCELLED',
+        provider: 'fal',
+        routing_preference: 'auto',
+        result: { metadata: { showcase: true, is_mocked: true } },
+      }),
+      /Tensor Core/
+    );
+    assert.equal(
+      getJobInferenceMode({
+        ...baseJob,
+        status: 'FAILED',
+        duration_ms: 12,
+        result: { metadata: { showcase: true, is_mocked: true } },
+      }),
+      'mock'
+    );
   });
 
   it('accurately identifies modern cloud GPU hardware ecosystem chips', () => {
@@ -89,12 +234,12 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
   });
 
   it('formats hardware names into compact representations without redundant descriptions', () => {
-    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5070 Ti (16GB)'), 'RTX 5070 Ti');
-    assert.equal(formatHardwareName('NVIDIA GeForce RTX 4090 (24GB)'), 'RTX 4090');
-    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5090 Blackwell (32GB)'), 'RTX 5090 Blackwell');
-    assert.equal(formatHardwareName('NVIDIA H100 SXM5 (80GB)'), 'H100 SXM5');
-    assert.equal(formatHardwareName('NVIDIA H200 SXM (141GB HBM3e)'), 'H200 SXM');
-    assert.equal(formatHardwareName('NVIDIA L4 Tensor Core (24GB)'), 'L4 Tensor Core');
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5070 Ti (16GB)'), 'RTX 5070 Ti (16 GB)');
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 4090 (24GB)'), 'RTX 4090 (24 GB)');
+    assert.equal(formatHardwareName('NVIDIA GeForce RTX 5090 Blackwell (32GB)'), 'RTX 5090 Blackwell (32 GB)');
+    assert.equal(formatHardwareName('NVIDIA H100 SXM5 (80GB)'), 'H100 SXM5 (80 GB)');
+    assert.equal(formatHardwareName('NVIDIA H200 SXM (141GB HBM3e)'), 'H200 SXM (141 GB)');
+    assert.equal(formatHardwareName('NVIDIA L4 Tensor Core (24GB)'), 'L4 Tensor Core (24 GB)');
     assert.equal(formatHardwareName('CPU Xeon/EPYC Fallback'), 'CPU Fallback');
   });
 
@@ -165,13 +310,13 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
       provider: 'local_pytorch',
     });
     assert.equal(explicitLocal.isAuto, false);
-    assert.equal(explicitLocal.label, 'LOCAL_PYTORCH');
+    assert.equal(explicitLocal.label, 'LOCAL');
   });
 
   it('registers all 14 enterprise neocloud and on-prem providers', () => {
     assert.equal(ALL_PLATFORM_PROVIDERS.length, 14);
     const providerIds = ALL_PLATFORM_PROVIDERS.map((p) => p.id);
-    assert.ok(providerIds.includes('local_pytorch'));
+    assert.ok(providerIds.includes('local'));
     assert.ok(providerIds.includes('runpod'));
     assert.ok(providerIds.includes('vast_ai'));
     assert.ok(providerIds.includes('baseten'));

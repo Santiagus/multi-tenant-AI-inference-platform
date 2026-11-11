@@ -56,6 +56,9 @@ export interface JobItem {
   priority: number;
   provider: string | null;
   execution_mode?: 'on_demand' | 'spot' | 'serverless' | 'token_factory' | 'local' | string;
+  /** Whether the job ran mock or real inference (from worker metadata). */
+  inference_mode?: 'mock' | 'real' | null;
+  is_mocked?: boolean | null;
   hardware?: string;
   retry_count: number;
   max_retries?: number;
@@ -69,6 +72,13 @@ export interface JobItem {
   progress_pct?: number;
   progress?: JobProgress | null;
   usage?: JobUsage;
+  /** Submitted prompt text (from input_payload). */
+  prompt?: string | null;
+  /** Model / inference parameters submitted with the job. */
+  parameters?: Record<string, unknown> | null;
+  input_uri?: string | null;
+  /** Full input payload as stored (prompt, parameters, internal flags). */
+  input?: Record<string, unknown> | null;
   result?: Record<string, unknown>;
   artifacts?: JobArtifact[];
   error?: {
@@ -91,10 +101,15 @@ export interface DlqMessage {
   correlation_id: string | null;
   traceparent: string | null;
   model_id: string;
+  routing_preference?: string;
   error_code: string;
   failure_reason: string;
   retry_count: number;
   failed_at: string;
+  prompt?: string | null;
+  parameters?: Record<string, unknown> | null;
+  input_uri?: string | null;
+  input?: Record<string, unknown> | null;
 }
 
 export interface ProviderProfile {

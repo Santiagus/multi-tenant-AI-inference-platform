@@ -66,7 +66,7 @@ const PROVIDER_METRICS_INFO: Record<
     testCommand: 'curl -s https://api.runware.ai/v1/models',
   },
   local_pytorch: {
-    displayName: 'Local PyTorch Workstation',
+    displayName: 'Local PyTorch',
     websiteUrl: '#local-hardware',
     docsUrl: '#local-hardware',
     testCommand: 'python3 -c "import torch; print(torch.cuda.get_device_name(0))"',

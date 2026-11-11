@@ -585,7 +585,16 @@ Authorization: Bearer {{apiKey}}
 ###
 
 # 6.6 Inspect Dead-Letter Queue (DLQ) Messages for Tenant
+# @name listDlqMessages
 GET {{baseUrl}}/v1/jobs/dlq
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 6.7 Discard a DLQ poison-pill envelope (keeps durable FAILED job)
+@dlqMessageId = {{listDlqMessages.response.body.messages.0.message_id}}
+DELETE {{baseUrl}}/v1/jobs/dlq/{{dlqMessageId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
@@ -2174,7 +2183,88 @@ POST {{baseUrl}}/v1/admin/showcase/seed
 # Cleanly deletes records matching 00000000-* and reverts to real data mode
 POST {{baseUrl}}/v1/admin/showcase/purge
 
+###
 
+### ==============================================================================
+### USE CASE 19: Cross-Provider Same-Job Cold/Warm/Load Comparison
+### Trigger identical jobs across providers, then use recommend-options picks.
+### CLI evidence harness: `make benchmark-providers`
+### Live probe: `.venv/bin/python benchmarks/run_provider_comparison.py --mode api --live-adapters-only`
+### ==============================================================================
 
+# 19.1 Health before provider probe matrix
+GET {{baseUrl}}/healthz
 
+###
+
+# 19.2 Submit identical canonical job pinned to local GPU (cold/warm sample #1)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "max_retries": 1,
+  "input": {
+    "prompt": "Explain Raft consensus leader election for multi-tenant GPU inference workers and how lease-based visibility timeouts interact with SQS backoff under load.",
+    "parameters": {
+      "provider": "local_pytorch",
+      "device": "cuda",
+      "max_new_tokens": 64,
+      "provider_comparison_probe": true
+    }
+  }
+}
+
+###
+
+# 19.3 Process next queued job (worker drain)
+POST {{baseUrl}}/v1/worker/process-next
+Content-Type: application/json
+
+{
+  "count": 1
+}
+
+###
+
+# 19.4 Submit identical job pinned to RunPod routing
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cloud/runpod",
+  "priority": 5,
+  "max_retries": 1,
+  "input": {
+    "prompt": "Explain Raft consensus leader election for multi-tenant GPU inference workers and how lease-based visibility timeouts interact with SQS backoff under load.",
+    "parameters": {
+      "provider": "runpod",
+      "max_new_tokens": 64,
+      "provider_comparison_probe": true
+    }
+  }
+}
+
+###
+
+# 19.5 FinOps catalog recommendations (cheapest / fastest / balanced / recommended)
+POST {{baseUrl}}/v1/finops/recommend-options
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "prompt_tokens": 128,
+  "max_new_tokens": 64
+}
+
+###
 

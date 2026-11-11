@@ -492,7 +492,14 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
       const device = String(
         params.device ?? (pref.includes('gpu') ? 'cuda' : 'cpu')
       );
-      const engine = String(params.engine ?? 'auto');
+      const engineRequested = String(params.engine ?? 'auto');
+      // Resolve AUTO to the concrete engine the mock path actually runs (eager / torchscript / compile / numpy).
+      const engineExecuted =
+        engineRequested === 'auto'
+          ? 'eager'
+          : engineRequested === 'torch-compile' || engineRequested === 'torch_compile'
+            ? 'torch-compile'
+            : engineRequested;
       const requestedProvider = String(
         params.provider ??
           payload.provider ??
@@ -501,6 +508,15 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
       const tokensIn = Math.max(1, prompt.trim().split(/\s+/).length);
       const tokensOut = Number(params.max_new_tokens ?? 6);
       const isCuda = device === 'cuda';
+      const deviceSuffix = isCuda ? 'cuda' : 'cpu';
+      const backend =
+        engineExecuted === 'torch-compile'
+          ? `pytorch_torch_compile_${deviceSuffix}`
+          : engineExecuted === 'torchscript'
+            ? `pytorch_torchscript_${deviceSuffix}`
+            : engineExecuted === 'numpy'
+              ? 'numpy_cpu_fallback'
+              : `pytorch_${deviceSuffix}`;
 
       if (onProgress) {
         onProgress({
@@ -534,8 +550,8 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           warm_start: true,
           model_load_ms: 1.2,
           model_footprint_mb: 0.32,
-          engine_requested: engine,
-          engine_executed: engine,
+          engine_requested: engineRequested,
+          engine_executed: engineExecuted,
           quantization: 'none',
           tier: 1,
           correlation_id: correlationId,
@@ -544,12 +560,8 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           tokens_per_sec: 500.0,
           telemetry: {
             device_type: isCuda ? 'cuda' : 'cpu',
-            device_name: isCuda ? 'NVIDIA GeForce RTX 5070 Ti' : 'Intel/AMD CPU',
-            backend: isCuda
-              ? engine === 'torch-compile'
-                ? 'pytorch_torch_compile_cuda'
-                : 'pytorch_cuda'
-              : 'pytorch_cpu',
+            device_name: isCuda ? 'NVIDIA GeForce RTX 5070 Ti' : 'AMD Ryzen 9 7900 12-Core Processor',
+            backend,
             vram_allocated_mb: isCuda ? 32.33 : 0,
             vram_reserved_mb: isCuda ? 34.0 : 0,
             vram_peak_mb: isCuda ? 32.58 : 0,

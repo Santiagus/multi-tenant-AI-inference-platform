@@ -4,7 +4,7 @@ export PATH := $(CURDIR)/.venv/bin:$(PATH)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT := 0
 export COREPACK_HOME := $(CURDIR)/.cache/corepack
 
-.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform validate-gitops sync-models benchmark-engines benchmark-inference benchmark-production-reality check-providers setup-mcp check-mcp setup-dev local-argocd local-argocd-ui local-sync-images load-test demo
+.PHONY: all help init format format-check lint validate-mermaid typecheck test scan handoff-check ci install-hooks simulate-observability validate-k8s validate-terraform validate-gitops sync-models benchmark-engines benchmark-inference benchmark-production-reality benchmark-providers check-providers setup-mcp check-mcp setup-dev local-argocd local-argocd-ui local-sync-images load-test demo
 
 all: ci
 
@@ -31,6 +31,7 @@ help:
 	@echo "  make benchmark-engines      - Run multi-engine category benchmark sweep (NumPy, PyTorch, Compile)"
 	@echo "  make benchmark-inference    - Run concurrency and prompt-tier inference benchmark"
 	@echo "  make benchmark-production-reality - Run dynamic shape churn and cold scaling production test"
+	@echo "  make benchmark-providers    - Opt-in same-job cold/warm/load provider probe (not in make test)"
 	@echo "  make check-providers        - Run provider and hardware acceleration diagnostics"
 	@echo "  make setup-mcp              - Synchronize MCP server tools and keys for Antigravity, Claude, and VS Code"
 	@echo "  make check-mcp              - Verify MCP server configurations and connectivity probes"
@@ -121,6 +122,12 @@ benchmark-inference:
 benchmark-production-reality:
 	@echo "==> Running production reality dynamic shape churn and cold scaling test..."
 	@$(PYTHON) benchmarks/run_production_reality_test.py
+
+benchmark-providers:
+	@echo "==> Running cross-provider same-job cold/warm/load comparison (opt-in; not part of make test)..."
+	@MOCK_PROVIDERS=1 MOCK_INFERENCE=1 INFERENCE_MOCK_MODE=true $(PYTHON) -m unittest benchmarks.test_provider_comparison -v
+	@$(PYTHON) benchmarks/run_provider_comparison.py --mode simulate
+	@echo "Tip: live API probe → $(PYTHON) benchmarks/run_provider_comparison.py --mode api --live-adapters-only"
 
 check-providers:
 	@echo "==> Checking provider and hardware diagnostics..."

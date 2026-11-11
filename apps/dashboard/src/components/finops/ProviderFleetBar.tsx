@@ -396,7 +396,7 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
   },
   {
     provider: 'local_pytorch',
-    displayName: 'Local PyTorch (RTX 5070 Ti)',
+    displayName: 'Local PyTorch',
     isHealthy: true,
     syncStatus: 'live',
     lastSyncedAt: new Date().toISOString(),
@@ -414,7 +414,8 @@ export const DEFAULT_PROVIDER_FLEET: ProviderFleetStatus[] = [
     billingUrl: '#zero-cloud-spend',
     syncDocUrl: 'http://localhost:3000/metrics',
     cadenceDocUrl: '#workstation-daemon',
-    cadenceExplanation: 'Real-time Local: Dedicated workstation GPU (NVIDIA RTX 5070 Ti 16GB) running on local host with zero network latency.',
+    cadenceExplanation:
+      'Real-time Local: On-host PyTorch worker (CUDA when available, otherwise CPU) with zero network latency.',
     spotPolicy: {
       noticeWindowMinutes: 0,
       noticeWindowLabel: 'Dedicated local process',

@@ -1,7 +1,19 @@
+import type { CSSProperties } from 'react';
+
 interface HeaderProps {
   tenantId: string;
   onTenantChange: (tenant: string) => void;
-  apiHealthy: boolean;
+  apiHealthy?: boolean;
+  stage?: string;
+  autoRefresh: boolean;
+  onAutoRefreshToggle: () => void;
+  onManualRefresh: () => void;
+  isRefreshing: boolean;
+  onPurgeTenantData?: () => Promise<void>;
+  isPurgingTenant?: boolean;
+  onSeedShowcaseData?: () => Promise<void>;
+  isSeedingShowcase?: boolean;
+  // Optional backwards compatibility props
   dataSource?: 'real' | 'mock';
   inferenceMode?: 'mock' | 'real';
   onToggleInferenceMode?: (mode: 'mock' | 'real') => Promise<void>;
@@ -9,11 +21,6 @@ interface HeaderProps {
   isProcessingWorker?: boolean;
   inFlightCount?: number;
   workerFeedback?: string | null;
-  stage?: string;
-  autoRefresh: boolean;
-  onAutoRefreshToggle: () => void;
-  onManualRefresh: () => void;
-  isRefreshing: boolean;
   onToggleShowcase?: (action: 'seed' | 'purge') => Promise<void>;
   isTogglingShowcase?: boolean;
 }
@@ -65,27 +72,37 @@ function getStageBadgeStyle(stage = 'LOCAL') {
   };
 }
 
+function serviceLinkStyle(color: string, bg: string, border: string): CSSProperties {
+  return {
+    fontSize: '11px',
+    color,
+    backgroundColor: bg,
+    border: `1px solid ${border}`,
+    padding: '3px 10px',
+    borderRadius: '5px',
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontWeight: 600,
+    transition: 'all 0.15s ease',
+  };
+}
+
 export function Header({
   tenantId,
   onTenantChange,
-  apiHealthy: _apiHealthy,
-  dataSource = 'real',
-  inferenceMode = 'mock',
-  onToggleInferenceMode,
-  onProcessNext,
-  isProcessingWorker = false,
-  inFlightCount = 0,
-  workerFeedback = null,
   stage = 'LOCAL',
   autoRefresh,
   onAutoRefreshToggle,
   onManualRefresh,
   isRefreshing,
-  onToggleShowcase,
-  isTogglingShowcase = false,
+  onPurgeTenantData,
+  isPurgingTenant = false,
+  onSeedShowcaseData,
+  isSeedingShowcase = false,
 }: HeaderProps) {
-  const isMock = dataSource === 'mock';
   const stageStyle = getStageBadgeStyle(stage);
+  const isLocalOrDev = stage.toUpperCase().includes('LOCAL') || stage.toUpperCase().includes('DEV');
 
   return (
     <header
@@ -97,7 +114,7 @@ export function Header({
         width: '100%',
       }}
     >
-      {/* ROW 1: AI Inference Platform & STAGE Badge (Left) | Refresh Controls & Enable Demo (Right) */}
+      {/* ROW 1: Brand (Left) | Stage Info (Right) */}
       <div
         style={{
           display: 'flex',
@@ -109,7 +126,7 @@ export function Header({
           flexWrap: 'wrap',
         }}
       >
-        {/* Top Left: Logo, Title, and Stage Badge */}
+        {/* Top Left: Logo & Title (no local badge, no enterprise control plane badge) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div
             style={{
@@ -130,56 +147,87 @@ export function Header({
             AI
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <h1 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc', margin: 0, whiteSpace: 'nowrap' }}>
-                AI Inference Platform
-              </h1>
-              {/* STAGE Badge */}
-              <span
-                data-testid="stage-badge"
-                title={`Active Deployment Stage: ${stageStyle.label}`}
-                style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  backgroundColor: stageStyle.bg,
-                  color: stageStyle.color,
-                  border: stageStyle.border,
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  whiteSpace: 'nowrap',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                <span>{stageStyle.icon}</span>
-                <span>{stageStyle.label}</span>
-              </span>
-              <span
-                style={{
-                  fontSize: '10px',
-                  fontWeight: 600,
-                  backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                  color: '#a5b4fc',
-                  padding: '2px 7px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(99, 102, 241, 0.3)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Enterprise Control Plane
-              </span>
-            </div>
+            <h1 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc', margin: 0, whiteSpace: 'nowrap' }}>
+              AI Inference Platform
+            </h1>
             <p style={{ fontSize: '11px', color: '#64748b', margin: 0, whiteSpace: 'nowrap' }}>
               Two-Path Asynchronous Inference &amp; FinOps Ledger
             </p>
           </div>
         </div>
 
-        {/* Top Right: Refresh Controls, Enable Demo Toggle & Real/Mock Badge */}
+        {/* Top Right: Stage info (just Stage: <STAGE>) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            data-testid="stage-badge"
+            title={`Active Deployment Stage: ${stageStyle.label}`}
+            style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              backgroundColor: stageStyle.bg,
+              color: stageStyle.color,
+              border: stageStyle.border,
+              padding: '4px 10px',
+              borderRadius: '6px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              whiteSpace: 'nowrap',
+              letterSpacing: '0.04em',
+            }}
+          >
+            <span>{stageStyle.icon}</span>
+            <span>Stage: {stageStyle.label}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: Tenant Selection & Refresh Controls */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 24px',
+          backgroundColor: '#0c1322',
+          borderBottom: '1px solid #1e293b',
+          gap: '14px',
+          flexWrap: 'wrap',
+        }}
+      >
+        {/* Left: Tenant Dropdown, Refresh Controls & Debug Purge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          {/* Auto Refresh & Manual Refresh */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Tenant:
+            </span>
+            <select
+              data-testid="tenant-select"
+              value={tenantId}
+              onChange={(e) => onTenantChange(e.target.value)}
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#f8fafc',
+                border: '1px solid #334155',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                fontWeight: 600,
+                outline: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="ALL">All Tenants</option>
+              <option value="tenant-default">tenant-default</option>
+              <option value="tenant-demo">tenant-demo (Showcase / All Possibilities)</option>
+              <option value="tenant-dev">tenant-dev (Development / Sandbox)</option>
+              <option value="tenant-acme">tenant-acme</option>
+              <option value="tenant-finops">tenant-finops</option>
+              <option value="tenant-enterprise">tenant-enterprise</option>
+            </select>
+          </div>
+
+          {/* Auto Refresh & Force Refresh Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <button
               onClick={onAutoRefreshToggle}
@@ -188,7 +236,7 @@ export function Header({
                 backgroundColor: autoRefresh ? 'rgba(99, 102, 241, 0.2)' : '#1e293b',
                 color: autoRefresh ? '#a5b4fc' : '#94a3b8',
                 border: `1px solid ${autoRefresh ? '#6366f1' : '#334155'}`,
-                padding: '6px 11px',
+                padding: '5px 10px',
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 600,
@@ -205,13 +253,13 @@ export function Header({
                 backgroundColor: '#6366f1',
                 color: '#ffffff',
                 border: 'none',
-                padding: '6px 13px',
+                padding: '5px 12px',
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 600,
                 cursor: isRefreshing ? 'wait' : 'pointer',
                 opacity: isRefreshing ? 0.75 : 1,
-                minWidth: '85px',
+                minWidth: '80px',
                 textAlign: 'center',
                 whiteSpace: 'nowrap',
               }}
@@ -220,317 +268,62 @@ export function Header({
             </button>
           </div>
 
-          {/* Enable / Clear Demo Button */}
-          {onToggleShowcase && (
+          {/* Showcase seed: populate tenant-demo with all statuses / providers / HW */}
+          {isLocalOrDev && tenantId === 'tenant-demo' && onSeedShowcaseData && (
             <button
-              onClick={() => onToggleShowcase(isMock ? 'purge' : 'seed')}
-              disabled={isTogglingShowcase || isRefreshing}
-              title={
-                isMock
-                  ? 'Purge showcase demo data and revert dashboard to real data mode'
-                  : 'Populate 30 inference jobs, 688 pricing fluctuation snapshots & audits on the fly'
-              }
+              data-testid="seed-showcase-data"
+              onClick={onSeedShowcaseData}
+              disabled={isSeedingShowcase}
+              title="Seed showcase jobs covering every status, provider, hardware, and execution mode"
               style={{
-                backgroundColor: isMock ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                color: isMock ? '#fca5a5' : '#38bdf8',
-                border: `1px solid ${isMock ? 'rgba(239, 68, 68, 0.35)' : 'rgba(56, 189, 248, 0.35)'}`,
-                padding: '6px 12px',
+                backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                color: '#34d399',
+                border: '1px solid rgba(16, 185, 129, 0.35)',
+                padding: '5px 10px',
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 600,
-                cursor: isTogglingShowcase || isRefreshing ? 'wait' : 'pointer',
+                cursor: isSeedingShowcase ? 'wait' : 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '5px',
                 whiteSpace: 'nowrap',
-                transition: 'all 0.15s ease',
               }}
             >
-              <span>{isMock ? '🗑️' : '✨'}</span>
-              <span>
-                {isTogglingShowcase
-                  ? isMock
-                    ? 'Clearing...'
-                    : 'Populating...'
-                  : isMock
-                    ? 'Clear Demo Data'
-                    : 'Enable Demo Data'}
-              </span>
+              <span>{isSeedingShowcase ? 'Seeding showcase...' : 'Seed Showcase Data'}</span>
             </button>
           )}
 
-          {/* Real vs Mock Data Indicator Badge */}
-          <div
-            data-testid="data-source-badge"
-            title={
-              isMock
-                ? 'Injected demonstration dataset for showcase and offline preview'
-                : 'Live production/development data queried from connected APIs and PostgreSQL database'
-            }
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '11px',
-              fontWeight: 700,
-              color: isMock ? '#fbbf24' : '#34d399',
-              backgroundColor: isMock ? 'rgba(245, 158, 11, 0.12)' : 'rgba(16, 185, 129, 0.12)',
-              padding: '6px 11px',
-              borderRadius: '6px',
-              border: `1px solid ${isMock ? 'rgba(245, 158, 11, 0.35)' : 'rgba(16, 185, 129, 0.35)'}`,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span
-              style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                backgroundColor: isMock ? '#f59e0b' : '#10b981',
-                boxShadow: isMock ? '0 0 5px #f59e0b' : '0 0 5px #10b981',
-              }}
-            />
-            <span>{isMock ? 'MOCK / SHOWCASE' : 'REAL DATA'}</span>
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 500,
-                color: isMock ? '#fde68a' : '#a7f3d0',
-                opacity: 0.9,
-              }}
-            >
-              {isMock ? '(Demo)' : '(Live DB)'}
-            </span>
-          </div>
-
-          {/* Local Mock vs Real Inference Mode Toggle */}
-          <div
-            data-testid="inference-mode-toggle"
-            title="Toggle local worker execution: Mock (instant, synthetic telemetry) vs Real (PyTorch / NVIDIA RTX 5070 Ti / CPU)"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              backgroundColor: '#1e293b',
-              borderRadius: '6px',
-              padding: '2px',
-              border: '1px solid #334155',
-            }}
-          >
+          {/* Debug Utility Button: Remove all tenant data for tenant-dev in local/dev */}
+          {isLocalOrDev && tenantId === 'tenant-dev' && onPurgeTenantData && (
             <button
-              onClick={() => onToggleInferenceMode?.('mock')}
+              data-testid="debug-purge-tenant-data"
+              onClick={onPurgeTenantData}
+              disabled={isPurgingTenant}
+              title="Debug Utility: Purge all jobs and test data for tenant-dev (only available for local/dev)"
               style={{
-                backgroundColor: inferenceMode === 'mock' ? 'rgba(99, 102, 241, 0.35)' : 'transparent',
-                color: inferenceMode === 'mock' ? '#a5b4fc' : '#64748b',
-                border: inferenceMode === 'mock' ? '1px solid #6366f1' : '1px solid transparent',
-                borderRadius: '4px',
-                padding: '4px 9px',
-                fontSize: '11px',
-                fontWeight: inferenceMode === 'mock' ? 700 : 500,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>⚡</span>
-              <span>Mock</span>
-            </button>
-            <button
-              onClick={() => onToggleInferenceMode?.('real')}
-              style={{
-                backgroundColor: inferenceMode === 'real' ? 'rgba(239, 68, 68, 0.25)' : 'transparent',
-                color: inferenceMode === 'real' ? '#f87171' : '#64748b',
-                border: inferenceMode === 'real' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
-                borderRadius: '4px',
-                padding: '4px 9px',
-                fontSize: '11px',
-                fontWeight: inferenceMode === 'real' ? 700 : 500,
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>🔥</span>
-              <span>Real PyTorch</span>
-            </button>
-          </div>
-
-          {/* Process Next (Worker Trigger) Button */}
-          {onProcessNext && (
-            <button
-              data-testid="header-process-next"
-              onClick={onProcessNext}
-              disabled={isProcessingWorker}
-              title="POST /v1/worker/process-next - Triggers worker tick to dequeue and process next queued job from SQS (no terminal / Swagger required)"
-              style={{
-                backgroundColor: 'rgba(56, 189, 248, 0.16)',
-                color: '#38bdf8',
-                border: '1px solid rgba(56, 189, 248, 0.45)',
-                padding: '6px 12px',
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                padding: '5px 10px',
                 borderRadius: '6px',
                 fontSize: '11px',
-                fontWeight: 700,
-                cursor: isProcessingWorker ? 'wait' : 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>{isProcessingWorker ? '⏳' : '▶'}</span>
-              <span>{isProcessingWorker ? 'Processing...' : 'Process Next'}</span>
-              {inFlightCount !== undefined && inFlightCount > 0 && (
-                <span
-                  style={{
-                    backgroundColor: '#0284c7',
-                    color: '#ffffff',
-                    fontSize: '10px',
-                    fontWeight: 800,
-                    padding: '1px 5px',
-                    borderRadius: '10px',
-                  }}
-                >
-                  {inFlightCount}
-                </span>
-              )}
-            </button>
-          )}
-
-          {workerFeedback && (
-            <span
-              style={{
-                fontSize: '11px',
-                color: workerFeedback.includes('failed') ? '#f87171' : '#38bdf8',
-                backgroundColor: 'rgba(15, 23, 42, 0.8)',
-                border: '1px solid #334155',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {workerFeedback}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* ROW 2: Tenant Selection & Related Filters */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 24px',
-          backgroundColor: '#0c1322',
-          borderBottom: '1px solid #1e293b',
-          gap: '14px',
-          flexWrap: 'wrap',
-        }}
-      >
-        {/* Left: Tenant Dropdown & Scope Pills */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Tenant:
-            </span>
-            <select
-              value={tenantId}
-              onChange={(e) => onTenantChange(e.target.value)}
-              style={{
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #334155',
-                padding: '4px 10px',
-                borderRadius: '6px',
-                fontSize: '12px',
                 fontWeight: 600,
-                outline: 'none',
-                cursor: 'pointer',
+                cursor: isPurgingTenant ? 'wait' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                whiteSpace: 'nowrap',
               }}
             >
-              <option value="tenant-default">tenant-default</option>
-              <option value="tenant-acme">tenant-acme</option>
-              <option value="tenant-finops">tenant-finops</option>
-              <option value="tenant-enterprise">tenant-enterprise</option>
-            </select>
-          </div>
-
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              fontSize: '11px',
-              color: '#38bdf8',
-              backgroundColor: 'rgba(56, 189, 248, 0.1)',
-              border: '1px solid rgba(56, 189, 248, 0.25)',
-              padding: '3px 8px',
-              borderRadius: '5px',
-              fontWeight: 500,
-            }}
-          >
-            <span>🔒 Namespace:</span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{tenantId}</span>
-          </div>
-
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              color: '#a78bfa',
-              backgroundColor: 'rgba(167, 139, 250, 0.1)',
-              border: '1px solid rgba(167, 139, 250, 0.25)',
-              padding: '3px 8px',
-              borderRadius: '5px',
-            }}
-          >
-            <span>Storage:</span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>s3://platform-artifacts/{tenantId}/</span>
-          </div>
-
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontSize: '11px',
-              color: '#34d399',
-              backgroundColor: 'rgba(52, 211, 153, 0.1)',
-              border: '1px solid rgba(52, 211, 153, 0.25)',
-              padding: '3px 8px',
-              borderRadius: '5px',
-            }}
-          >
-            <span>SLA:</span>
-            <span style={{ fontWeight: 600 }}>&lt;500ms P95 Target</span>
-          </div>
-        </div>
-
-        {/* Right: Environment Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span
-            style={{
-              fontSize: '11px',
-              color: '#94a3b8',
-              backgroundColor: '#1e293b',
-              border: '1px solid #334155',
-              padding: '3px 9px',
-              borderRadius: '5px',
-              fontWeight: 500,
-            }}
-          >
-            Stage: <strong style={{ color: stageStyle.color }}>{stageStyle.label}</strong> (Port 5173 ↔ 3000)
-          </span>
+              <span>🗑️</span>
+              <span>{isPurgingTenant ? 'Purging dev data...' : 'Purge Tenant Data'}</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ROW 3: Services Status Buttons Linking Directly to Deployed Panels */}
+      {/* ROW 3: Services Links (One word, no ports, no dots) */}
       <div
         style={{
           display: 'flex',
@@ -561,198 +354,86 @@ export function Header({
           target="_blank"
           rel="noreferrer"
           title="OpenAPI 3.0 Interactive Swagger UI & Schema Reference"
-          style={{
-            fontSize: '11px',
-            color: '#38bdf8',
-            backgroundColor: 'rgba(56, 189, 248, 0.1)',
-            border: '1px solid rgba(56, 189, 248, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#38bdf8', 'rgba(56, 189, 248, 0.1)', 'rgba(56, 189, 248, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#38bdf8' }} />
-          Swagger UI
+          Swagger
         </a>
 
-        {/* 2. Adminer (PostgreSQL Admin Panel) */}
+        {/* 2. Adminer */}
         <a
           href="http://localhost:8080/?pgsql=postgres&username=postgres&db=platform"
           target="_blank"
           rel="noreferrer"
           title="Adminer PostgreSQL Database Panel (Port 8080) - Browse tables: jobs, tenants, provider_pricing_snapshots"
-          style={{
-            fontSize: '11px',
-            color: '#22d3ee',
-            backgroundColor: 'rgba(34, 211, 238, 0.1)',
-            border: '1px solid rgba(34, 211, 238, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#22d3ee', 'rgba(34, 211, 238, 0.1)', 'rgba(34, 211, 238, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#06b6d4' }} />
-          Adminer (Postgres 5432)
+          Adminer
         </a>
 
-        {/* 3. MinIO S3 Console */}
+        {/* 3. MinIO */}
         <a
           href="http://localhost:9001"
           target="_blank"
           rel="noreferrer"
           title="MinIO Object Storage Web Console (Port 9001) - platform-artifacts bucket (minioadmin / minioadmin)"
-          style={{
-            fontSize: '11px',
-            color: '#34d399',
-            backgroundColor: 'rgba(52, 211, 153, 0.1)',
-            border: '1px solid rgba(52, 211, 153, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#34d399', 'rgba(52, 211, 153, 0.1)', 'rgba(52, 211, 153, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#34d399' }} />
-          MinIO Console 9001
+          MinIO
         </a>
 
-        {/* 4. ElasticMQ SQS */}
+        {/* 4. ElasticMQ */}
         <a
           href="http://localhost:9324/?Action=ListQueues"
           target="_blank"
           rel="noreferrer"
           title="ElasticMQ SQS & DLQ Message Broker (Port 9324) - AWS SQS API endpoint (ListQueues)"
-          style={{
-            fontSize: '11px',
-            color: '#c084fc',
-            backgroundColor: 'rgba(192, 132, 252, 0.1)',
-            border: '1px solid rgba(192, 132, 252, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#c084fc', 'rgba(192, 132, 252, 0.1)', 'rgba(192, 132, 252, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#a855f7' }} />
-          ElasticMQ SQS 9324
+          ElasticMQ
         </a>
 
-        {/* 5. Prometheus Graphs & Visualizer */}
+        {/* 5. Prometheus */}
         <a
           href="http://localhost:9090/graph?g0.expr=sum+by+(route)+(rate(http_server_requests_total%5B1m%5D))&g0.tab=0&g0.range_input=1h"
           target="_blank"
           rel="noreferrer"
-          title="Prometheus Metrics Engine & TSDB (Port 9090) - Click to visualize HTTP route throughput graph & metrics filters"
-          style={{
-            fontSize: '11px',
-            color: '#fb923c',
-            backgroundColor: 'rgba(251, 146, 60, 0.1)',
-            border: '1px solid rgba(251, 146, 60, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          title="Prometheus Metrics Engine & TSDB (Port 9090) - Visualizes HTTP route throughput graph & metrics filters"
+          style={serviceLinkStyle('#fb923c', 'rgba(251, 146, 60, 0.1)', 'rgba(251, 146, 60, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#fb923c' }} />
-          Prometheus Graphs 9090
+          Prometheus
         </a>
 
-        {/* 6. Prometheus Alerts */}
+        {/* 6. Alerts */}
         <a
           href="http://localhost:9090/alerts"
           target="_blank"
           rel="noreferrer"
           title="Prometheus Active Alerting Rules (Port 9090) - Inspect 7 active platform inference alert rules & firing states"
-          style={{
-            fontSize: '11px',
-            color: '#f97316',
-            backgroundColor: 'rgba(249, 115, 22, 0.1)',
-            border: '1px solid rgba(249, 115, 22, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#f97316', 'rgba(249, 115, 22, 0.1)', 'rgba(249, 115, 22, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ea580c' }} />
-          Prometheus Alerts (7)
+          Alerts
         </a>
 
-        {/* 7. Grafana Dashboards */}
+        {/* 7. Grafana */}
         <a
           href="http://localhost:3001/dashboards"
           target="_blank"
           rel="noreferrer"
-          title="Grafana Operational Dashboards & SLO Monitoring (Port 3001) - Click to view all dashboards"
-          style={{
-            fontSize: '11px',
-            color: '#fbbf24',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            border: '1px solid rgba(245, 158, 11, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          title="Grafana Operational Dashboards & SLO Monitoring (Port 3001) - View all dashboards"
+          style={serviceLinkStyle('#fbbf24', 'rgba(245, 158, 11, 0.1)', 'rgba(245, 158, 11, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#f59e0b' }} />
-          Grafana Dashboards
+          Grafana
         </a>
 
-        {/* 8. OpenTelemetry Collector */}
+        {/* 8. OTel */}
         <a
           href="http://localhost:8889/metrics"
           target="_blank"
           rel="noreferrer"
           title="OpenTelemetry Collector Prometheus Exporter (Port 8889) - Live OTel metrics stream"
-          style={{
-            fontSize: '11px',
-            color: '#f472b6',
-            backgroundColor: 'rgba(244, 114, 182, 0.1)',
-            border: '1px solid rgba(244, 114, 182, 0.3)',
-            padding: '3px 9px',
-            borderRadius: '5px',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '5px',
-            fontWeight: 600,
-            transition: 'background-color 0.15s ease',
-          }}
+          style={serviceLinkStyle('#f472b6', 'rgba(244, 114, 182, 0.1)', 'rgba(244, 114, 182, 0.3)')}
         >
-          <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ec4899' }} />
-          OTel Metrics 8889
+          OTel
         </a>
       </div>
     </header>

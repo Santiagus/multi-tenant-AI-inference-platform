@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { StatusBadge } from '../common/Badge';
-import { getJobHardware } from './JobsView';
+import { getJobHardware, getJobInferenceMode, getJobExecutionMode } from './JobsView';
 import type { JobItem } from '../../types';
 
 interface JobDetailModalProps {
@@ -11,8 +11,44 @@ interface JobDetailModalProps {
   onRetryJob?: (jobId: string) => Promise<void>;
 }
 
+const PERMANENT_ERROR_CODES = new Set([
+  'INVALID_MODEL_PARAMETERS',
+  'MODEL_NOT_FOUND',
+  'UNSUPPORTED_MODEL',
+  'VALIDATION_ERROR',
+]);
+
+function resolveInspectedInput(job: JobItem): {
+  prompt: string | null;
+  parameters: Record<string, unknown> | null;
+  inputUri: string | null;
+} {
+  const input = (job.input ?? {}) as Record<string, unknown>;
+  const prompt =
+    (typeof job.prompt === 'string' && job.prompt.length > 0 ? job.prompt : null) ??
+    (typeof input.prompt === 'string' ? input.prompt : null);
+  const nested =
+    job.parameters ??
+    (input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters)
+      ? (input.parameters as Record<string, unknown>)
+      : {});
+  // Surface sibling request fields (engine, device, simulate flags, …) alongside nested parameters.
+  const extras: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (key === 'prompt' || key === 'parameters' || key === '_retry_info') continue;
+    extras[key] = value;
+  }
+  const parameters = { ...nested, ...extras };
+  return {
+    prompt,
+    parameters: Object.keys(parameters).length > 0 ? parameters : null,
+    inputUri: job.input_uri ?? null,
+  };
+}
+
 export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }: JobDetailModalProps) {
   const [isRetrying, setIsRetrying] = useState(false);
+  const [copiedJobId, setCopiedJobId] = useState(false);
   if (!isOpen || !job) return null;
 
   const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED' || job.status === 'RETRYING';
@@ -21,6 +57,22 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
   const maxRetries = job.max_retries ?? 3;
   const retriesUsed = job.retry_count ?? 0;
   const retriesLeft = Math.max(0, maxRetries - retriesUsed);
+  const { prompt, parameters, inputUri } = resolveInspectedInput(job);
+  const failedWithoutRetries =
+    job.status === 'FAILED' &&
+    retriesUsed === 0 &&
+    Boolean(job.error?.code) &&
+    (PERMANENT_ERROR_CODES.has(String(job.error?.code)) || maxRetries === 0);
+
+  const copyJobId = async () => {
+    try {
+      await navigator.clipboard.writeText(job.job_id);
+      setCopiedJobId(true);
+      window.setTimeout(() => setCopiedJobId(false), 1500);
+    } catch {
+      setCopiedJobId(false);
+    }
+  };
 
   // Cost and economics calculation
   const inTokens = job.usage?.prompt_tokens ?? 0;
@@ -124,8 +176,45 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
             }}
           >
             <div>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Job ID</div>
-              <div style={{ fontSize: '12px', color: '#f8fafc', fontFamily: 'monospace', wordBreak: 'break-all' }}>{job.job_id}</div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                  textTransform: 'uppercase',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                Job ID
+                <span
+                  aria-hidden="true"
+                  title={copiedJobId ? 'Copied' : 'Click job id to copy'}
+                  style={{ color: copiedJobId ? '#34d399' : '#64748b', fontSize: '11px' }}
+                >
+                  {copiedJobId ? '✓' : '⧉'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void copyJobId()}
+                title={copiedJobId ? 'Copied' : 'Copy job id'}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  margin: 0,
+                  fontSize: '12px',
+                  color: copiedJobId ? '#34d399' : '#f8fafc',
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-all',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                {job.job_id}
+              </button>
             </div>
             <div>
               <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Model ID</div>
@@ -138,9 +227,30 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Execution Modality</div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Placement Mode</div>
               <div style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 700 }}>
-                {(job.execution_mode || (job.routing_preference.includes('local') ? 'local' : job.provider === 'jarvislabs' ? 'token_factory' : job.provider === 'baseten' ? 'serverless' : job.provider === 'runpod' || job.provider === 'vast_ai' ? 'spot' : 'on_demand')).replace('_', ' ').toUpperCase()}
+                {getJobExecutionMode(job).replace('_', ' ').toUpperCase()}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Inference Mode</div>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color:
+                    getJobInferenceMode(job) === 'mock'
+                      ? '#fbbf24'
+                      : getJobInferenceMode(job) === 'real'
+                        ? '#34d399'
+                        : '#94a3b8',
+                }}
+              >
+                {getJobInferenceMode(job) === 'mock'
+                  ? 'MOCK'
+                  : getJobInferenceMode(job) === 'real'
+                    ? 'REAL'
+                    : '—'}
               </div>
             </div>
             <div>
@@ -193,6 +303,60 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
                   {revenueUsd > 0 ? `${marginPct.toFixed(1)}% ($${profitUsd.toFixed(6)})` : '—'}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Submitted prompt + model parameters (critical for failed inspections) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+                Prompt
+              </h3>
+              <pre
+                style={{
+                  margin: 0,
+                  backgroundColor: '#090d16',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#e2e8f0',
+                  maxHeight: '140px',
+                  overflowY: 'auto',
+                  border: '1px solid #1e293b',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {prompt && prompt.trim().length > 0
+                  ? prompt
+                  : inputUri
+                    ? `(prompt referenced via input_uri)\n${inputUri}`
+                    : '— (no prompt captured on this job)'}
+              </pre>
+            </div>
+            <div>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+                Model Parameters
+              </h3>
+              <pre
+                style={{
+                  margin: 0,
+                  backgroundColor: '#090d16',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#cbd5e1',
+                  maxHeight: '160px',
+                  overflowY: 'auto',
+                  border: '1px solid #1e293b',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {parameters && Object.keys(parameters).length > 0
+                  ? JSON.stringify(parameters, null, 2)
+                  : '— (no model parameters captured)'}
+              </pre>
             </div>
           </div>
 
@@ -315,6 +479,12 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob, onRetryJob }
               <div style={{ fontSize: '13px', color: job.error.code === 'JOB_EXPIRED' ? '#fde68a' : '#fca5a5' }}>
                 {job.error.message}
               </div>
+              {failedWithoutRetries && (
+                <div style={{ fontSize: '12px', color: '#fde68a', marginTop: '8px' }}>
+                  Failed without retries — permanent error codes skip the retry loop (attempt 0 of {maxRetries}).
+                  Inspect the prompt and model parameters above to diagnose the rejection.
+                </div>
+              )}
             </div>
           )}
 

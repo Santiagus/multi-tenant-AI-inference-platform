@@ -11,10 +11,85 @@ import {
   isTestEnvironment,
 } from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
-import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
+import { type Job, type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ForbiddenError, ValidationError } from '../domain/errors.js';
 import { requireScopes } from '../plugins/security.js';
 import { SecurityScope, type TenantSecurityContext } from '../domain/security.js';
+
+/** Expose the submitted prompt + model parameters for job inspection / DLQ debugging. */
+function resolveJobInputFields(job: Job): {
+  prompt: string | null;
+  parameters: Record<string, unknown> | null;
+  input_uri: string | null;
+  input: Record<string, unknown> | null;
+} {
+  const input = (job.inputPayload ?? null) as Record<string, unknown> | null;
+  if (!input) {
+    return { prompt: null, parameters: null, input_uri: job.inputUri ?? null, input: null };
+  }
+  const nestedParams = input.parameters;
+  const parameters =
+    nestedParams && typeof nestedParams === 'object' && !Array.isArray(nestedParams)
+      ? (nestedParams as Record<string, unknown>)
+      : null;
+  return {
+    prompt: typeof input.prompt === 'string' ? input.prompt : null,
+    parameters,
+    input_uri: job.inputUri ?? null,
+    input,
+  };
+}
+
+/** Derive mock vs real inference from worker metadata (or explicit mock routing). */
+function resolveJobInferenceMode(job: Job): {
+  inference_mode: 'mock' | 'real' | null;
+  is_mocked: boolean | null;
+} {
+  const payload = (job.outputPayload ?? {}) as Record<string, unknown>;
+  const metadata = (
+    (payload.metadata as Record<string, unknown> | undefined) ?? payload
+  ) as Record<string, unknown>;
+
+  if (typeof metadata.is_mocked === 'boolean') {
+    return {
+      inference_mode: metadata.is_mocked ? 'mock' : 'real',
+      is_mocked: metadata.is_mocked,
+    };
+  }
+
+  const execMode = String(metadata.execution_mode ?? '').toLowerCase();
+  if (execMode === 'mock') return { inference_mode: 'mock', is_mocked: true };
+  if (execMode === 'live' || execMode === 'real') return { inference_mode: 'real', is_mocked: false };
+
+  if (job.routingPreference === 'mock') {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  // Painted showcase fixtures are simulated (no live worker inference pass).
+  if (job.id.startsWith('00000000-') || metadata.showcase === true) {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  if (metadata.production_weights === true || metadata.weights === 'production') {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
+  const vramPeak = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
+  if (vramPeak > 64 && (job.durationMs ?? 0) > 100) {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+
+  if (
+    (job.provider === 'local_cpu_worker' || job.provider === 'local_pytorch' || job.provider === 'local') &&
+    (job.durationMs ?? 0) > 0 &&
+    (job.durationMs ?? 0) <= 50
+  ) {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  return { inference_mode: null, is_mocked: null };
+}
 
 const SUPPORTED_UPLOAD_CONTENT_TYPES = [
   'image/jpeg',
@@ -317,6 +392,8 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
             routing_preference: job.routingPreference,
             priority: job.priority,
             provider: job.provider,
+            ...resolveJobInferenceMode(job),
+            ...resolveJobInputFields(job),
             retry_count: job.retryCount,
             max_retries: job.maxRetries,
             retries_used:
@@ -375,18 +452,60 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       const messages = await jobService.listDlqMessages(tenantId, 10);
 
       return reply.status(200).send({
-        messages: messages.map((m) => ({
-          message_id: m.messageId,
-          job_id: m.body.jobId,
-          tenant_id: m.body.tenantId,
-          correlation_id: m.body.correlationId ?? null,
-          traceparent: m.body.traceparent ?? null,
-          model_id: m.body.modelId,
-          error_code: m.body.errorCode,
-          failure_reason: m.body.failureReason,
-          retry_count: m.body.retryCount,
-          failed_at: m.body.failedAt,
-        })),
+        messages: messages.map((m) => {
+          const input = (m.body.inputPayload ?? {}) as Record<string, unknown>;
+          const parameters =
+            (input.parameters as Record<string, unknown> | undefined) ??
+            (typeof input.parameters === 'object' ? (input.parameters as Record<string, unknown>) : undefined);
+          return {
+            message_id: m.messageId,
+            job_id: m.body.jobId,
+            tenant_id: m.body.tenantId,
+            correlation_id: m.body.correlationId ?? null,
+            traceparent: m.body.traceparent ?? null,
+            model_id: m.body.modelId,
+            routing_preference: m.body.routingPreference,
+            error_code: m.body.errorCode,
+            failure_reason: m.body.failureReason,
+            retry_count: m.body.retryCount,
+            failed_at: m.body.failedAt,
+            prompt: typeof input.prompt === 'string' ? input.prompt : null,
+            parameters: parameters ?? null,
+            input_uri: m.body.inputUri ?? null,
+            input: input,
+          };
+        }),
+      });
+    }
+  );
+
+  // DELETE /v1/jobs/dlq/:messageId - Discard a poison-pill envelope from the DLQ
+  fastify.delete<{ Params: { messageId: string } }>(
+    '/v1/jobs/dlq/:messageId',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Discard Dead-Letter Queue Message',
+        description:
+          'Removes a quarantined DLQ envelope after operator review. The durable FAILED job record is left unchanged.',
+        params: {
+          type: 'object',
+          required: ['messageId'],
+          properties: {
+            messageId: { type: 'string', description: 'SQS / ElasticMQ DLQ message id' },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const discarded = await jobService.discardDlqMessage(tenantId, req.params.messageId);
+      return reply.status(200).send({
+        ok: true,
+        message_id: discarded.messageId,
+        job_id: discarded.body.jobId,
+        tenant_id: discarded.body.tenantId,
       });
     }
   );
@@ -549,6 +668,8 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       routing_preference: job.routingPreference,
       priority: job.priority,
       provider: job.provider,
+      ...resolveJobInferenceMode(job),
+      ...resolveJobInputFields(job),
       retry_count: job.retryCount,
       max_retries: job.maxRetries,
       retries_used:

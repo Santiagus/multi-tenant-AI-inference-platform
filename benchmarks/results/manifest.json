@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "updated_at": "2026-11-09T22:31:32Z",
+  "updated_at": "2026-11-11T14:43:39Z",
   "total_runs": 46,
   "runs": [
     {
@@ -9698,5 +9698,17 @@
       "report_json_path": "runs/2026-10-11T22-11-43Z_local_pytorch_cpu-numpy-cpu-fallback_tinyllama-tinyllama-1-1b-chat-v1-0/report.json",
       "report_md_path": "runs/2026-10-11T22-11-43Z_local_pytorch_cpu-numpy-cpu-fallback_tinyllama-tinyllama-1-1b-chat-v1-0/report.md"
     }
-  ]
+  ],
+  "provider_comparison_latest": {
+    "run_id": "2026-11-11T14-43-39Z_provider_comparison_api",
+    "generated_at": "2026-11-11T14:43:39Z",
+    "mode": "api",
+    "path": "runs/2026-11-11T14-43-39Z_provider_comparison_api/report.json",
+    "recommendations": {
+      "cheapest": "local_pytorch",
+      "fastest": "runpod",
+      "balanced": "runpod",
+      "recommended": "local_pytorch"
+    }
+  }
 }

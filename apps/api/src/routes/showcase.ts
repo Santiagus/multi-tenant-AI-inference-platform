@@ -62,7 +62,8 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
       schema: {
         tags: ['Health'],
         summary: 'Seed Showcase Mock Data On-the-Fly',
-        description: 'Populates 30 multi-tenant jobs, 688 historical pricing snapshots, and 45 sync audits into PostgreSQL.',
+        description:
+          'Populates tenant-demo showcase jobs (all statuses + all platform providers/HW/modes), sparse cross-tenant jobs, historical pricing snapshots, and sync audits into PostgreSQL.',
       },
     },
     async (_req, reply) => {
@@ -83,7 +84,7 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
           ok: true,
           dataSource: 'mock',
           message: 'Showcase mock mode activated.',
-          stats: { jobsCount: 30, snapshotsCount: 688, auditsCount: 45 },
+          stats: { jobsCount: 36, snapshotsCount: 7098, auditsCount: 45 },
         });
       }
     }
@@ -118,6 +119,44 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
           message: 'Restored real data mode.',
         });
       }
+    }
+  );
+
+  fastify.post<{ Params: { tenantId: string } }>(
+    '/v1/admin/tenants/:tenantId/purge',
+    {
+      schema: {
+        tags: ['Health'],
+        summary: 'Purge Tenant Jobs (Local/Dev Debug Only)',
+        description: 'Deletes all jobs for the specified tenant. Used for local debugging and tenant-dev resetting.',
+        params: {
+          type: 'object',
+          properties: {
+            tenantId: { type: 'string' },
+          },
+          required: ['tenantId'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const { tenantId } = req.params;
+      let deletedCount = 0;
+
+      if (typeof options.db.query === 'function') {
+        try {
+          const res = await options.db.query('DELETE FROM jobs WHERE tenant_id = $1 RETURNING id', [tenantId]);
+          deletedCount = res.rowCount ?? (Array.isArray(res.rows) ? res.rows.length : 0);
+        } catch (err) {
+          fastify.log.error(err, `Failed to delete jobs for tenant ${tenantId}`);
+        }
+      }
+
+      return reply.status(200).send({
+        ok: true,
+        tenantId,
+        deletedCount,
+        message: `Purged all data for tenant ${tenantId}.`,
+      });
     }
   );
 };

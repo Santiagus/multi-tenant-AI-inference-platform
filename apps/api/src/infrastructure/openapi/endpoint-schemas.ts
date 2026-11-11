@@ -586,6 +586,23 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     description: 'Retrieves messages that exhausted maximum retry attempts and were routed to the Dead-Letter Queue.',
   },
 
+  'DELETE /v1/jobs/dlq/:messageId': {
+    tags: ['Jobs'],
+    summary: 'Discard Dead-Letter Queue Message',
+    description:
+      'Removes a quarantined DLQ envelope after operator review without mutating the durable FAILED job record.',
+    params: {
+      type: 'object',
+      required: ['messageId'],
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'SQS / ElasticMQ DLQ message id',
+        },
+      },
+    },
+  },
+
   'GET /v1/worker/inference-mode': {
     tags: ['Jobs'],
     summary: 'Get Inference Execution Mode',

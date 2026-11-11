@@ -109,7 +109,7 @@ export class ProviderBalanceService implements IProviderBalanceService {
     if (key === 'local_pytorch') {
       return {
         provider: 'local_pytorch',
-        displayName: 'Local PyTorch (RTX 5070 Ti)',
+        displayName: 'Local PyTorch',
         balanceUsd: 0.0,
         currency: 'USD',
         status: 'LOCAL_HARDWARE',

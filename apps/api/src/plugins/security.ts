@@ -31,6 +31,7 @@ const PUBLIC_PATH_PREFIXES = [
   '/redoc',
   '/v1/worker',
   '/v1/admin/showcase',
+  '/v1/admin/tenants',
 ];
 
 export function isPublicPath(url: string): boolean {

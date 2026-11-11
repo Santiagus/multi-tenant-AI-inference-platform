@@ -302,11 +302,12 @@ export class PostgresJobRepository implements IJobRepository {
     const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
     const offset = Math.max(options.offset ?? 0, 0);
 
-    let sql = 'SELECT * FROM jobs WHERE tenant_id = $1';
-    const params: unknown[] = [tenantId];
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    let sql = isAllTenants ? 'SELECT * FROM jobs WHERE 1=1' : 'SELECT * FROM jobs WHERE tenant_id = $1';
+    const params: unknown[] = isAllTenants ? [] : [tenantId];
 
     if (options.status) {
-      sql += ' AND status = $2';
+      sql += ` AND status = $${params.length + 1}`;
       params.push(options.status);
     }
 
@@ -459,8 +460,9 @@ export class InMemoryJobRepository implements IJobRepository {
     tenantId: string,
     options: { limit?: number; offset?: number; status?: JobStatusType } = {}
   ): Promise<Job[]> {
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
     const list = Array.from(this.jobs.values())
-      .filter((j) => j.tenantId === tenantId && (!options.status || j.status === options.status))
+      .filter((j) => (isAllTenants || j.tenantId === tenantId) && (!options.status || j.status === options.status))
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     const offset = options.offset ?? 0;
