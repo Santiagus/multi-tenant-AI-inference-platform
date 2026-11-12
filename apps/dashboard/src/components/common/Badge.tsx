@@ -1,4 +1,5 @@
 import type { JobStatus } from '../../types';
+import { getJobStatusDescription } from './statusDescriptions';
 
 interface BadgeProps {
   status: JobStatus | string;
@@ -7,6 +8,7 @@ interface BadgeProps {
 
 export function StatusBadge({ status, size = 'md' }: BadgeProps) {
   const normalized = status.toUpperCase();
+  const description = getJobStatusDescription(status);
 
   let bg = '#334155';
   let color = '#f8fafc';
@@ -60,6 +62,8 @@ export function StatusBadge({ status, size = 'md' }: BadgeProps) {
 
   return (
     <span
+      title={description}
+      aria-label={description ? `${status}: ${description}` : status}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -89,4 +93,3 @@ export function StatusBadge({ status, size = 'md' }: BadgeProps) {
     </span>
   );
 }
-

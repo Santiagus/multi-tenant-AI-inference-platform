@@ -80,7 +80,7 @@ export function getJobExecutionMode(j: JobItem): string {
   ) {
     return 'local';
   }
-  if (j.provider === 'jarvislabs') return 'token_factory';
+  if (j.provider === 'jarvislabs' || j.provider === 'bedrock') return 'token_factory';
   if (j.provider === 'baseten' || j.provider === 'wavespeed') return 'serverless';
   if (j.provider === 'runware' || j.provider === 'fal') return 'pay_per_call';
   if (j.provider === 'runpod' || j.provider === 'vast_ai' || j.provider === 'coreweave' || j.provider === 'hivenet') return 'spot';

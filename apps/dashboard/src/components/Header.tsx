@@ -274,7 +274,7 @@ export function Header({
               data-testid="seed-showcase-data"
               onClick={onSeedShowcaseData}
               disabled={isSeedingShowcase}
-              title="Seed showcase jobs covering every status, provider, hardware, and execution mode"
+              title="Seed tenant-demo jobs: all statuses, engines, modalities, routing strategies, priorities, duration-metered placements, local CPU/GPU, and DLQ"
               style={{
                 backgroundColor: 'rgba(16, 185, 129, 0.15)',
                 color: '#34d399',

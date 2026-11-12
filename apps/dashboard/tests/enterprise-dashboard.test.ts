@@ -45,7 +45,7 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     assert.equal(getJobExecutionMode({ ...baseJob, provider: 'fal' }), 'pay_per_call');
     assert.equal(getJobExecutionMode({ ...baseJob, provider: 'runware' }), 'pay_per_call');
     assert.equal(getJobExecutionMode({ ...baseJob, routing_preference: 'local' }), 'local');
-    assert.equal(getJobExecutionMode({ ...baseJob, provider: 'bedrock' }), 'on_demand');
+    assert.equal(getJobExecutionMode({ ...baseJob, provider: 'bedrock' }), 'token_factory');
     assert.equal(getJobExecutionMode({ ...baseJob, execution_mode: 'serverless' }), 'serverless');
     // mock/live labels must not override placement economics
     assert.equal(getJobExecutionMode({ ...baseJob, execution_mode: 'mock', provider: 'runpod' }), 'spot');
