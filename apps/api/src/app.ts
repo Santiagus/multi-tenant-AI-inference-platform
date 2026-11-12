@@ -24,10 +24,16 @@ import { kubernetesRoutes } from './routes/kubernetes.js';
 import { awsPlatformRoutes } from './routes/aws-platform.js';
 import { providerRoutingRoutes } from './routes/provider-routing.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { finopsRoutes } from './routes/finops.js';
 import { securityRoutes } from './routes/security.js';
 import { gitOpsRoutes } from './routes/gitops.js';
+import { showcaseRoutes } from './routes/showcase.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
+import {
+  type IFinOpsPricingRepository,
+  InMemoryFinOpsPricingRepository,
+} from './infrastructure/db/finops-pricing-repository.js';
 import { SlidingWindowRateLimiter } from './domain/security.js';
 import { ENDPOINT_OPENAPI_CONFIGS } from './infrastructure/openapi/endpoint-schemas.js';
 
@@ -47,6 +53,7 @@ export interface AppDependencies {
   awsController?: AwsPlatformController;
   routerController?: ProviderRouterController;
   gitOpsController?: GitOpsController;
+  finopsRepo?: IFinOpsPricingRepository;
 }
 
 export function buildApp(deps: AppDependencies): FastifyInstance {
@@ -54,7 +61,13 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     logger: deps.config.NODE_ENV !== 'test',
   });
 
-  app.register(cors);
+  app.register(cors, {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id', 'x-correlation-id', 'Accept'],
+    exposedHeaders: ['x-correlation-id', 'traceparent', 'x-response-time-ms'],
+  });
   app.register(sensible);
 
   // OpenAPI (Swagger) Specification and Interactive UI
@@ -69,8 +82,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
       },
       servers: [
         {
-          url: 'http://localhost:3000',
-          description: 'Local development server',
+          url: '/',
+          description: 'Current environment server (same-origin relative URL)',
         },
       ],
       components: {
@@ -131,6 +144,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
         else if (url.startsWith('/v1/k8s')) s.tags = ['Kubernetes'];
         else if (url.startsWith('/v1/cloud/aws')) s.tags = ['AWS Cloud'];
         else if (url.startsWith('/v1/gitops')) s.tags = ['GitOps'];
+        else if (url.startsWith('/v1/finops')) s.tags = ['Provider Routing'];
       }
 
       // Pre-fill x-tenant-id header default so Try-It-Out works immediately without typing
@@ -179,7 +193,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     deps.queueClient,
     deps.storageClient,
     tracer,
-    metrics
+    metrics,
+    deps.config?.JOB_EXPIRATION_SECONDS ?? 86400
   );
   const jobWorker =
     deps.jobWorker ??
@@ -206,10 +221,25 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     rateLimiter,
   });
 
+  let currentDataSource: 'real' | 'mock' =
+    deps.config.SHOWCASE_MODE || process.env.SHOWCASE_MODE === 'true' || process.env.MOCK_PROVIDERS === '1'
+      ? 'mock'
+      : 'real';
+
   app.register(healthRoutes, {
     db: deps.db,
     storage: deps.storageClient,
     queue: deps.queueClient,
+    getDataSource: () => currentDataSource,
+  });
+
+  app.register(showcaseRoutes, {
+    db: deps.db,
+    queueClient: deps.queueClient,
+    getDataSource: () => currentDataSource,
+    setDataSource: (mode: 'real' | 'mock') => {
+      currentDataSource = mode;
+    },
   });
 
   app.register(observabilityRoutes, {
@@ -241,9 +271,17 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     storageClient: deps.storageClient,
   });
 
+  const finopsRepo = deps.finopsRepo ?? new InMemoryFinOpsPricingRepository();
+
   app.register(analyticsRoutes, {
     jobService,
     routerController,
+  });
+
+  app.register(finopsRoutes, {
+    finopsRepo,
+    metrics,
+    tracer,
   });
 
   app.register(gitOpsRoutes, {

@@ -1,10 +1,17 @@
-export type ActiveTab = 'jobs' | 'providers' | 'routing' | 'economics' | 'workload-path';
+export type ActiveTab =
+  | 'jobs'
+  | 'provider-status'
+  | 'pricing'
+  | 'economics'
+  | 'workload-path';
 
 interface NavigationProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   jobCount?: number;
   inFlightCount?: number;
+  syncedProvidersCount?: number;
+  unsyncedProvidersCount?: number;
 }
 
 export function Navigation({
@@ -12,6 +19,8 @@ export function Navigation({
   onTabChange,
   jobCount,
   inFlightCount,
+  syncedProvidersCount,
+  unsyncedProvidersCount,
 }: NavigationProps) {
   const tabs: Array<{
     id: ActiveTab;
@@ -26,20 +35,32 @@ export function Navigation({
       badgeColor: inFlightCount && inFlightCount > 0 ? '#6366f1' : '#475569',
     },
     {
-      id: 'providers',
-      label: 'Providers & Models',
+      id: 'provider-status',
+      label: 'Provider Status',
+      badge:
+        unsyncedProvidersCount !== undefined && syncedProvidersCount !== undefined
+          ? unsyncedProvidersCount > 0
+            ? `⚠️ ${syncedProvidersCount} Synced · ${unsyncedProvidersCount} Unsynced`
+            : `${syncedProvidersCount} Synced · 0 Unsynced`
+          : undefined,
+      badgeColor:
+        unsyncedProvidersCount !== undefined && unsyncedProvidersCount > 0
+          ? '#ef4444'
+          : '#10b981',
     },
     {
-      id: 'routing',
-      label: 'Routing Explanation',
+      id: 'pricing',
+      label: 'Advisor',
+      badge: 'FinOps + Routing',
+      badgeColor: '#6366f1',
     },
     {
       id: 'economics',
-      label: 'Usage & Economics',
+      label: 'FinOps',
     },
     {
       id: 'workload-path',
-      label: 'Workload Path (React Flow)',
+      label: 'Workload Path',
     },
   ];
 

@@ -32,6 +32,11 @@ IGNORE_DIRS = {
     ".minio.sys",
 }
 
+EXCLUDED_FILENAMES = {
+    ".env",
+    ".mcp.json",
+}
+
 CHECKED_EXTENSIONS = {
     ".py",
     ".ts",
@@ -117,6 +122,8 @@ def main() -> None:
     for root, dirs, files in os.walk(repo_root):
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
         for f in files:
+            if f in EXCLUDED_FILENAMES or f.startswith(".env."):
+                continue
             path = Path(root) / f
             if path.suffix in CHECKED_EXTENSIONS or f in {"Makefile", ".editorconfig", ".gitignore", ".gitmessage"}:
                 all_issues.extend(check_file_formatting(path))

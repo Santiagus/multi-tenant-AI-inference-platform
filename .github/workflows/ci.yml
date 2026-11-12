@@ -16,10 +16,8 @@ permissions:
 
 env:
   CI: "true"
+  MOCK_INFERENCE: "1"
   INFERENCE_MOCK_MODE: "true"
-  BEDROCK_MOCK: "1"
-  SAGEMAKER_MOCK: "1"
-  RUNPOD_MOCK: "1"
   USE_PRODUCTION_WEIGHTS: "false"
 
 jobs:

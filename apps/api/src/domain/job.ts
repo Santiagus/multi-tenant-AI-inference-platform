@@ -42,8 +42,8 @@ const VALID_TRANSITIONS: Record<JobStatusType, ReadonlySet<JobStatusType>> = {
     JobStatus.CANCELLED,
   ]),
   [JobStatus.SUCCEEDED]: new Set(),
-  [JobStatus.FAILED]: new Set(),
-  [JobStatus.CANCELLED]: new Set(),
+  [JobStatus.FAILED]: new Set([JobStatus.QUEUED]),
+  [JobStatus.CANCELLED]: new Set([JobStatus.QUEUED]),
 };
 
 export function canTransitionStatus(from: JobStatusType, to: JobStatusType): boolean {
@@ -163,6 +163,7 @@ export interface Job {
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
+  expiresAt?: Date | null;
   updatedAt: Date;
 }
 
@@ -178,6 +179,8 @@ export interface NewJobInput {
   inputPayload?: Record<string, unknown> | null;
   inputUri?: string | null;
   maxRetries?: number;
+  expiresInSeconds?: number;
+  expiresAt?: Date | null;
 }
 
 

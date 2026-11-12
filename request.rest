@@ -467,6 +467,27 @@ POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 4.5 Manually Trigger / Retry a Cancelled or Failed Job
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/retry
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "expires_in_seconds": 86400
+}
+
+###
+
+# 4.6 Reap Stale or Retries-Exhausted Queued Jobs (Sweep Queue TTL Expiration)
+POST {{baseUrl}}/v1/jobs/reap
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+
 
 ### ==============================================================================
 ### USE CASE 5: Validation & Uniform RFC 7807 Error Handling
@@ -564,7 +585,16 @@ Authorization: Bearer {{apiKey}}
 ###
 
 # 6.6 Inspect Dead-Letter Queue (DLQ) Messages for Tenant
+# @name listDlqMessages
 GET {{baseUrl}}/v1/jobs/dlq
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 6.7 Discard a DLQ poison-pill envelope (keeps durable FAILED job)
+@dlqMessageId = {{listDlqMessages.response.body.messages.0.message_id}}
+DELETE {{baseUrl}}/v1/jobs/dlq/{{dlqMessageId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
@@ -661,6 +691,13 @@ Authorization: Bearer {{apiKey}}
 
 # 8.4 Query Distributed Spans by Correlation ID
 GET {{baseUrl}}/v1/traces/by-correlation/corr-m05-trace-demo-001
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 8.4b Query W3C Distributed Trace by Trace ID
+GET {{baseUrl}}/v1/traces/4bf92f3577b34da6a3ce929d0e0e4736
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
@@ -1636,6 +1673,25 @@ GET {{baseUrl}}/v1/jobs/{{mockJobId}}
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 13.17 Inspect Local Inference Execution Mode (Mock vs Real PyTorch/GPU)
+GET {{baseUrl}}/v1/worker/inference-mode
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 13.18 Toggle Local Inference Execution Mode
+POST {{baseUrl}}/v1/worker/inference-mode
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "mode": "mock"
+}
+
 ### ==============================================================================
 ### USE CASE 14: Security Boundary, ABAC, Tenant Isolation & Rate Limiting (M09)
 ### Zero-trust authentication, scoped permissions, rate limits, and audit logs
@@ -1947,3 +2003,271 @@ Authorization: Bearer {{apiKey}}
 POST {{baseUrl}}/v1/gitops/sync/staging
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
+
+###
+
+###############################################################################
+# CYCLE 17: PRODUCTION READINESS, CHAOS & SLO VERIFICATION (M12)
+###############################################################################
+
+# 17.1 Submit Job with Chaos Failure Injection (Permanent Error -> DLQ)
+# @name submitChaosJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "auto",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "Chaos permanent failure trigger",
+    "_simulate_failure": "permanent"
+  }
+}
+
+###
+
+# 17.2 Inspect Dead-Letter Queue (DLQ) for Quarantined Poison Pills
+GET {{baseUrl}}/v1/jobs/dlq
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 17.3 Submit Job for Mid-Flight Cancellation
+# @name submitJobToCancel
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "input": {
+    "prompt": "This job will be cancelled mid-flight."
+  }
+}
+
+###
+
+# 17.4 Cancel In-Flight Job
+@cancelJobId = {{submitJobToCancel.response.body.job_id}}
+POST {{baseUrl}}/v1/jobs/{{cancelJobId}}/cancel
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 17.5 Evaluate Deterministic 5-Stage Provider Routing with Explainability
+POST {{baseUrl}}/v1/routing/evaluate
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "workload": {
+    "model_id": "meta-llama/Llama-3-8B-Instruct",
+    "prompt_tokens": 16,
+    "max_new_tokens": 32,
+    "estimated_vram_mb": 8192,
+    "modality": "text_to_text",
+    "requires_vpc": false
+  },
+  "capacity": {
+    "local_vram_total_mb": 16384,
+    "local_vram_allocated_mb": 4096,
+    "local_queue_depth": 2,
+    "local_queue_threshold": 10,
+    "worker_concurrency": 4
+  },
+  "slo": {
+    "latency_slo_ms": 1500
+  },
+  "tenant_policy": {
+    "tenant_id": "{{tenantId}}",
+    "tenant_tier": "enterprise",
+    "routing_preference": "auto"
+  },
+  "economics": {
+    "target_gross_margin": 0.4,
+    "allow_margin_degradation_for_slo": false
+  }
+}
+
+###
+
+###############################################################################
+# CYCLE 18: NEOCLOUD FINOPS PRICING INTELLIGENCE & AVAILABILITY
+###############################################################################
+
+# 18.1 Query Normalized GPU Pricing & Obtainability (On-Demand, Spot Bid, Serverless)
+# Supports filtering by provider, hardware_sku, and pricing_model
+GET {{baseUrl}}/v1/finops/gpu-pricing?provider=runpod&pricing_model=spot_bid
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.2 Query Open Models & Token Factory Rates (Input/Output/Cached per 1M tokens)
+# Supports filtering by provider, developer, execution_mode
+GET {{baseUrl}}/v1/finops/model-pricing?provider=jarvislabs
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.3 Query Historical Pricing Trends & Provider Update Cadence (Supports hours=24, 72, 168)
+GET {{baseUrl}}/v1/finops/pricing-history?hours=24
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.3b Query Live Provider Account Balances Across Fleet
+GET {{baseUrl}}/v1/finops/balances
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.4 Trigger On-Demand FinOps Pricing & Availability Sync Across Neocloud Providers
+POST {{baseUrl}}/v1/finops/sync
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "providers": ["runpod", "vast_ai", "baseten", "fal_ai", "jarvislabs", "nebius", "runware"]
+}
+
+###
+
+# 18.4b Query Provider Pricing Synchronization Audits & Diagnostic Failure Traces
+GET {{baseUrl}}/v1/finops/sync-audits?status=FAILED
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 18.5 Recommend Smart Cloud Options (Cheapest, Fastest, Balanced, Recommended)
+# Evaluates execution speed, hourly spot rates, and scale-to-zero runtime costs
+POST {{baseUrl}}/v1/finops/recommend-options
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "prompt_tokens": 128,
+  "max_new_tokens": 64
+}
+
+###
+
+# 18.6 Inspect Showcase Mock Data Status
+GET {{baseUrl}}/v1/admin/showcase/status
+
+###
+
+# 18.7 Seed Showcase Mock Data On-the-Fly
+# Injects ~59 multi-tenant jobs (tenant-demo coverage: statuses, engines, modalities,
+# routing strategies, priorities 1/5/8/10, duration-metered placements, local CPU/GPU,
+# DLQ fixture), ~7098 historical pricing snapshots & 45 sync audits.
+# Requires ElasticMQ for DLQ visibility in the dashboard inspector.
+POST {{baseUrl}}/v1/admin/showcase/seed
+
+###
+
+# 18.8 Purge Showcase Mock Data On-the-Fly
+# Deletes painted jobs/audits (00000000-*), drains painted DLQ envelopes, reverts to real mode
+POST {{baseUrl}}/v1/admin/showcase/purge
+
+###
+
+### ==============================================================================
+### USE CASE 19: Cross-Provider Same-Job Cold/Warm/Load Comparison
+### Trigger identical jobs across providers, then use recommend-options picks.
+### CLI evidence harness: `make benchmark-providers`
+### Live probe: `.venv/bin/python benchmarks/run_provider_comparison.py --mode api --live-adapters-only`
+### ==============================================================================
+
+# 19.1 Health before provider probe matrix
+GET {{baseUrl}}/healthz
+
+###
+
+# 19.2 Submit identical canonical job pinned to local GPU (cold/warm sample #1)
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "local/gpu",
+  "priority": 5,
+  "max_retries": 1,
+  "input": {
+    "prompt": "Explain Raft consensus leader election for multi-tenant GPU inference workers and how lease-based visibility timeouts interact with SQS backoff under load.",
+    "parameters": {
+      "provider": "local_pytorch",
+      "device": "cuda",
+      "max_new_tokens": 64,
+      "provider_comparison_probe": true
+    }
+  }
+}
+
+###
+
+# 19.3 Process next queued job (worker drain)
+POST {{baseUrl}}/v1/worker/process-next
+Content-Type: application/json
+
+{
+  "count": 1
+}
+
+###
+
+# 19.4 Submit identical job pinned to RunPod routing
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "routing_preference": "cloud/runpod",
+  "priority": 5,
+  "max_retries": 1,
+  "input": {
+    "prompt": "Explain Raft consensus leader election for multi-tenant GPU inference workers and how lease-based visibility timeouts interact with SQS backoff under load.",
+    "parameters": {
+      "provider": "runpod",
+      "max_new_tokens": 64,
+      "provider_comparison_probe": true
+    }
+  }
+}
+
+###
+
+# 19.5 FinOps catalog recommendations (cheapest / fastest / balanced / recommended)
+POST {{baseUrl}}/v1/finops/recommend-options
+Content-Type: application/json
+x-tenant-id: tenant-demo
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "meta-llama/Llama-3-8B-Instruct",
+  "prompt_tokens": 128,
+  "max_new_tokens": 64
+}
+
+###
+

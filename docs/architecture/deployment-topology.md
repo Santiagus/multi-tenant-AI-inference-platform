@@ -155,7 +155,56 @@ flowchart TD
 
 ---
 
-## 3. Kubernetes Autoscaling & Two-Path Orchestration Architecture
+## 3. Hybrid Cloud & Neocloud Dual-Path Inference Lifecycle (DAG)
+
+The platform routes inference requests along two primary infrastructure paths: **Path A (In-Cluster AWS EKS / Local Warm Baseline)** and **Path B (Neocloud Elastic Burst)**. To ensure deterministic execution without horizontal layout fragmentation, the lifecycle is modeled as a strict top-to-bottom Directed Acyclic Graph (DAG):
+
+```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'darkMode': true }}}%%
+flowchart TD
+    %% Styling
+    classDef client fill:#1e40af,stroke:#60a5fa,color:#ffffff,stroke-width:2px;
+    classDef fargate fill:#0369a1,stroke:#38bdf8,color:#ffffff,stroke-width:2px;
+    classDef queue fill:#334155,stroke:#94a3b8,color:#ffffff,stroke-width:2px;
+    classDef worker fill:#c2410c,stroke:#fb923c,color:#ffffff,stroke-width:2px;
+    classDef neocloud fill:#6d28d9,stroke:#c084fc,color:#ffffff,stroke-width:2px;
+    classDef storage fill:#047857,stroke:#34d399,color:#ffffff,stroke-width:2px;
+    classDef delivery fill:#0f766e,stroke:#2dd4bf,color:#ffffff,stroke-width:2px;
+
+    %% STAGE 1
+    S1["1. CLIENT INGESTION REQUEST<br/>• Client App / Browser / Creator API Call<br/>• POST /v1/jobs with Bearer Token + x-tenant-id"]:::client
+
+    %% STAGE 2
+    S2["2. AWS ECS FARGATE (INGESTION & CONTROL PLANE)<br/>• ALB: Public HTTPS entrypoint & TLS termination<br/>• Fastify API: Scales 2..6 tasks on Fargate Spot<br/>• ABAC Security: Tenant isolation & quota validation<br/>• PostgreSQL DB: State ledger & pricing snapshots<br/>• Secrets Manager: Injects RUNPOD_API_KEY at boot<br/>• 5-Stage Router: Evaluates VRAM, SLO, Margin %, Tier"]:::fargate
+
+    %% STAGE 3
+    S3["3. ASYNC BUFFERING (AMAZON SQS)<br/>• Decouples fast API ingestion from GPU execution<br/>• Dead-Letter Queue (DLQ) quarantines poisoned pills<br/>• Emits queue-depth metric to drive KEDA autoscaling"]:::queue
+
+    %% STAGE 4A
+    S4A["4A. PATH A: AWS EKS / LOCAL GPU (WARM BASELINE)<br/>• Scaling: KEDA autoscaler (0..8 worker pods)<br/>• Auth: Native AWS IAM IRSA (Zero static AWS keys)<br/>• Model Loading: Pre-pinned on local NVMe SSD<br/>• Cold Start: Zero (Instant DMA transfer to VRAM)<br/>• Target: High-SLA, zero-interruption enterprise jobs"]:::worker
+
+    %% STAGE 4B
+    S4B["4B. PATH B: NEOCLOUD BURST (ELASTIC SPOT)<br/>• Dispatcher: EKS pod injects Presigned S3 URLs + API keys<br/>• Compute: Serverless GPUs (RunPod / Modal / Vast.ai)<br/>• Scaling: Scales to zero when queue empty (5s idle timeout)<br/>• Model Loading: Network Volume / FlashBoot NVMe cache<br/>• Cold Start: 2–4s | Target: Heavy batch media & 80%+ savings"]:::neocloud
+
+    %% STAGE 5
+    S5["5. STORAGE & CDN CACHING (AWS S3 + CLOUDFRONT)<br/>• Amazon S3: Scoped path /tenants/{tenant_id}/jobs/{job_id}/<br/>• Security: EKS uses IAM; Neoclouds use Presigned PUT/GET URLs<br/>• CloudFront CDN: Global edge distribution for video & image files"]:::storage
+
+    %% STAGE 6
+    S6["6. FINAL API RESPONSE & CLIENT DELIVERY<br/>• Client receives completed job status (SUCCEEDED)<br/>• Fast artifact download via short-lived Signed CloudFront URL<br/>• FinOps ledger logs duration, tokens, and gross margin %"]:::delivery
+
+    %% STRICT VERTICAL CHAIN (1 -> 2 -> 3 -> 4 -> 5 -> 6)
+    S1 -->|"1. Submit Job"| S2
+    S2 -->|"2. Enqueue Workload"| S3
+    S3 -->|"3a. Sensitive / Baseline Route"| S4A
+    S3 -->|"3b. Batch / Spot Burst Route"| S4B
+    S4A -->|"4a. Direct IAM Write"| S5
+    S4B -->|"4b. Presigned PUT Upload"| S5
+    S5 -->|"5. Deliver Output"| S6
+```
+
+---
+
+## 4. Kubernetes Autoscaling & Two-Path Orchestration Architecture
 
 The platform separates real-time API scaling, single-hop queue scaling, and multi-stage batch/media DAG admission (see [ADR-0008](../adr/0008-keda-and-kueue-workload-responsibilities.md)):
 
@@ -169,7 +218,7 @@ The platform separates real-time API scaling, single-hop queue scaling, and mult
 
 ---
 
-## 4. Helm Packaging, Profiles & Policy Governance (M06)
+## 5. Helm Packaging, Profiles & Policy Governance (M06)
 
 All Kubernetes resources are packaged in [`deploy/helm/inference-platform/`](../../deploy/helm/inference-platform/Chart.yaml) and validated via `make validate-k8s` ([`scripts/validate_kubernetes.py`](../../scripts/validate_kubernetes.py)):
 
@@ -184,7 +233,7 @@ All Kubernetes resources are packaged in [`deploy/helm/inference-platform/`](../
 
 ---
 
-## 5. AWS Terraform Modules, Least-Privilege IAM & Ephemeral Cost Controls (M07)
+## 6. AWS Terraform Modules, Least-Privilege IAM & Ephemeral Cost Controls (M07)
 
 Cloud infrastructure (`s3-artifacts` + CloudFront, `sqs-async-queue`, `ecs-fargate-api`, `kinesis-event-stream` + Lambda, `iam-least-privilege`, `cost-guardrails`, and `eks-cluster`) is provisioned via modular Terraform under [`infrastructure/terraform/`](../../infrastructure/terraform/) and validated offline via `make validate-terraform` ([`scripts/validate_terraform.py`](../../scripts/validate_terraform.py)). Detailed IAM boundaries, cost budgets, and ephemeral teardown workflows are documented in [`docs/architecture/aws-deployment.md`](aws-deployment.md) and [ADR-0012](../adr/0012-ephemeral-aws-terraform-and-cost-guardrails.md).
 

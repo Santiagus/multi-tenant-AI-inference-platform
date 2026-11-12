@@ -137,10 +137,44 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
     try {
       const client = new PlatformApiClient('http://test.local');
       await client.cancelJob('tenant-default', 'job-1');
-      await client.processNextJob();
+      await client.processNextJob('mock');
 
       assert.equal(calledUrls[0], 'http://test.local/v1/jobs/job-1/cancel');
       assert.equal(calledUrls[1], 'http://test.local/v1/worker/process-next');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('getInferenceMode and setInferenceMode send expected requests', async () => {
+    const originalFetch = globalThis.fetch;
+    const captured: Array<{ url: string; method: string; body?: string }> = [];
+
+    globalThis.fetch = async (url: any, init?: RequestInit) => {
+      captured.push({
+        url: String(url),
+        method: init?.method || 'GET',
+        body: init?.body ? String(init.body) : undefined,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, mode: 'real', message: 'Set' }),
+      } as Response;
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+      const getRes = await client.getInferenceMode();
+      assert.equal(getRes.mode, 'real');
+      assert.equal(captured[0].url, 'http://test.local/v1/worker/inference-mode');
+      assert.equal(captured[0].method, 'GET');
+
+      const setRes = await client.setInferenceMode('real');
+      assert.equal(setRes.ok, true);
+      assert.equal(captured[1].url, 'http://test.local/v1/worker/inference-mode');
+      assert.equal(captured[1].method, 'POST');
+      assert.ok(captured[1].body?.includes('"mode":"real"'));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -233,6 +267,87 @@ describe('PlatformApiClient (Dashboard API SDK)', () => {
           return true;
         }
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('ApiError handles non-JSON plain text or HTML error bodies without stream already read error', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      return new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/html' },
+      });
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+      await assert.rejects(
+        async () => {
+          await client.submitJob('tenant-default', { model_id: 'test' });
+        },
+        (err: any) => {
+          assert.equal(err.name, 'ApiError');
+          assert.equal(err.status, 502);
+          assert.ok(err.message.includes('502 Bad Gateway'));
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('FinOps pricing methods format endpoints and queries correctly', async () => {
+    const originalFetch = globalThis.fetch;
+    const capturedUrls: string[] = [];
+
+    globalThis.fetch = async (url: any) => {
+      capturedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, data: [] }),
+      } as Response;
+    };
+
+    try {
+      const client = new PlatformApiClient('http://test.local');
+
+      await client.getGpuPricing({ provider: 'runpod', pricing_model: 'spot_bid' });
+      assert.equal(
+        capturedUrls[0],
+        'http://test.local/v1/finops/gpu-pricing?provider=runpod&pricing_model=spot_bid'
+      );
+
+      await client.getModelPricing({ execution_type: 'token_factory' });
+      assert.equal(
+        capturedUrls[1],
+        'http://test.local/v1/finops/model-pricing?execution_type=token_factory'
+      );
+
+      await client.getPricingHistory({ provider: 'vast_ai' });
+      assert.equal(
+        capturedUrls[2],
+        'http://test.local/v1/finops/pricing-history?provider=vast_ai'
+      );
+
+      await client.syncPricing();
+      assert.equal(capturedUrls[3], 'http://test.local/v1/finops/sync');
+
+      await client.getCloudRecommendations({ model_id: 'meta-llama/Llama-3-8B-Instruct' });
+      assert.equal(capturedUrls[4], 'http://test.local/v1/finops/recommend-options');
+
+      await client.getShowcaseStatus();
+      assert.equal(capturedUrls[5], 'http://test.local/v1/admin/showcase/status');
+
+      await client.seedShowcaseData();
+      assert.equal(capturedUrls[6], 'http://test.local/v1/admin/showcase/seed');
+
+      await client.purgeShowcaseData();
+      assert.equal(capturedUrls[7], 'http://test.local/v1/admin/showcase/purge');
     } finally {
       globalThis.fetch = originalFetch;
     }

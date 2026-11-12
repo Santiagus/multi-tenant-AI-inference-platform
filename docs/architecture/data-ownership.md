@@ -55,6 +55,18 @@ PostgreSQL serves as the authoritative source of truth for all business entities
 4. **`tenant_quotas`**:
    - Fields: `tenant_id`, `max_concurrent_jobs`, `monthly_token_limit`, `current_month_tokens`, `rate_limit_rpm`.
    - Writers: Control Plane metering hooks.
+5. **`hardware_skus`** (`006_finops_pricing_and_interruptions.sql`):
+   - Fields: `id` (PK, e.g. `nvidia-rtx-4090`, `nvidia-a100-80gb`), `display_name`, `vendor`, `architecture`, `vram_gb`, `fp16_tflops`.
+   - Single Writer: Administrative seed and hardware registry.
+6. **`provider_pricing_snapshots`** (`006_finops_pricing_and_interruptions.sql`):
+   - Fields: `id` (UUID), `provider` (`runpod`, `modal`, `baseten`, `vast_ai`, `nebius`), `hardware_sku_id`, `zone`, `pricing_model` (`serverless`, `on_demand`, `preemptible`, `spot_bid`), `rate_microcents`, `billing_unit`, `normalized_hourly_microcents`, `obtainability_score`, `interruption_risk_tier`, `is_available`, `recorded_at`.
+   - Writers: Background FinOps price poller & neocloud catalog sync.
+7. **`job_executions`** (`006_finops_pricing_and_interruptions.sql`):
+   - Fields: `id` (UUID), `job_id` (FK $\to$ `jobs`), `tenant_id`, `attempt_number`, `provider`, `hardware_sku_id`, `zone`, `pricing_model`, `worker_node_id`, `started_at`, `ended_at`, `duration_ms`, `cost_microcents`, `billed_revenue_microcents`, `gross_margin_percentage`, `status`, `is_preempted`.
+   - Writers: Worker lifecycle callbacks and dispatcher.
+8. **`spot_interruptions`** (`006_finops_pricing_and_interruptions.sql`):
+   - Fields: `id` (UUID), `execution_id` (FK), `job_id`, `tenant_id`, `provider`, `hardware_sku_id`, `zone`, `pricing_model`, `wasted_duration_ms`, `wasted_cost_microcents`, `interruption_reason` (`OUTBID`, `PREEMPTION`, `SIGTERM_TIMEOUT`), `re_routed_to_provider`, `re_routed_pricing_model`, `interrupted_at`.
+   - Writers: Queue worker eviction handler and retry engine.
 
 ---
 

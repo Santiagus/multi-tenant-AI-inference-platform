@@ -16,7 +16,12 @@ from apps.worker.contracts import (
     InferenceResult,
     UsageMetrics,
 )
-from apps.worker.providers.base import InferenceProvider
+from apps.worker.providers.base import (
+    InferenceProvider,
+    assert_no_real_inference_in_test,
+    is_mock_inference_enabled,
+    is_test_environment,
+)
 
 
 class RunPodAdapter(InferenceProvider):
@@ -32,12 +37,10 @@ class RunPodAdapter(InferenceProvider):
     ) -> None:
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
         self._endpoint_id = endpoint_id or os.environ.get("RUNPOD_ENDPOINT_ID", "runpod-llama3-serverless")
-        is_ci_or_mock = (
-            os.environ.get("CI", "").lower() in ("true", "1", "yes")
-            or os.environ.get("INFERENCE_MOCK_MODE", "").lower() in ("true", "1", "yes")
-            or os.environ.get("RUNPOD_MOCK", "1") == "1"
-        )
-        self._mock_mode = mock_mode if mock_mode is not None else (not bool(self._api_key) or is_ci_or_mock)
+        is_mock = is_mock_inference_enabled() or not bool(self._api_key)
+        if mock_mode is False and is_test_environment():
+            assert_no_real_inference_in_test("runpod")
+        self._mock_mode = mock_mode if mock_mode is not None else is_mock
         self._healthy = healthy
         self._base_url = base_url.rstrip("/")
 
@@ -173,6 +176,7 @@ class RunPodAdapter(InferenceProvider):
         )
 
     def _predict_live(self, request: InferenceRequest) -> InferenceResult:
+        assert_no_real_inference_in_test(self.name)
         url = f"{self._base_url}/{self._endpoint_id}/runsync"
         payload_data = json.dumps(
             {

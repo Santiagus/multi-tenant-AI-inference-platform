@@ -332,20 +332,87 @@ export type CommandRunner = (
   onProgress?: (progress: JobProgress) => void
 ) => Promise<{ stdout: string; stderr: string }>;
 
+export function isTestEnvironment(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' ||
+    process.env.ENV === 'test' ||
+    process.env.CI === 'true' ||
+    process.env.GITHUB_ACTIONS === 'true'
+  );
+}
+
+export function isMockInferenceEnabled(): boolean {
+  const vars = [
+    process.env.MOCK_PROVIDERS,
+    process.env.MOCK_INFERENCE,
+    process.env.INFERENCE_MOCK_MODE,
+    process.env.INFERENCE_MOCK,
+  ];
+
+  const truthy = new Set(['1', 'true', 'enable', 'enabled', 'yes', 'on']);
+  const falsy = new Set(['0', 'false', 'disable', 'disabled', 'no', 'off']);
+
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (falsy.has(cleaned)) {
+        if (isTestEnvironment()) {
+          throw new Error(
+            'Real inference in test is strictly forbidden! MOCK_PROVIDERS (or MOCK_INFERENCE) must be set to ENABLE, TRUE, or 1.'
+          );
+        }
+        return false;
+      }
+    }
+  }
+
+  for (const v of vars) {
+    if (v !== undefined) {
+      const cleaned = v.trim().toLowerCase();
+      if (truthy.has(cleaned)) {
+        return true;
+      }
+    }
+  }
+
+  return true;
+}
+
+let runtimeInferenceModeOverride: 'mock' | 'real' | null = null;
+
+export function getInferenceExecutionMode(): 'mock' | 'real' {
+  if (runtimeInferenceModeOverride !== null) {
+    return runtimeInferenceModeOverride;
+  }
+  return shouldRunRealInference() ? 'real' : 'mock';
+}
+
+export function setInferenceExecutionMode(mode: 'mock' | 'real'): void {
+  if (mode === 'real' && isTestEnvironment()) {
+    throw new Error('Real inference is strictly forbidden during testing. Mock inference must remain active.');
+  }
+  runtimeInferenceModeOverride = mode;
+}
+
+export function resetInferenceExecutionMode(): void {
+  runtimeInferenceModeOverride = null;
+}
+
 export function shouldRunRealInference(): boolean {
+  // Real inference is strictly forbidden in test execution
+  if (isTestEnvironment()) {
+    return false;
+  }
+  if (runtimeInferenceModeOverride === 'real') {
+    return true;
+  }
+  if (runtimeInferenceModeOverride === 'mock') {
+    return false;
+  }
   if (process.env.FORCE_REAL_INFERENCE === 'true' || process.env.FORCE_REAL_INFERENCE === '1') {
     return true;
   }
-  if (
-    process.env.CI === 'true' ||
-    process.env.GITHUB_ACTIONS === 'true' ||
-    process.env.NODE_ENV === 'test' ||
-    process.env.MOCK_INFERENCE === 'true' ||
-    process.env.MOCK_INFERENCE === '1'
-  ) {
-    return false;
-  }
-  return true;
+  return !isMockInferenceEnabled();
 }
 
 const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
@@ -425,7 +492,14 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
       const device = String(
         params.device ?? (pref.includes('gpu') ? 'cuda' : 'cpu')
       );
-      const engine = String(params.engine ?? 'auto');
+      const engineRequested = String(params.engine ?? 'auto');
+      // Resolve AUTO to the concrete engine the mock path actually runs (eager / torchscript / compile / numpy).
+      const engineExecuted =
+        engineRequested === 'auto'
+          ? 'eager'
+          : engineRequested === 'torch-compile' || engineRequested === 'torch_compile'
+            ? 'torch-compile'
+            : engineRequested;
       const requestedProvider = String(
         params.provider ??
           payload.provider ??
@@ -434,6 +508,15 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
       const tokensIn = Math.max(1, prompt.trim().split(/\s+/).length);
       const tokensOut = Number(params.max_new_tokens ?? 6);
       const isCuda = device === 'cuda';
+      const deviceSuffix = isCuda ? 'cuda' : 'cpu';
+      const backend =
+        engineExecuted === 'torch-compile'
+          ? `pytorch_torch_compile_${deviceSuffix}`
+          : engineExecuted === 'torchscript'
+            ? `pytorch_torchscript_${deviceSuffix}`
+            : engineExecuted === 'numpy'
+              ? 'numpy_cpu_fallback'
+              : `pytorch_${deviceSuffix}`;
 
       if (onProgress) {
         onProgress({
@@ -467,8 +550,8 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           warm_start: true,
           model_load_ms: 1.2,
           model_footprint_mb: 0.32,
-          engine_requested: engine,
-          engine_executed: engine,
+          engine_requested: engineRequested,
+          engine_executed: engineExecuted,
           quantization: 'none',
           tier: 1,
           correlation_id: correlationId,
@@ -477,12 +560,8 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           tokens_per_sec: 500.0,
           telemetry: {
             device_type: isCuda ? 'cuda' : 'cpu',
-            device_name: isCuda ? 'NVIDIA GeForce RTX 5070 Ti' : 'Intel/AMD CPU',
-            backend: isCuda
-              ? engine === 'torch-compile'
-                ? 'pytorch_torch_compile_cuda'
-                : 'pytorch_cuda'
-              : 'pytorch_cpu',
+            device_name: isCuda ? 'NVIDIA GeForce RTX 5070 Ti' : 'AMD Ryzen 9 7900 12-Core Processor',
+            backend,
             vram_allocated_mb: isCuda ? 32.33 : 0,
             vram_reserved_mb: isCuda ? 34.0 : 0,
             vram_peak_mb: isCuda ? 32.58 : 0,
@@ -497,6 +576,16 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
 
       return resolve({ stdout: JSON.stringify(simulatedEnvelope), stderr: '' });
     });
+  }
+
+  if (isTestEnvironment()) {
+    return Promise.reject(
+      new InferenceExecutionError(
+        'Real inference is strictly forbidden during testing. Mock inference must be ENABLE/TRUE/1.',
+        'REAL_INFERENCE_FORBIDDEN_IN_TEST',
+        false
+      )
+    );
   }
 
   return new Promise((resolve, reject) => {
@@ -671,6 +760,9 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
     if (pref === 'local/cpu') {
       updatedParams.device = 'cpu';
       updatedParams.provider = 'local_pytorch';
+      if (!updatedParams.weights && getInferenceExecutionMode() === 'real') {
+        updatedParams.weights = 'production';
+      }
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
@@ -683,6 +775,9 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
     if (pref === 'local/gpu') {
       updatedParams.device = 'cuda';
       updatedParams.provider = 'local_pytorch';
+      if (!updatedParams.weights && getInferenceExecutionMode() === 'real') {
+        updatedParams.weights = 'production';
+      }
       return this.pythonExecutor.execute(
         job,
         { ...resolvedInput, parameters: updatedParams },
@@ -753,7 +848,23 @@ export class RoutingInferenceExecutor implements IInferenceExecutor {
       );
     }
 
-    // 6. Fast mock executor fallback for unspecified 'auto' jobs
+    // 6. Real inference dispatch for 'auto' jobs if real inference mode is active
+    if (getInferenceExecutionMode() === 'real' && job.modelId !== 'mock') {
+      if (!updatedParams.provider) {
+        updatedParams.provider = 'local_pytorch';
+      }
+      if (!updatedParams.weights) {
+        updatedParams.weights = 'production';
+      }
+      return this.pythonExecutor.execute(
+        job,
+        { ...resolvedInput, parameters: updatedParams },
+        checkCancelled,
+        onProgress
+      );
+    }
+
+    // Fast mock executor fallback for unspecified 'auto' jobs
     return this.mockExecutor.execute(job, resolvedInput, checkCancelled, onProgress);
   }
 }

@@ -9,7 +9,10 @@
     "build": "tsc && cp -r src/infrastructure/db/migrations dist/infrastructure/db/migrations",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "NODE_ENV=test node --import tsx --test tests/unit/*.test.ts tests/integration/*.test.ts tests/security/*.test.ts"
+    "test": "NODE_ENV=test MOCK_PROVIDERS=1 MOCK_INFERENCE=1 INFERENCE_MOCK_MODE=true node --import tsx --test tests/unit/*.test.ts tests/integration/*.test.ts tests/security/*.test.ts",
+    "db:seed:showcase": "tsx src/infrastructure/db/seeds/showcase-seed.ts",
+    "db:seed:showcase:clear": "tsx src/infrastructure/db/seeds/showcase-seed.ts --clear",
+    "sync:providers": "node --env-file=../../.env dist/scripts/sync-live-providers.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.660.0",

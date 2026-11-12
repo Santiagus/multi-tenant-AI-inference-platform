@@ -3,12 +3,93 @@ import path from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { JobService } from '../application/job-service.js';
-import { type JobWorker, getJobOutputModality } from '../application/job-worker.js';
+import {
+  type JobWorker,
+  getJobOutputModality,
+  getInferenceExecutionMode,
+  setInferenceExecutionMode,
+  isTestEnvironment,
+} from '../application/job-worker.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
-import { type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
+import { type Job, type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ForbiddenError, ValidationError } from '../domain/errors.js';
 import { requireScopes } from '../plugins/security.js';
 import { SecurityScope, type TenantSecurityContext } from '../domain/security.js';
+
+/** Expose the submitted prompt + model parameters for job inspection / DLQ debugging. */
+function resolveJobInputFields(job: Job): {
+  prompt: string | null;
+  parameters: Record<string, unknown> | null;
+  input_uri: string | null;
+  input: Record<string, unknown> | null;
+} {
+  const input = (job.inputPayload ?? null) as Record<string, unknown> | null;
+  if (!input) {
+    return { prompt: null, parameters: null, input_uri: job.inputUri ?? null, input: null };
+  }
+  const nestedParams = input.parameters;
+  const parameters =
+    nestedParams && typeof nestedParams === 'object' && !Array.isArray(nestedParams)
+      ? (nestedParams as Record<string, unknown>)
+      : null;
+  return {
+    prompt: typeof input.prompt === 'string' ? input.prompt : null,
+    parameters,
+    input_uri: job.inputUri ?? null,
+    input,
+  };
+}
+
+/** Derive mock vs real inference from worker metadata (or explicit mock routing). */
+function resolveJobInferenceMode(job: Job): {
+  inference_mode: 'mock' | 'real' | null;
+  is_mocked: boolean | null;
+} {
+  const payload = (job.outputPayload ?? {}) as Record<string, unknown>;
+  const metadata = (
+    (payload.metadata as Record<string, unknown> | undefined) ?? payload
+  ) as Record<string, unknown>;
+
+  if (typeof metadata.is_mocked === 'boolean') {
+    return {
+      inference_mode: metadata.is_mocked ? 'mock' : 'real',
+      is_mocked: metadata.is_mocked,
+    };
+  }
+
+  const execMode = String(metadata.execution_mode ?? '').toLowerCase();
+  if (execMode === 'mock') return { inference_mode: 'mock', is_mocked: true };
+  if (execMode === 'live' || execMode === 'real') return { inference_mode: 'real', is_mocked: false };
+
+  if (job.routingPreference === 'mock') {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  // Painted showcase fixtures are simulated (no live worker inference pass).
+  if (job.id.startsWith('00000000-') || metadata.showcase === true) {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  if (metadata.production_weights === true || metadata.weights === 'production') {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
+  const vramPeak = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
+  if (vramPeak > 64 && (job.durationMs ?? 0) > 100) {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+
+  if (
+    (job.provider === 'local_cpu_worker' || job.provider === 'local_pytorch' || job.provider === 'local') &&
+    (job.durationMs ?? 0) > 0 &&
+    (job.durationMs ?? 0) <= 50
+  ) {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
+
+  return { inference_mode: null, is_mocked: null };
+}
 
 const SUPPORTED_UPLOAD_CONTENT_TYPES = [
   'image/jpeg',
@@ -64,6 +145,7 @@ const SubmitJobSchema = z.object({
     .default('auto'),
   priority: z.number().int().min(1).max(10).default(5),
   max_retries: z.number().int().min(0).max(10).optional(),
+  expires_in_seconds: z.number().int().positive().max(604800).optional(),
   parameters: z.record(z.unknown()).optional(),
   input: z
     .object({
@@ -184,6 +266,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         routingPreference: body.routing_preference as RoutingPreferenceType,
         priority: body.priority,
         maxRetries: body.max_retries,
+        expiresInSeconds: body.expires_in_seconds,
         input: resolvedInput as Record<string, unknown> | undefined,
         inputUri: body.input_uri,
         correlationId,
@@ -269,6 +352,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       }
       const tenantId = (req as any).tenantId || 'tenant-default';
       const { limit, offset, status } = parseResult.data;
+      await jobService.reapExpiredJobs();
       const jobs = await jobService.listJobs(tenantId, { limit, offset, status: status as JobStatusType | undefined });
 
       return reply.status(200).send({
@@ -308,11 +392,23 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
             routing_preference: job.routingPreference,
             priority: job.priority,
             provider: job.provider,
+            ...resolveJobInferenceMode(job),
+            ...resolveJobInputFields(job),
             retry_count: job.retryCount,
             max_retries: job.maxRetries,
+            retries_used:
+              ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+              ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+              job.retryCount,
+            is_manual_retry: Boolean(
+              ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.manually_retried as boolean | undefined) ??
+              ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.manual_retry as boolean | undefined) ??
+              job.progress?.message?.includes('Manually re-triggered')
+            ),
             created_at: job.createdAt.toISOString(),
             started_at: job.startedAt?.toISOString() ?? null,
             completed_at: job.completedAt?.toISOString() ?? null,
+            expires_at: job.expiresAt?.toISOString() ?? null,
             duration_ms: job.durationMs,
             progress_pct: progressPct,
             progress,
@@ -325,6 +421,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
                     cost_microcents: job.costMicrocents ?? 0,
                   }
                 : undefined,
+            result: job.outputPayload ?? undefined,
             error:
               job.errorCode || job.errorMessage
                 ? {
@@ -355,24 +452,122 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       const messages = await jobService.listDlqMessages(tenantId, 10);
 
       return reply.status(200).send({
-        messages: messages.map((m) => ({
-          message_id: m.messageId,
-          job_id: m.body.jobId,
-          tenant_id: m.body.tenantId,
-          correlation_id: m.body.correlationId ?? null,
-          traceparent: m.body.traceparent ?? null,
-          model_id: m.body.modelId,
-          error_code: m.body.errorCode,
-          failure_reason: m.body.failureReason,
-          retry_count: m.body.retryCount,
-          failed_at: m.body.failedAt,
-        })),
+        messages: messages.map((m) => {
+          const input = (m.body.inputPayload ?? {}) as Record<string, unknown>;
+          const parameters =
+            (input.parameters as Record<string, unknown> | undefined) ??
+            (typeof input.parameters === 'object' ? (input.parameters as Record<string, unknown>) : undefined);
+          return {
+            message_id: m.messageId,
+            job_id: m.body.jobId,
+            tenant_id: m.body.tenantId,
+            correlation_id: m.body.correlationId ?? null,
+            traceparent: m.body.traceparent ?? null,
+            model_id: m.body.modelId,
+            routing_preference: m.body.routingPreference,
+            error_code: m.body.errorCode,
+            failure_reason: m.body.failureReason,
+            retry_count: m.body.retryCount,
+            failed_at: m.body.failedAt,
+            prompt: typeof input.prompt === 'string' ? input.prompt : null,
+            parameters: parameters ?? null,
+            input_uri: m.body.inputUri ?? null,
+            input: input,
+          };
+        }),
       });
     }
   );
 
+  // DELETE /v1/jobs/dlq/:messageId - Discard a poison-pill envelope from the DLQ
+  fastify.delete<{ Params: { messageId: string } }>(
+    '/v1/jobs/dlq/:messageId',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Discard Dead-Letter Queue Message',
+        description:
+          'Removes a quarantined DLQ envelope after operator review. The durable FAILED job record is left unchanged.',
+        params: {
+          type: 'object',
+          required: ['messageId'],
+          properties: {
+            messageId: { type: 'string', description: 'SQS / ElasticMQ DLQ message id' },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const discarded = await jobService.discardDlqMessage(tenantId, req.params.messageId);
+      return reply.status(200).send({
+        ok: true,
+        message_id: discarded.messageId,
+        job_id: discarded.body.jobId,
+        tenant_id: discarded.body.tenantId,
+      });
+    }
+  );
+
+  // GET /v1/worker/inference-mode - Get current local inference execution mode (mock vs real)
+  fastify.get(
+    '/v1/worker/inference-mode',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Get Inference Execution Mode',
+        description: 'Returns whether local inference is in mock (synthetic, 0 VRAM) or real (PyTorch / GPU) mode.',
+      },
+    },
+    async (_req, reply) => {
+      const mode = getInferenceExecutionMode();
+      return reply.status(200).send({
+        mode,
+        isTest: isTestEnvironment(),
+        description:
+          mode === 'real'
+            ? 'Real local inference active (executes Python/PyTorch subprocess on host GPU/CPU).'
+            : 'Mock inference active (instant simulated responses with synthetic telemetry).',
+      });
+    }
+  );
+
+  // POST /v1/worker/inference-mode - Set local inference execution mode (mock vs real)
+  fastify.post<{ Body?: { mode?: 'mock' | 'real' } }>(
+    '/v1/worker/inference-mode',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Set Inference Execution Mode',
+        description: 'Toggles between mock and real local inference execution.',
+      },
+    },
+    async (req, reply) => {
+      const targetMode = req.body?.mode;
+      if (targetMode !== 'mock' && targetMode !== 'real') {
+        return reply.status(400).send({
+          error: 'Invalid inference mode. Must be "mock" or "real".',
+        });
+      }
+
+      try {
+        setInferenceExecutionMode(targetMode);
+        return reply.status(200).send({
+          ok: true,
+          mode: getInferenceExecutionMode(),
+          message: `Local inference execution mode set to ${targetMode}.`,
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          error: err.message || 'Failed to set inference execution mode',
+        });
+      }
+    }
+  );
+
   // POST /v1/worker/process-next - Deterministically process next queued job(s)
-  fastify.post(
+  fastify.post<{ Body?: { mode?: 'mock' | 'real'; count?: number } }>(
     '/v1/worker/process-next',
     {
       schema: {
@@ -381,10 +576,19 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         description: 'Deterministically triggers execution of the next queued job from ElasticMQ / SQS.',
       },
     },
-    async (_req, reply) => {
-      const outcomes = await jobWorker.processNextBatch(1);
+    async (req, reply) => {
+      if (req.body?.mode && (req.body.mode === 'mock' || req.body.mode === 'real')) {
+        try {
+          setInferenceExecutionMode(req.body.mode);
+        } catch {
+          // Keep current if prohibited in test environment
+        }
+      }
+      const count = Math.max(1, Math.min(Number(req.body?.count || 1), 10));
+      const outcomes = await jobWorker.processNextBatch(count);
       return reply.status(200).send({
         processed: outcomes.length,
+        inferenceMode: getInferenceExecutionMode(),
         outcomes,
       });
     }
@@ -464,11 +668,23 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       routing_preference: job.routingPreference,
       priority: job.priority,
       provider: job.provider,
+      ...resolveJobInferenceMode(job),
+      ...resolveJobInputFields(job),
       retry_count: job.retryCount,
       max_retries: job.maxRetries,
+      retries_used:
+        ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+        ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.retries_used as number | undefined) ??
+        job.retryCount,
+      is_manual_retry: Boolean(
+        ((job.outputPayload?.metadata as Record<string, unknown> | undefined)?.manually_retried as boolean | undefined) ??
+        ((job.inputPayload?._retry_info as Record<string, unknown> | undefined)?.manual_retry as boolean | undefined) ??
+        job.progress?.message?.includes('Manually re-triggered')
+      ),
       created_at: job.createdAt.toISOString(),
       started_at: job.startedAt?.toISOString() ?? null,
       completed_at: job.completedAt?.toISOString() ?? null,
+      expires_at: job.expiresAt?.toISOString() ?? null,
       duration_ms: job.durationMs,
     };
 
@@ -549,6 +765,66 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         job_id: job.id,
         status: job.status,
         completed_at: job.completedAt?.toISOString() ?? null,
+      });
+    }
+  );
+
+  // POST /v1/jobs/:id/retry - Manually trigger / retry a failed or cancelled job
+  fastify.post<{ Params: { id: string }; Body?: { expires_in_seconds?: number } }>(
+    '/v1/jobs/:id/retry',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Manually Trigger / Retry Job',
+        description: 'Manually re-triggers a FAILED, CANCELLED, or stuck job, resetting retry counters and re-enqueuing.',
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Job UUID' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const tenantId = (req as any).tenantId || 'tenant-default';
+      const expiresInSeconds = req.body?.expires_in_seconds;
+      const job = await jobService.retryJob(tenantId, req.params.id, { expiresInSeconds });
+
+      return reply.status(200).send({
+        job_id: job.id,
+        status: job.status,
+        model_id: job.modelId,
+        retry_count: job.retryCount,
+        max_retries: job.maxRetries,
+        expires_at: job.expiresAt?.toISOString() ?? null,
+        message: 'Job successfully re-triggered and enqueued for worker execution',
+      });
+    }
+  );
+
+  // POST /v1/jobs/reap - Scan and expire stale or retries-exhausted jobs
+  fastify.post(
+    '/v1/jobs/reap',
+    {
+      preHandler: [requireScopes(SecurityScope.JOBS_WRITE)],
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Reap Expired Jobs',
+        description: 'Scans non-terminal jobs exceeding queue TTL expiration or maximum retries and marks them FAILED.',
+      },
+    },
+    async (_req, reply) => {
+      const result = await jobService.reapExpiredJobs();
+      return reply.status(200).send({
+        reaped_count: result.reapedCount,
+        reaped_jobs: result.jobs.map((j) => ({
+          job_id: j.id,
+          status: j.status,
+          error_code: j.errorCode,
+          error_message: j.errorMessage,
+        })),
       });
     }
   );

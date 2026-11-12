@@ -84,6 +84,24 @@ const CURATED_MODELS = [
     pricingTier: 'Free/Low',
   },
   {
+    id: 'deepseek-ai/DeepSeek-R1',
+    name: 'DeepSeek-R1 (Distill 70B)',
+    modality: 'code_reasoning',
+    minVramMb: 49152,
+    latencyTier: 'Reasoning (2.5s - 8.0s)',
+    defaultProvider: 'nebius',
+    pricingTier: 'MaaS / Spot',
+  },
+  {
+    id: 'black-forest-labs/FLUX.1-schnell',
+    name: 'FLUX.1 Schnell',
+    modality: 'text_to_image',
+    minVramMb: 16384,
+    latencyTier: 'Fast Diffusion (400-800ms)',
+    defaultProvider: 'fal',
+    pricingTier: 'Pay-per-Call',
+  },
+  {
     id: 'THUDM/CogVideoX-2b',
     name: 'CogVideoX 2B',
     modality: 'text_to_video',
@@ -93,6 +111,72 @@ const CURATED_MODELS = [
     pricingTier: 'Heavy GPU',
   },
 ];
+
+const ALL_PROVIDER_META: Record<
+  string,
+  { hardwareDesc: string; badgeColor: string; defaultCostMicrocents: number; maxConcurrency: number }
+> = {
+  local_pytorch: {
+    hardwareDesc: 'Local CUDA / CPU (detected at runtime)',
+    badgeColor: '#10b981',
+    defaultCostMicrocents: 0,
+    maxConcurrency: 4,
+  },
+  runpod: {
+    hardwareDesc: 'RunPod Serverless & Spot H100 SXM5 / RTX 4090',
+    badgeColor: '#8b5cf6',
+    defaultCostMicrocents: 15,
+    maxConcurrency: 32,
+  },
+  vast_ai: {
+    hardwareDesc: 'Vast.ai Unregulated Spot RTX 5090 Blackwell (32GB)',
+    badgeColor: '#06b6d4',
+    defaultCostMicrocents: 12,
+    maxConcurrency: 16,
+  },
+  baseten: {
+    hardwareDesc: 'Baseten Truss Scale-to-Zero L4 Tensor Core (24GB)',
+    badgeColor: '#3b82f6',
+    defaultCostMicrocents: 25,
+    maxConcurrency: 64,
+  },
+  nebius: {
+    hardwareDesc: 'Nebius AI Studio Preemptible H200 (141GB HBM3e)',
+    badgeColor: '#a855f7',
+    defaultCostMicrocents: 18,
+    maxConcurrency: 32,
+  },
+  jarvislabs: {
+    hardwareDesc: 'JarvisLabs Token Factory MaaS & RTX 5000 Pods',
+    badgeColor: '#f59e0b',
+    defaultCostMicrocents: 7,
+    maxConcurrency: 128,
+  },
+  fal: {
+    hardwareDesc: 'fal.ai Distributed Tensor Core Real-Time Engine',
+    badgeColor: '#ec4899',
+    defaultCostMicrocents: 30,
+    maxConcurrency: 50,
+  },
+  runware: {
+    hardwareDesc: 'Runware Shared Serverless Engine ($0.0018/Mpx)',
+    badgeColor: '#14b8a6',
+    defaultCostMicrocents: 18,
+    maxConcurrency: 100,
+  },
+  bedrock: {
+    hardwareDesc: 'AWS Bedrock Managed Anthropic Claude 3 Haiku API',
+    badgeColor: '#f97316',
+    defaultCostMicrocents: 25,
+    maxConcurrency: 100,
+  },
+  sagemaker: {
+    hardwareDesc: 'AWS SageMaker Private VPC Inferentia2 / G5 Cluster',
+    badgeColor: '#64748b',
+    defaultCostMicrocents: 20,
+    maxConcurrency: 16,
+  },
+};
 
 export function ProvidersView({ providers, jobs = [], isLoading, onToggleHealth }: ProvidersViewProps) {
   const [togglingProvider, setTogglingProvider] = useState<string | null>(null);
@@ -140,7 +224,26 @@ export function ProvidersView({ providers, jobs = [], isLoading, onToggleHealth 
     }
   };
 
-  const providerList = Object.entries(providers);
+  const fullProviderList = useMemo(() => {
+    const map = { ...providers };
+    for (const [key, meta] of Object.entries(ALL_PROVIDER_META)) {
+      if (!map[key]) {
+        map[key] = {
+          name: key,
+          healthy: true,
+          costMicrocentsPerToken: meta.defaultCostMicrocents,
+          baseLatencyMs: 120,
+          maxConcurrency: meta.maxConcurrency,
+          vramTotalMb: 24576,
+          vramAllocatedMb: 8192,
+          isCloudApi: key !== 'local_pytorch',
+          supportsVpc: key === 'sagemaker',
+          mockMode: true,
+        };
+      }
+    }
+    return Object.entries(map);
+  }, [providers]);
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -156,25 +259,15 @@ export function ProvidersView({ providers, jobs = [], isLoading, onToggleHealth 
 
       {/* Provider Cards Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-        {providerList.map(([name, prof]) => {
+        {fullProviderList.map(([name, prof]) => {
           const isToggling = togglingProvider === name;
           const costPer1k = ((prof.costMicrocentsPerToken || prof.cost_per_token_microcents || 0) * 1000) / 100_000_000;
-
-          let hardwareDesc = 'Cloud Inference API';
-          let badgeColor = '#6366f1';
-          if (name === 'local_pytorch') {
-            hardwareDesc = 'Local NVIDIA RTX 5070 Ti (16GB GDDR7)';
-            badgeColor = '#10b981';
-          } else if (name === 'runpod') {
-            hardwareDesc = 'RunPod Serverless GPU Worker (24GB VRAM)';
-            badgeColor = '#8b5cf6';
-          } else if (name === 'bedrock') {
-            hardwareDesc = 'AWS Bedrock Managed Anthropic Claude 3';
-            badgeColor = '#f59e0b';
-          } else if (name === 'sagemaker') {
-            hardwareDesc = 'AWS SageMaker Private VPC Endpoint';
-            badgeColor = '#06b6d4';
-          }
+          const meta = ALL_PROVIDER_META[name] || {
+            hardwareDesc: prof.isCloudApi ? 'Cloud Managed Inference API' : 'Dedicated Inference Worker',
+            badgeColor: '#6366f1',
+          };
+          const hardwareDesc = meta.hardwareDesc;
+          const badgeColor = meta.badgeColor;
 
           return (
             <div

@@ -5,9 +5,15 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from unittest import mock
 
 from apps.worker.consumer import WorkerRuntime, run_cli
 from apps.worker.contracts import InferenceError, InferenceRequest
+from apps.worker.providers.base import (
+    assert_no_real_inference_in_test,
+    is_mock_inference_enabled,
+    is_test_environment,
+)
 from apps.worker.providers.bedrock import BedrockAdapter
 from apps.worker.providers.local import LocalPyTorchAdapter
 from apps.worker.providers.registry import ProviderRegistry, get_default_registry
@@ -311,6 +317,60 @@ class TestProviderAdapters(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(res_err["ok"])
         self.assertEqual(res_err["error"]["code"], "UNKNOWN_INFERENCE_PROVIDER")
+
+    def test_generalized_mock_flag_parsing(self) -> None:
+        """Verify unique MOCK_PROVIDERS and MOCK_INFERENCE flags accept 1, ENABLE, TRUE, YES."""
+        for truthy in ("1", "ENABLE", "enable", "TRUE", "true", "YES", "yes"):
+            with mock.patch.dict(os.environ, {"MOCK_PROVIDERS": truthy}):
+                self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_PROVIDERS={truthy}")
+            with mock.patch.dict(os.environ, {"MOCK_INFERENCE": truthy}):
+                self.assertTrue(is_mock_inference_enabled(), f"Failed for MOCK_INFERENCE={truthy}")
+
+    def test_real_inference_forbidden_during_test_execution(self) -> None:
+        """Enforce that no real inference is permitted in automated tests."""
+        self.assertTrue(is_test_environment())
+
+        # Direct check function must raise in test
+        with self.assertRaises(RuntimeError) as ctx:
+            assert_no_real_inference_in_test("test_provider")
+        self.assertIn("forbidden during test execution", str(ctx.exception))
+
+        # Disabling mock inference via env during test execution must raise RuntimeError
+        for falsy in ("0", "DISABLE", "disable", "FALSE", "false", "NO", "no"):
+            with mock.patch.dict(os.environ, {"MOCK_INFERENCE": falsy}):
+                with self.assertRaises(RuntimeError) as ctx:
+                    is_mock_inference_enabled()
+                self.assertIn("Real inference in test is strictly forbidden", str(ctx.exception))
+
+        # Explicitly passing mock_mode=False to adapters in test must raise
+        with self.assertRaises(RuntimeError):
+            RunPodAdapter(endpoint_id="test-ep", mock_mode=False)
+
+        with self.assertRaises(RuntimeError):
+            BedrockAdapter(aws_region="us-east-1", mock_mode=False)
+
+        with self.assertRaises(RuntimeError):
+            SageMakerAdapter(endpoint_name="test-ep", mock_mode=False)
+
+    def test_adapters_default_to_mock_without_neocloud_flags(self) -> None:
+        """Verify adapters initialize in mock mode without any per-neocloud mock variables."""
+        # Clean any per-neocloud variables from environment
+        cleaned_env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.endswith("_MOCK") and k not in ("MOCK_PROVIDERS", "MOCK_INFERENCE", "INFERENCE_MOCK_MODE")
+        }
+        cleaned_env["MOCK_PROVIDERS"] = "1"
+
+        with mock.patch.dict(os.environ, cleaned_env, clear=True):
+            rp = RunPodAdapter(endpoint_id="rp-test")
+            self.assertTrue(rp.mock_mode)
+
+            br = BedrockAdapter(aws_region="us-east-1")
+            self.assertTrue(br.mock_mode)
+
+            sm = SageMakerAdapter(endpoint_name="sm-test")
+            self.assertTrue(sm.mock_mode)
 
 
 if __name__ == "__main__":

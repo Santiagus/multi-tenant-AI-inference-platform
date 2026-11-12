@@ -314,6 +314,60 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.equal(dlqBody.messages[0].job_id, badJobId);
     assert.equal(dlqBody.messages[0].error_code, 'INVALID_MODEL_PARAMETERS');
 
+    const discardRes = await app.inject({
+      method: 'DELETE',
+      url: `/v1/jobs/dlq/${dlqBody.messages[0].message_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(discardRes.statusCode, 200);
+    assert.equal(JSON.parse(discardRes.body).ok, true);
+
+    const dlqAfter = await app.inject({
+      method: 'GET',
+      url: '/v1/jobs/dlq',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(JSON.parse(dlqAfter.body).messages.length, 0);
+
+    // Durable FAILED job remains after DLQ discard
+    const failedJob = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${badJobId}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(failedJob.statusCode, 200);
+    assert.equal(JSON.parse(failedJob.body).status, 'FAILED');
+
+    await app.close();
+  });
+
+  test('GET and POST /v1/worker/inference-mode inspects and toggles local execution mode', async () => {
+    const { app } = createTestApp();
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: '/v1/worker/inference-mode',
+    });
+    assert.equal(getRes.statusCode, 200);
+    const getBody = JSON.parse(getRes.body);
+    assert.ok(getBody.mode === 'mock' || getBody.mode === 'real');
+    assert.equal(getBody.isTest, true);
+
+    const postMock = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/inference-mode',
+      payload: { mode: 'mock' },
+    });
+    assert.equal(postMock.statusCode, 200);
+    assert.equal(JSON.parse(postMock.body).mode, 'mock');
+
+    const postInvalid = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/inference-mode',
+      payload: { mode: 'invalid-mode' },
+    });
+    assert.equal(postInvalid.statusCode, 400);
+
     await app.close();
   });
 
@@ -556,6 +610,117 @@ describe('Job Routes & Lifecycle Integration', () => {
     assert.ok(jobData.artifacts[1].download_url.includes('output.mp4'));
     assert.equal(jobData.artifacts[2].name, 'output_poster');
     assert.ok(jobData.artifacts[2].download_url.includes('poster.png'));
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs/reap and GET /v1/jobs automatically expire stale jobs exceeding TTL', async () => {
+    const { app, jobRepo } = createTestApp();
+
+    // 1. Submit a job that has expired
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        expires_in_seconds: 60,
+        input: { prompt: 'Stale queued job' },
+      },
+    });
+    assert.equal(postRes.statusCode, 202);
+    const { job_id } = JSON.parse(postRes.body);
+
+    // Simulate aging the job in the past
+    await jobRepo.update('tenant-acme', job_id, {
+      expiresAt: new Date(Date.now() - 10000),
+    });
+
+    // 2. Trigger explicit reap endpoint
+    const reapRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs/reap',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(reapRes.statusCode, 200);
+    const reapData = JSON.parse(reapRes.body);
+    assert.equal(reapData.reaped_count, 1);
+    assert.equal(reapData.reaped_jobs[0].job_id, job_id);
+    assert.equal(reapData.reaped_jobs[0].error_code, 'JOB_EXPIRED');
+
+    // 3. Inspect job via GET /v1/jobs/:id
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const jobData = JSON.parse(getRes.body);
+    assert.equal(jobData.status, 'FAILED');
+    assert.equal(jobData.error.code, 'JOB_EXPIRED');
+    assert.ok(jobData.error.message.includes('queue expiration timeout'));
+    assert.ok(jobData.expires_at);
+
+    await app.close();
+  });
+
+  test('POST /v1/jobs/:id/retry manually re-triggers failed job and re-enqueues for processing', async () => {
+    const { app, jobRepo } = createTestApp();
+
+    // 1. Submit and fail a job
+    const postRes = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'meta-llama/Llama-3-8B-Instruct',
+        input: { prompt: 'Job to retry manually' },
+      },
+    });
+    const { job_id } = JSON.parse(postRes.body);
+
+    await jobRepo.update('tenant-acme', job_id, {
+      status: 'FAILED',
+      errorCode: 'JOB_EXPIRED',
+      errorMessage: 'Job expired in queue',
+      completedAt: new Date(),
+    });
+
+    // 2. Call POST /v1/jobs/:id/retry
+    const retryRes = await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${job_id}/retry`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        expires_in_seconds: 7200,
+      },
+    });
+    assert.equal(retryRes.statusCode, 200);
+    const retryData = JSON.parse(retryRes.body);
+    assert.equal(retryData.job_id, job_id);
+    assert.equal(retryData.status, 'QUEUED');
+    assert.equal(retryData.retry_count, 0);
+    assert.ok(retryData.expires_at);
+
+    // 3. Process the re-triggered job via worker
+    const procRes = await app.inject({
+      method: 'POST',
+      url: '/v1/worker/process-next',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(procRes.statusCode, 200);
+    const procData = JSON.parse(procRes.body);
+    assert.equal(procData.processed, 1);
+    assert.equal(procData.outcomes[0].action, 'succeeded');
+
+    // 4. Verify job transitioned to SUCCEEDED
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    const finalJob = JSON.parse(getRes.body);
+    assert.equal(finalJob.status, 'SUCCEEDED');
 
     await app.close();
   });

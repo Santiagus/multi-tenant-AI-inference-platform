@@ -481,6 +481,39 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     },
   },
 
+  'POST /v1/jobs/:id/retry': {
+    tags: ['Jobs'],
+    summary: 'Manually Trigger / Retry Job',
+    description: 'Manually re-triggers a FAILED, CANCELLED, or stuck job, resetting retry counters and re-enqueuing.',
+    params: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Job UUID to retry / manually trigger',
+          example: '40ecad89-bd24-426a-8b33-5be40ba9fe0a',
+        },
+      },
+      required: ['id'],
+    },
+    body: {
+      type: 'object',
+      properties: {
+        expires_in_seconds: {
+          type: 'integer',
+          description: 'Custom expiration timeout in seconds for this run',
+          example: 86400,
+        },
+      },
+    },
+  },
+
+  'POST /v1/jobs/reap': {
+    tags: ['Jobs'],
+    summary: 'Reap Expired Jobs',
+    description: 'Scans non-terminal jobs exceeding queue TTL expiration or maximum retries and marks them FAILED.',
+  },
+
   'POST /v1/jobs/:id/transition': {
     tags: ['Jobs'],
     summary: 'Transition Job Lifecycle State',
@@ -553,6 +586,35 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     description: 'Retrieves messages that exhausted maximum retry attempts and were routed to the Dead-Letter Queue.',
   },
 
+  'DELETE /v1/jobs/dlq/:messageId': {
+    tags: ['Jobs'],
+    summary: 'Discard Dead-Letter Queue Message',
+    description:
+      'Removes a quarantined DLQ envelope after operator review without mutating the durable FAILED job record.',
+    params: {
+      type: 'object',
+      required: ['messageId'],
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'SQS / ElasticMQ DLQ message id',
+        },
+      },
+    },
+  },
+
+  'GET /v1/worker/inference-mode': {
+    tags: ['Jobs'],
+    summary: 'Get Inference Execution Mode',
+    description: 'Returns whether local inference is in mock (synthetic, 0 VRAM) or real (PyTorch / GPU) mode.',
+  },
+
+  'POST /v1/worker/inference-mode': {
+    tags: ['Jobs'],
+    summary: 'Set Inference Execution Mode',
+    description: 'Toggles between mock and real local inference execution.',
+  },
+
   'POST /v1/worker/process-next': {
     tags: ['Jobs'],
     summary: 'Process Next Queued Job (Worker Trigger)',
@@ -601,6 +663,24 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
         },
       },
       required: ['correlationId'],
+    },
+  },
+
+  'GET /v1/traces/:traceId': {
+    tags: ['Observability'],
+    summary: 'Inspect Distributed Trace by Trace ID',
+    description:
+      'Retrieves all W3C distributed trace spans and hierarchical timings associated with a 32-character hexadecimal trace ID.',
+    params: {
+      type: 'object',
+      properties: {
+        traceId: {
+          type: 'string',
+          description: 'W3C 32-character hexadecimal trace ID',
+          example: '4bf92f3577b34da6a3ce929d0e0e4736',
+        },
+      },
+      required: ['traceId'],
     },
   },
 
@@ -979,6 +1059,86 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     summary: 'Trigger Argo CD Declarative Sync',
     description:
       'Triggers a declarative Argo CD reconciliation cycle for the declared target environment manifests.',
+  },
+
+  // =========================================================================
+  // FinOps & Real-Time Pricing
+  // =========================================================================
+  'GET /v1/finops/gpu-pricing': {
+    tags: ['Provider Routing'],
+    summary: 'Query GPU Spot and On-Demand Pricing Across Providers',
+    description: 'Retrieves latest normalized hourly GPU pricing per provider, hardware SKU, and pricing model.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'runpod' },
+        hardware_sku: { type: 'string', example: 'rtx_4090' },
+        pricing_model: { type: 'string', example: 'spot_bid' },
+      },
+    },
+  },
+  'GET /v1/finops/model-pricing': {
+    tags: ['Provider Routing'],
+    summary: 'Query Open Model Pricing Across Providers',
+    description: 'Retrieves token-based and pay-per-call pricing across neocloud model hosts.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'nebius' },
+        execution_type: { type: 'string', example: 'token_factory' },
+      },
+    },
+  },
+  'GET /v1/finops/pricing-history': {
+    tags: ['Provider Routing'],
+    summary: 'Query Historical Spot Pricing Trends',
+    description: 'Retrieves historical price timeseries bucketed by hour for volatility analysis.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'vast_ai' },
+        item_id: { type: 'string', example: 'rtx_4090' },
+        hours: { type: 'integer', example: 24 },
+      },
+    },
+  },
+  'GET /v1/finops/balances': {
+    tags: ['Provider Routing'],
+    summary: 'Query Live Provider Account Balances Across Fleet',
+    description: 'Retrieves real-time account balances, credits, and spending quotas across all configured provider APIs.',
+  },
+  'POST /v1/finops/sync': {
+    tags: ['Provider Routing'],
+    summary: 'Synchronize Live Pricing Catalogs with Distributed Tracing',
+    description:
+      'Triggers live pricing synchronization across all connected neocloud and hardware providers, instrumented with OpenTelemetry distributed spans.',
+  },
+  'GET /v1/finops/sync-audits': {
+    tags: ['Provider Routing'],
+    summary: 'Query Provider Pricing Synchronization Audits',
+    description:
+      'Retrieves chronological audit logs, records count, and diagnostic failure traces for provider pricing synchronizations.',
+    querystring: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', example: 'vast_ai' },
+        status: { type: 'string', enum: ['SUCCESS', 'FAILED', 'SKIPPED'], example: 'FAILED' },
+        limit: { type: 'integer', example: 50 },
+      },
+    },
+  },
+  'POST /v1/finops/recommend-options': {
+    tags: ['Provider Routing'],
+    summary: 'Recommend Smart Cloud Execution Options',
+    description: 'Evaluates execution speed, hourly spot rates, and scale-to-zero runtime costs to recommend optimal deployment options.',
+    body: {
+      type: 'object',
+      properties: {
+        model_id: { type: 'string', example: 'meta-llama/Llama-3-8B-Instruct' },
+        prompt_tokens: { type: 'integer', example: 128 },
+        max_new_tokens: { type: 'integer', example: 64 },
+      },
+    },
   },
 };
 

@@ -16,6 +16,7 @@
   "workbench.editor.limit.enabled": true,
   "workbench.editor.limit.value": 3,
   "workbench.editor.limit.perEditorGroup": true,
-  "workbench.editor.enablePreview": true
+  "workbench.editor.enablePreview": true,
+  "python.terminal.useEnvFile": true
 }
 

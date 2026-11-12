@@ -14,7 +14,12 @@ from apps.worker.contracts import (
     UsageMetrics,
 )
 from apps.worker.models import ExecutionEngine, ModelLoader, emit_job_progress, tokenize_prompt
-from apps.worker.providers.base import InferenceProvider
+from apps.worker.providers.base import (
+    InferenceProvider,
+    assert_no_real_inference_in_test,
+    is_mock_inference_enabled,
+    is_test_environment,
+)
 from apps.worker.telemetry import TelemetryCollector
 
 
@@ -31,6 +36,68 @@ class LocalPyTorchAdapter(InferenceProvider):
         self._diffusion_pipe: Any = None
         self._transformers_pipes: dict[str, Any] = {}
 
+    def is_suitable_for_vram(self, model_id: str, device: str | None = None) -> bool:
+        """Evaluate if full model weights are suitable to load in available hardware memory."""
+        try:
+            import torch  # type: ignore[import-not-found]
+
+            resolved_device = str(device or self._loader.resolve_device()).lower()
+            is_cuda = resolved_device.startswith("cuda") and torch.cuda.is_available()
+
+            if is_cuda:
+                total_mem_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
+            else:
+                try:
+                    import psutil  # type: ignore[import-untyped]
+
+                    total_mem_mb = psutil.virtual_memory().total / (1024 * 1024)
+                except Exception:
+                    total_mem_mb = 16384.0
+
+            # Check if Tier 2 spec exists with estimated VRAM footprint
+            spec2 = self._loader.resolve_spec(model_id, tier=2)
+            est_mb = spec2.estimated_vram_mb if spec2 and spec2.estimated_vram_mb > 100 else 0.0
+
+            if est_mb <= 0:
+                mid = model_id.lower()
+                if any(tag in mid for tag in ("70b", "405b", "72b", "67b")):
+                    est_mb = 42000.0  # 42 GB+ (exceeds single 16GB VRAM)
+                elif any(tag in mid for tag in ("14b", "13b", "12b")):
+                    est_mb = 9500.0  # ~9.5 GB INT4 (fits within 16GB VRAM)
+                elif any(tag in mid for tag in ("7b", "8b", "9b")):
+                    est_mb = 5500.0  # ~5.5 GB INT4 (fits comfortably within 16GB VRAM)
+                elif any(tag in mid for tag in ("1b", "2b", "3b")):
+                    est_mb = 2500.0  # ~2.5 GB (fits within 16GB VRAM)
+                elif "flux" in mid:
+                    est_mb = 6800.0  # ~6.8 GB NF4 (fits within 16GB VRAM)
+                elif any(tag in mid for tag in ("sd", "diffusion")):
+                    est_mb = 4200.0  # ~4.2 GB (fits within 16GB VRAM)
+                else:
+                    est_mb = 5500.0
+
+            # Suitable if model footprint fits within 92% of available hardware memory
+            return est_mb <= (total_mem_mb * 0.92)
+        except Exception:
+            return False
+
+    def _resolve_hf_repo_and_token(self, model_id: str) -> tuple[str, str | None]:
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        clean_id = model_id.strip()
+        mid_lower = clean_id.lower()
+
+        repo_mappings: dict[str, str] = {
+            "meta-llama/llama-3-8b-instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
+            "meta-llama/llama-3-8b": "meta-llama/Meta-Llama-3-8B",
+            "meta-llama/llama-3.1-8b-instruct": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "meta-llama/llama-3.2-1b-instruct": "meta-llama/Llama-3.2-1B-Instruct",
+            "meta-llama/llama-3.2-3b-instruct": "meta-llama/Llama-3.2-3B-Instruct",
+            "deepseek-ai/deepseek-r1-distill-qwen-7b": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            "qwen/qwen2.5-7b-instruct": "Qwen/Qwen2.5-7B-Instruct",
+            "tinyllama/tinyllama-1.1b-chat-v1.0": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        }
+        target_model = repo_mappings.get(mid_lower, clean_id)
+        return target_model, hf_token
+
     def _get_production_transformers_pipeline(self, model_id: str, device: str) -> Any:
         if model_id in self._transformers_pipes:
             return self._transformers_pipes[model_id]
@@ -43,15 +110,48 @@ class LocalPyTorchAdapter(InferenceProvider):
             )
 
             is_cuda = device.startswith("cuda") and torch.cuda.is_available()
-            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            target_model, hf_token = self._resolve_hf_repo_and_token(model_id)
+
+            emit_job_progress(
+                {
+                    "phase": "downloading",
+                    "percent": 15,
+                    "message": f"Downloading/verifying full weights for '{target_model}' from Hugging Face into local VRAM",
+                }
+            )
+
+            tokenizer = None
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(target_model, token=hf_token)
+            except Exception as tok_exc:
+                # If access is restricted (e.g. 403 on Meta Llama gated repository), fallback to unsloth open mirror
+                err_str = str(tok_exc).lower()
+                if "gated" in err_str or "403" in err_str or "restricted" in err_str:
+                    if "llama-3-8b" in target_model.lower():
+                        fallback_model = "unsloth/llama-3-8b-Instruct"
+                        sys.stderr.write(
+                            f"[TRANSFORMERS_GATED_FALLBACK] Access restricted for '{target_model}'. Switching to open full mirror '{fallback_model}'\n"
+                        )
+                        target_model = fallback_model
+                        tokenizer = AutoTokenizer.from_pretrained(target_model, token=hf_token)
+                    else:
+                        raise tok_exc
+                else:
+                    raise tok_exc
 
             model_kwargs: dict[str, Any] = {
                 "low_cpu_mem_usage": True,
             }
+            if hf_token:
+                model_kwargs["token"] = hf_token
+
             if is_cuda:
                 # For 7B+ models on 16GB GPU, use 4-bit NF4 quantization to fit 100% in VRAM
                 # without PCIe CPU memory thrashing / layer offloading
-                is_large = any(tag in model_id.lower() for tag in ("7b", "8b", "14b", "llama-3", "qwen", "deepseek"))
+                is_large = any(
+                    tag in target_model.lower()
+                    for tag in ("7b", "8b", "9b", "13b", "14b", "llama", "qwen", "deepseek", "mistral")
+                )
                 if is_large:
                     try:
                         bnb_config = BitsAndBytesConfig(
@@ -70,14 +170,22 @@ class LocalPyTorchAdapter(InferenceProvider):
             else:
                 model_kwargs["torch_dtype"] = torch.float32
 
+            emit_job_progress(
+                {
+                    "phase": "loading_model",
+                    "percent": 22,
+                    "message": f"Loading full weights for '{target_model}' into {'GPU VRAM' if is_cuda else 'CPU RAM'}",
+                }
+            )
+
             model = AutoModelForCausalLM.from_pretrained(
-                model_id,
+                target_model,
                 **model_kwargs,
             )
             self._transformers_pipes[model_id] = (tokenizer, model)
             return self._transformers_pipes[model_id]
         except Exception as exc:
-            sys.stderr.write(f"[TRANSFORMERS_PRODUCTION_LOAD_WARNING] {exc}\n")
+            sys.stderr.write(f"[TRANSFORMERS_PRODUCTION_LOAD_WARNING] Could not load full model '{model_id}': {exc}\n")
             return None
 
     def _get_diffusion_pipeline(self, model_id: str, device: str) -> Any:
@@ -206,10 +314,19 @@ class LocalPyTorchAdapter(InferenceProvider):
         engine = request.parameters.get("engine", ExecutionEngine.AUTO)
         use_torchscript = bool(request.parameters.get("use_torchscript", False))
         allow_auto_upgrade = request.parameters.get("allow_auto_upgrade", None)
+
+        is_ci_or_mock = is_mock_inference_enabled() or os.environ.get("CI", "").lower() in ("true", "1", "yes")
+        explicit_synthetic = (
+            request.parameters.get("weights") in ("synthetic", "mock", "reference")
+            or str(request.parameters.get("tier")) == "1"
+        )
+        suitable_for_vram = not is_ci_or_mock and self.is_suitable_for_vram(request.model_id, device)
+
         use_prod_weights = bool(
             request.parameters.get("use_production_weights")
             or request.parameters.get("weights") == "production"
             or os.environ.get("USE_PRODUCTION_WEIGHTS", "").lower() in ("true", "1", "yes")
+            or (suitable_for_vram and not explicit_synthetic)
         )
         tier_val = request.parameters.get("tier")
         if tier_val is not None:
@@ -220,18 +337,11 @@ class LocalPyTorchAdapter(InferenceProvider):
             tier = 1
 
         # Enforce zero expensive weights loading or model downloads when in CI or mock mode
-        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
-            "INFERENCE_MOCK_MODE", ""
-        ).lower() in ("true", "1", "yes")
-        if is_ci_or_mock and request.parameters.get("weights") != "production":
+        if is_ci_or_mock and not (
+            request.parameters.get("weights") == "production" or request.parameters.get("use_production_weights")
+        ):
             tier = 1
-
-        # Enforce zero expensive weights loading or model downloads when in CI or mock mode
-        is_ci_or_mock = os.environ.get("CI", "").lower() in ("true", "1", "yes") or os.environ.get(
-            "INFERENCE_MOCK_MODE", ""
-        ).lower() in ("true", "1", "yes")
-        if is_ci_or_mock and request.parameters.get("weights") != "production":
-            tier = 1
+            use_prod_weights = False
 
         quantization = request.parameters.get("quantization")
         if request.parameters.get("quantized") or quantization:
