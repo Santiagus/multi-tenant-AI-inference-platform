@@ -235,6 +235,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
 
   app.register(showcaseRoutes, {
     db: deps.db,
+    queueClient: deps.queueClient,
     getDataSource: () => currentDataSource,
     setDataSource: (mode: 'real' | 'mock') => {
       currentDataSource = mode;

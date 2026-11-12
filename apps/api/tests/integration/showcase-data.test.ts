@@ -65,13 +65,14 @@ describe('Showcase Mode & Data Source Isolation', () => {
     const originalEnv = process.env.MOCK_PROVIDERS;
     try {
       delete process.env.MOCK_PROVIDERS;
+      const queueClient = new InMemoryQueueClient();
       const app = buildApp({
         config,
         db: { isHealthy: async () => true },
         jobRepo: new InMemoryJobRepository(),
         securityRepo: new InMemorySecurityRepository(),
         storageClient: new InMemoryStorageClient(),
-        queueClient: new InMemoryQueueClient(),
+        queueClient,
       });
 
       // 1. Initial status: real
@@ -83,12 +84,15 @@ describe('Showcase Mode & Data Source Isolation', () => {
       assert.equal(statusRes.statusCode, 200);
       assert.equal(JSON.parse(statusRes.body).dataSource, 'real');
 
-      // 3. Seed showcase data
+      // 3. Seed showcase data (DB may be unavailable in unit harness — mode still flips to mock)
       const seedRes = await app.inject({ method: 'POST', url: '/v1/admin/showcase/seed' });
       assert.equal(seedRes.statusCode, 200);
       const seedBody = JSON.parse(seedRes.body);
       assert.equal(seedBody.ok, true);
       assert.equal(seedBody.dataSource, 'mock');
+      assert.ok(typeof seedBody.stats?.jobsCount === 'number');
+      assert.ok(seedBody.stats.jobsCount > 0);
+      assert.ok('dlqCount' in (seedBody.stats ?? {}));
 
       // Verify healthz updated dynamically
       const seededHealth = await app.inject({ method: 'GET', url: '/healthz' });

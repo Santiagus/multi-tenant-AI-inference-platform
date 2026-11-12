@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { runShowcaseSeed } from '../infrastructure/db/seeds/showcase-seed.js';
+import { buildShowcaseJobTemplates } from '../infrastructure/db/seeds/showcase-coverage.js';
+import type { IQueueClient } from '../infrastructure/queue/queue-client.js';
 
 export interface ShowcaseRoutesOptions {
   db: {
@@ -9,6 +11,7 @@ export interface ShowcaseRoutesOptions {
   };
   getDataSource: () => 'real' | 'mock';
   setDataSource: (mode: 'real' | 'mock') => void;
+  queueClient?: IQueueClient;
 }
 
 export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (fastify, options) => {
@@ -63,13 +66,18 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
         tags: ['Health'],
         summary: 'Seed Showcase Mock Data On-the-Fly',
         description:
-          'Populates tenant-demo showcase jobs (all statuses + all platform providers/HW/modes), sparse cross-tenant jobs, historical pricing snapshots, and sync audits into PostgreSQL.',
+          'Populates tenant-demo showcase jobs (all statuses, engines, modalities, routing strategies, priority presets, duration-metered placements, local CPU/GPU, DLQ fixture), sparse cross-tenant jobs, historical pricing snapshots, and sync audits.',
       },
     },
     async (_req, reply) => {
+      const expectedJobs = buildShowcaseJobTemplates().length;
       try {
         const pool = typeof options.db.getPool === 'function' ? options.db.getPool() : undefined;
-        const stats = await runShowcaseSeed({ pool, clearExisting: false });
+        const stats = await runShowcaseSeed({
+          pool,
+          clearExisting: false,
+          queueClient: options.queueClient,
+        });
         options.setDataSource('mock');
         return reply.status(200).send({
           ok: true,
@@ -84,7 +92,12 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
           ok: true,
           dataSource: 'mock',
           message: 'Showcase mock mode activated.',
-          stats: { jobsCount: 36, snapshotsCount: 7098, auditsCount: 45 },
+          stats: {
+            jobsCount: expectedJobs,
+            snapshotsCount: 7098,
+            auditsCount: 45,
+            dlqCount: 1,
+          },
         });
       }
     }
@@ -96,13 +109,18 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
       schema: {
         tags: ['Health'],
         summary: 'Purge Showcase Mock Data',
-        description: 'Removes all records prefixed with 00000000-% from database and restores real mode.',
+        description:
+          'Removes painted showcase jobs and mock audits (00000000-%), drains painted DLQ envelopes, and restores real mode.',
       },
     },
     async (_req, reply) => {
       try {
         const pool = typeof options.db.getPool === 'function' ? options.db.getPool() : undefined;
-        const stats = await runShowcaseSeed({ pool, clearExisting: true });
+        const stats = await runShowcaseSeed({
+          pool,
+          clearExisting: true,
+          queueClient: options.queueClient,
+        });
         options.setDataSource('real');
         return reply.status(200).send({
           ok: true,
