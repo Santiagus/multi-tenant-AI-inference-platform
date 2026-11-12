@@ -2174,13 +2174,16 @@ GET {{baseUrl}}/v1/admin/showcase/status
 ###
 
 # 18.7 Seed Showcase Mock Data On-the-Fly
-# Injects 30 multi-tenant jobs, 688 historical pricing snapshots & 45 sync audits
+# Injects ~59 multi-tenant jobs (tenant-demo coverage: statuses, engines, modalities,
+# routing strategies, priorities 1/5/8/10, duration-metered placements, local CPU/GPU,
+# DLQ fixture), ~7098 historical pricing snapshots & 45 sync audits.
+# Requires ElasticMQ for DLQ visibility in the dashboard inspector.
 POST {{baseUrl}}/v1/admin/showcase/seed
 
 ###
 
 # 18.8 Purge Showcase Mock Data On-the-Fly
-# Cleanly deletes records matching 00000000-* and reverts to real data mode
+# Deletes painted jobs/audits (00000000-*), drains painted DLQ envelopes, reverts to real mode
 POST {{baseUrl}}/v1/admin/showcase/purge
 
 ###
