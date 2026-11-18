@@ -86,8 +86,10 @@ async function main() {
   );
   try {
     const startupReap = await jobService.reapExpiredJobs();
-    if (startupReap.reapedCount > 0) {
-      console.log(`Initial job expiration scan reaped ${startupReap.reapedCount} stale/expired queued job(s).`);
+    if (startupReap.reapedCount > 0 || startupReap.reclaimedOrphans > 0) {
+      console.log(
+        `Initial job scan: expired=${startupReap.reapedCount} orphaned_processing_reclaimed=${startupReap.reclaimedOrphans}`
+      );
     }
   } catch (err) {
     console.warn('Initial job expiration check warning:', err);

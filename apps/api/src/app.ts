@@ -28,6 +28,7 @@ import { finopsRoutes } from './routes/finops.js';
 import { securityRoutes } from './routes/security.js';
 import { gitOpsRoutes } from './routes/gitops.js';
 import { showcaseRoutes } from './routes/showcase.js';
+import { modelCacheRoutes } from './routes/model-cache.js';
 import { registerSecurityHooks } from './plugins/security.js';
 import type { ISecurityRepository } from './infrastructure/db/security-repository.js';
 import {
@@ -106,6 +107,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
       tags: [
         { name: 'Health', description: 'Platform health and readiness probes' },
         { name: 'Jobs', description: 'Asynchronous inference job submission, polling, cancellation, and DLQ' },
+        { name: 'Models', description: 'Local Hugging Face model cache status and download ensure' },
         { name: 'Observability', description: 'Prometheus metrics and W3C distributed trace inspection' },
         { name: 'Provider Routing', description: 'Multi-provider policy routing and cost evaluation' },
         { name: 'Kubernetes', description: 'KEDA queue autoscaling & Kueue batch admission hooks' },
@@ -236,6 +238,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   app.register(showcaseRoutes, {
     db: deps.db,
     queueClient: deps.queueClient,
+    storageClient: deps.storageClient,
+    jobRepo: deps.jobRepo,
     getDataSource: () => currentDataSource,
     setDataSource: (mode: 'real' | 'mock') => {
       currentDataSource = mode;
@@ -270,6 +274,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     jobWorker,
     storageClient: deps.storageClient,
   });
+
+  app.register(modelCacheRoutes);
 
   const finopsRepo = deps.finopsRepo ?? new InMemoryFinOpsPricingRepository();
 
