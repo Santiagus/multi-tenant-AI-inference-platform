@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { StatusBadge } from '../common/Badge';
 import { getJobHardware, getJobInferenceMode, getJobExecutionMode } from './JobsView';
+import { formatLatencyMs, resolveJobTiming } from './jobTiming';
 import type { JobItem } from '../../types';
 
 interface JobDetailModalProps {
@@ -133,6 +134,7 @@ export function JobDetailModal({
   const { prompt, parameters, inputUri } = resolveInspectedInput(job);
   const progressView = resolveProgressView(job);
   const outputSummary = resolveOutputSummary(job);
+  const timing = resolveJobTiming(job);
   const failedWithoutRetries =
     job.status === 'FAILED' &&
     retriesUsed === 0 &&
@@ -431,11 +433,96 @@ export function JobDetailModal({
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Execution Latency</div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Inference</div>
               <div style={{ fontSize: '12px', color: '#f8fafc', fontWeight: 600 }}>
-                {job.duration_ms !== null ? `${job.duration_ms} ms` : 'In flight'}
+                {timing.inferenceMs !== null ? formatLatencyMs(timing.inferenceMs) : job.status === 'PROCESSING' ? 'In flight' : '—'}
               </div>
             </div>
+          </div>
+
+          {/* Cold-start vs inference timing (measured) */}
+          <div style={{ border: '1px solid #1e293b', borderRadius: '10px', padding: '16px', backgroundColor: '#090d16' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Latency Breakdown
+              </h3>
+              {timing.warmStart !== null && (
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.04em',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    color: timing.warmStart ? '#34d399' : '#fbbf24',
+                    backgroundColor: timing.warmStart ? 'rgba(52, 211, 153, 0.12)' : 'rgba(251, 191, 36, 0.12)',
+                    border: `1px solid ${timing.warmStart ? 'rgba(52, 211, 153, 0.35)' : 'rgba(251, 191, 36, 0.35)'}`,
+                  }}
+                  title={
+                    timing.warmStart
+                      ? 'Model/pipe was already resident — cold load ≈ 0'
+                      : 'Cold start: checkpoint download/load included in model load'
+                  }
+                >
+                  {timing.warmStart ? 'WARM' : 'COLD START'}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Model load (cold)</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: (timing.modelLoadMs ?? 0) > 0 ? '#fbbf24' : '#f8fafc' }}>
+                  {formatLatencyMs(timing.modelLoadMs)}
+                </div>
+                {(timing.pipeLoadMs !== null || timing.loaderLoadMs !== null) && (
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                    {timing.pipeLoadMs !== null && timing.pipeLoadMs > 0
+                      ? `pipe ${formatLatencyMs(timing.pipeLoadMs)}`
+                      : timing.loaderLoadMs !== null && timing.loaderLoadMs > 0
+                        ? `loader ${formatLatencyMs(timing.loaderLoadMs)}`
+                        : 'resident / skipped'}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Inference</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
+                  {formatLatencyMs(timing.inferenceMs)}
+                </div>
+                {timing.tokensPerSec !== null && timing.tokensPerSec > 0 && (
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                    {timing.tokensPerSec.toFixed(1)} tok/s
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Provider total</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#38bdf8' }}>
+                  {formatLatencyMs(timing.totalProviderMs)}
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                  load + inference
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Wall clock</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#e2e8f0' }}>
+                  {formatLatencyMs(timing.wallMs)}
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                  started → completed
+                </div>
+              </div>
+            </div>
+            {timing.ttftMs !== null && (
+              <div style={{ marginTop: '10px', fontSize: '11px', color: '#94a3b8' }}>
+                TTFT {formatLatencyMs(timing.ttftMs)}
+                {timing.wallMs !== null &&
+                  timing.totalProviderMs !== null &&
+                  timing.wallMs > timing.totalProviderMs * 1.25 &&
+                  ' · wall includes queue/lease/artifact I/O beyond provider time'}
+              </div>
+            )}
           </div>
 
           {/* Economics & Usage Breakdown */}

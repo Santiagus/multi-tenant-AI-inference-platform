@@ -5,6 +5,8 @@ import {
   getJobInferenceMode,
   getJobHardware,
   getJobComputeLabel,
+  getJobVramPeakMb,
+  formatVramMb,
   formatHardwareName,
   formatModelName,
   formatTimeAgo,
@@ -90,9 +92,36 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     );
     assert.equal(getJobInferenceMode({ ...baseJob, routing_preference: 'mock' }), 'mock');
     assert.equal(getJobInferenceMode({ ...baseJob, job_id: '00000000-0000-4000-a000-000000000001' }), 'mock');
-    // Ultra-short local durations without metadata are treated as mock legacy paths.
-    assert.equal(getJobInferenceMode(baseJob), 'mock');
-    assert.equal(getJobInferenceMode({ ...baseJob, duration_ms: 2500 }), null);
+    // Explicit local/gpu routing implies real inference intent (including long runs).
+    assert.equal(getJobInferenceMode(baseJob), 'real');
+    assert.equal(getJobInferenceMode({ ...baseJob, duration_ms: 2500 }), 'real');
+    // FAILED/CANCELLED with production weights still show REAL when worker metadata is missing.
+    assert.equal(
+      getJobInferenceMode({
+        ...baseJob,
+        status: 'FAILED',
+        duration_ms: null,
+        provider: null,
+        inference_mode: null,
+        is_mocked: null,
+        result: null,
+        parameters: { weights: 'production', device: 'cuda' },
+      }),
+      'real'
+    );
+    assert.equal(
+      getJobInferenceMode({
+        ...baseJob,
+        status: 'CANCELLED',
+        duration_ms: null,
+        provider: null,
+        inference_mode: null,
+        is_mocked: null,
+        result: null,
+        routing_preference: 'local/gpu',
+      }),
+      'real'
+    );
   });
 
   it('labels compute as CPU/GPU + engine and appends VRAM to hardware', () => {
@@ -241,6 +270,52 @@ describe('Enterprise Workload Observability & Hardware Ecosystem', () => {
     assert.equal(formatHardwareName('NVIDIA H200 SXM (141GB HBM3e)'), 'H200 SXM (141 GB)');
     assert.equal(formatHardwareName('NVIDIA L4 Tensor Core (24GB)'), 'L4 Tensor Core (24 GB)');
     assert.equal(formatHardwareName('CPU Xeon/EPYC Fallback'), 'CPU Fallback');
+  });
+
+  it('reads peak VRAM from job telemetry and formats aggregation cells', () => {
+    assert.equal(formatVramMb(null), '—');
+    assert.equal(formatVramMb(512), '512 MB');
+    assert.equal(formatVramMb(9132.81), '8.9 GB');
+    assert.equal(formatVramMb(16384), '16 GB');
+    const withTelemetry: JobItem = {
+      job_id: 'vram-1',
+      tenant_id: 't-1',
+      status: 'SUCCEEDED',
+      model_id: 'Lightricks/LTX-Video',
+      correlation_id: null,
+      trace_id: null,
+      traceparent: null,
+      routing_preference: 'local/gpu',
+      priority: 5,
+      provider: 'local_pytorch',
+      inference_mode: 'real',
+      is_mocked: false,
+      prompt: 'test',
+      parameters: null,
+      input_uri: null,
+      input: null,
+      retry_count: 0,
+      max_retries: 3,
+      retries_used: 0,
+      is_manual_retry: false,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
+      expires_at: null,
+      duration_ms: 1000,
+      progress_pct: 100,
+      progress: null,
+      usage: null,
+      result: {
+        metadata: {
+          telemetry: { vram_peak_mb: 9132.81 },
+        },
+      },
+      error: null,
+      artifacts: [],
+    };
+    assert.equal(getJobVramPeakMb(withTelemetry), 9132.81);
+    assert.equal(getJobVramPeakMb({ ...withTelemetry, result: null }), null);
   });
 
   it('formats model names by removing company/creator namespace', () => {

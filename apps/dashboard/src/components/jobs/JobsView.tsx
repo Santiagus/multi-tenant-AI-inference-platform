@@ -5,6 +5,7 @@ import { SortableHeader, genericSort, type SortDirection } from '../common/Sorta
 import { SubmitJobModal, type SubmitJobPayload } from './SubmitJobModal';
 import { JobDetailModal } from './JobDetailModal';
 import { DlqModal } from './DlqModal';
+import { formatLatencyMs, resolveJobTiming } from './jobTiming';
 import { apiClient } from '../../api/client';
 import type { DlqMessage, JobItem } from '../../types';
 import type { SubmitJobPrefill } from './submitJobHelpers';
@@ -116,6 +117,34 @@ function getJobResultMetadata(j: JobItem): Record<string, unknown> {
   return { ...result, ...nested } as Record<string, unknown>;
 }
 
+/** Peak VRAM from worker telemetry (MB). Returns null when the job never reported GPU usage. */
+export function getJobVramPeakMb(j: JobItem): number | null {
+  const metadata = getJobResultMetadata(j);
+  const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
+  const raw = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return raw;
+}
+
+/** Format MB as compact GB/MB for aggregation tables. */
+export function formatVramMb(mb: number | null | undefined): string {
+  if (mb == null || !Number.isFinite(mb) || mb <= 0) return '—';
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return `${gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+  }
+  return `${Math.round(mb)} MB`;
+}
+
+function summarizeVramPeaks(peaks: number[]): { avgVramMb: number; peakVramMb: number } {
+  if (peaks.length === 0) return { avgVramMb: 0, peakVramMb: 0 };
+  const sum = peaks.reduce((acc, v) => acc + v, 0);
+  return {
+    avgVramMb: Math.round(sum / peaks.length),
+    peakVramMb: Math.round(Math.max(...peaks)),
+  };
+}
+
 /**
  * Normalize worker engine ids into short UI labels.
  * When the worker stored `auto`, derive the concrete engine from the telemetry backend name.
@@ -160,15 +189,34 @@ export function formatEngineLabel(
   return 'eager';
 }
 
+/** Flatten top-level + nested input parameters from a job list/detail payload. */
+function getJobRequestParameters(j: JobItem): Record<string, unknown> {
+  const top =
+    j.parameters && typeof j.parameters === 'object' && !Array.isArray(j.parameters)
+      ? (j.parameters as Record<string, unknown>)
+      : {};
+  const input =
+    j.input && typeof j.input === 'object' && !Array.isArray(j.input)
+      ? (j.input as Record<string, unknown>)
+      : {};
+  const nested =
+    input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters)
+      ? (input.parameters as Record<string, unknown>)
+      : {};
+  return { ...top, ...nested };
+}
+
 /**
  * Resolves whether a job ran (or was requested as) mock vs real inference.
- * Prefers worker-persisted metadata over routing preference; returns null when unknown.
+ * Prefers worker-persisted metadata; falls back to request intent so FAILED/CANCELLED
+ * rows still show MOCK/REAL in the filtered table when metadata was never written.
  */
 export function getJobInferenceMode(j: JobItem): 'mock' | 'real' | null {
   if (j.inference_mode === 'mock' || j.inference_mode === 'real') return j.inference_mode;
   if (typeof j.is_mocked === 'boolean') return j.is_mocked ? 'mock' : 'real';
 
   const metadata = getJobResultMetadata(j);
+  const requestParams = getJobRequestParameters(j);
 
   if (typeof metadata.is_mocked === 'boolean') {
     return metadata.is_mocked ? 'mock' : 'real';
@@ -184,12 +232,38 @@ export function getJobInferenceMode(j: JobItem): 'mock' | 'real' | null {
   if (j.job_id.startsWith('00000000-') || metadata.showcase === true) return 'mock';
 
   if (metadata.production_weights === true || metadata.weights === 'production') return 'real';
+  if (requestParams.weights === 'production' || requestParams.use_production_weights === true) {
+    return 'real';
+  }
+  if (
+    requestParams.weights === 'synthetic' ||
+    requestParams.weights === 'mock' ||
+    requestParams.weights === 'reference'
+  ) {
+    return 'mock';
+  }
 
   const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
   const vramPeak = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
   if (vramPeak > 64 && (j.duration_ms ?? 0) > 100) return 'real';
 
-  // Legacy local_cpu_worker / ultra-short local passes without explicit flags were mock paths.
+  // Explicit non-mock routing (local/gpu, cloud, …) implies real intent — including
+  // FAILED/CANCELLED jobs that never claimed a provider or wrote worker metadata.
+  const routing = String(j.routing_preference || '').toLowerCase();
+  if (
+    routing.startsWith('local') ||
+    routing.startsWith('cloud') ||
+    routing === 'runpod' ||
+    routing === 'bedrock' ||
+    routing === 'sagemaker' ||
+    routing === 'cost_optimized' ||
+    routing === 'low_latency' ||
+    routing === 'local_first'
+  ) {
+    return 'real';
+  }
+
+  // Legacy ultra-short local passes without explicit flags were mock paths.
   if (
     (j.provider === 'local_cpu_worker' || j.provider === 'local_pytorch' || j.provider === 'local') &&
     (j.duration_ms ?? 0) > 0 &&
@@ -198,7 +272,8 @@ export function getJobInferenceMode(j: JobItem): 'mock' | 'real' | null {
     return 'mock';
   }
 
-  // Terminal jobs that never wrote worker metadata: treat ultra-short / never-started as mock demos.
+  // Terminal jobs that never wrote worker metadata and have no routing/weights signal:
+  // treat ultra-short / never-started as mock demos.
   if (
     (j.status === 'FAILED' || j.status === 'CANCELLED') &&
     (j.duration_ms ?? 0) > 0 &&
@@ -444,7 +519,6 @@ export function JobsView({
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
   const [isDeletingMatching, setIsDeletingMatching] = useState(false);
   const [orphanCount, setOrphanCount] = useState(0);
-  const [residentLabel, setResidentLabel] = useState<string | null>(null);
   const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
   const isLocalOrDev =
     stage.toUpperCase().includes('LOCAL') || stage.toUpperCase().includes('DEV');
@@ -520,35 +594,6 @@ export function JobsView({
     };
   }, [isLocalOrDev, viewingAllTenants, tenantId, jobs.length]);
 
-  useEffect(() => {
-    if (inferenceMode !== 'real') {
-      setResidentLabel(null);
-      return;
-    }
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const res = await apiClient.getLocalResidentStatus();
-        if (cancelled) return;
-        const gpu = res.resident?.gpu?.model_id;
-        const cpu = res.resident?.cpu?.model_id;
-        const short = (id: string | null | undefined) =>
-          id ? id.split('/').pop() || id : '—';
-        setResidentLabel(`GPU: ${short(gpu)} · CPU: ${short(cpu)}`);
-      } catch {
-        if (!cancelled) setResidentLabel(null);
-      }
-    };
-    void refresh();
-    const id = window.setInterval(() => {
-      void refresh();
-    }, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [inferenceMode, jobs.length, isProcessingWorker]);
-
   const [isDlqModalOpen, setIsDlqModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -581,8 +626,9 @@ export function JobsView({
     });
   };
 
-  // Global & Lifecycle Stats
+  // Global & Lifecycle Stats — one counter per JobStatus (+ DLQ quarantine)
   const stats = useMemo(() => {
+    let submitted = 0;
     let queued = 0;
     let processing = 0;
     let retrying = 0;
@@ -598,16 +644,18 @@ export function JobsView({
       else if (j.status === 'CANCELLED') cancelled++;
       else if (j.status === 'PROCESSING') processing++;
       else if (j.status === 'RETRYING') retrying++;
-      else if (j.status === 'QUEUED' || j.status === 'SUBMITTED') queued++;
+      else if (j.status === 'QUEUED') queued++;
+      else if (j.status === 'SUBMITTED') submitted++;
 
       totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
       totalCostMicrocents += j.usage?.cost_microcents ?? 0;
     }
 
-    const inFlight = queued + processing + retrying;
+    const inFlight = processing + retrying;
 
     return {
       total: jobs.length,
+      submitted,
       queued,
       processing,
       retrying,
@@ -637,6 +685,7 @@ export function JobsView({
         totalTokens: number;
         totalCostMicrocents: number;
         durations: number[];
+        vramPeaks: number[];
       }
     > = {};
 
@@ -654,6 +703,7 @@ export function JobsView({
           totalTokens: 0,
           totalCostMicrocents: 0,
           durations: [],
+          vramPeaks: [],
         };
       }
       const entry = map[j.model_id];
@@ -670,6 +720,8 @@ export function JobsView({
       if (j.duration_ms && j.duration_ms > 0) {
         entry.durations.push(j.duration_ms);
       }
+      const vram = getJobVramPeakMb(j);
+      if (vram != null) entry.vramPeaks.push(vram);
     }
 
     return Object.values(map)
@@ -681,9 +733,12 @@ export function JobsView({
             : 0;
         const successRate = entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0';
         const costUsd = (entry.totalCostMicrocents / 100_000_000).toFixed(4);
+        const { avgVramMb, peakVramMb } = summarizeVramPeaks(entry.vramPeaks);
         return {
           ...entry,
           avgDuration,
+          avgVramMb,
+          peakVramMb,
           successRate,
           costUsd,
         };
@@ -706,6 +761,7 @@ export function JobsView({
         totalTokens: number;
         totalCostMicrocents: number;
         durations: number[];
+        vramPeaks: number[];
       }
     > = {};
 
@@ -724,6 +780,7 @@ export function JobsView({
           totalTokens: 0,
           totalCostMicrocents: 0,
           durations: [],
+          vramPeaks: [],
         };
       }
       const entry = map[tid];
@@ -738,6 +795,8 @@ export function JobsView({
       entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
       entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
       if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+      const vram = getJobVramPeakMb(j);
+      if (vram != null) entry.vramPeaks.push(vram);
     }
 
     return Object.values(map)
@@ -748,6 +807,7 @@ export function JobsView({
           entry.durations.length > 0
             ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
             : 0,
+        ...summarizeVramPeaks(entry.vramPeaks),
         successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
         costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
       }));
@@ -766,6 +826,7 @@ export function JobsView({
         totalTokens: number;
         totalCostMicrocents: number;
         durations: number[];
+        vramPeaks: number[];
       }
     > = {};
 
@@ -782,6 +843,7 @@ export function JobsView({
           totalTokens: 0,
           totalCostMicrocents: 0,
           durations: [],
+          vramPeaks: [],
         };
       }
       const entry = map[prov];
@@ -793,6 +855,8 @@ export function JobsView({
       entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
       entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
       if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+      const vram = getJobVramPeakMb(j);
+      if (vram != null) entry.vramPeaks.push(vram);
     }
 
     return Object.values(map)
@@ -803,6 +867,7 @@ export function JobsView({
           entry.durations.length > 0
             ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
             : 0,
+        ...summarizeVramPeaks(entry.vramPeaks),
         successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
         costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
       }));
@@ -820,6 +885,7 @@ export function JobsView({
         totalTokens: number;
         totalCostMicrocents: number;
         durations: number[];
+        vramPeaks: number[];
       }
     > = {};
 
@@ -835,6 +901,7 @@ export function JobsView({
           totalTokens: 0,
           totalCostMicrocents: 0,
           durations: [],
+          vramPeaks: [],
         };
       }
       const entry = map[hw];
@@ -845,6 +912,8 @@ export function JobsView({
       entry.totalTokens += (j.usage?.prompt_tokens ?? 0) + (j.usage?.completion_tokens ?? 0);
       entry.totalCostMicrocents += j.usage?.cost_microcents ?? 0;
       if (j.duration_ms && j.duration_ms > 0) entry.durations.push(j.duration_ms);
+      const vram = getJobVramPeakMb(j);
+      if (vram != null) entry.vramPeaks.push(vram);
     }
 
     return Object.values(map)
@@ -855,6 +924,7 @@ export function JobsView({
           entry.durations.length > 0
             ? Math.round(entry.durations.reduce((a, b) => a + b, 0) / entry.durations.length)
             : 0,
+        ...summarizeVramPeaks(entry.vramPeaks),
         successRate: entry.total > 0 ? ((entry.succeeded / entry.total) * 100).toFixed(1) : '0.0',
         costUsd: (entry.totalCostMicrocents / 100_000_000).toFixed(4),
       }));
@@ -865,11 +935,8 @@ export function JobsView({
     return jobs.filter((job) => {
       if (statusFilter !== 'ALL') {
         if (statusFilter === 'IN_FLIGHT') {
+          // Convenience composite: actively executing (not waiting in queue).
           if (!['PROCESSING', 'RETRYING'].includes(job.status)) {
-            return false;
-          }
-        } else if (statusFilter === 'QUEUED') {
-          if (!['QUEUED', 'SUBMITTED'].includes(job.status)) {
             return false;
           }
         } else if (job.status !== statusFilter) {
@@ -1116,21 +1183,21 @@ export function JobsView({
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* Top Stat Cards - 1-row layout for 1200x1920 portrait & single-row view */}
+      {/* Top Stat Cards — every JobStatus + DLQ (dead-letter quarantine) */}
       <div
         className="jobs-status-grid"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-          gap: '12px',
+          gridTemplateColumns: 'repeat(9, minmax(0, 1fr))',
+          gap: '10px',
         }}
       >
         <StatCard
-          label="Failed"
-          value={stats.failed}
-          accentColor="#ef4444"
-          active={statusFilter === 'FAILED'}
-          onClick={() => setStatusFilter(statusFilter === 'FAILED' ? 'ALL' : 'FAILED')}
+          label="Submitted"
+          value={stats.submitted}
+          accentColor="#94a3b8"
+          active={statusFilter === 'SUBMITTED'}
+          onClick={() => setStatusFilter(statusFilter === 'SUBMITTED' ? 'ALL' : 'SUBMITTED')}
         />
         <StatCard
           label="Queued"
@@ -1140,11 +1207,18 @@ export function JobsView({
           onClick={() => setStatusFilter(statusFilter === 'QUEUED' ? 'ALL' : 'QUEUED')}
         />
         <StatCard
-          label="In Flight"
-          value={stats.processing + stats.retrying}
+          label="Processing"
+          value={stats.processing}
           accentColor="#38bdf8"
-          active={statusFilter === 'IN_FLIGHT'}
-          onClick={() => setStatusFilter(statusFilter === 'IN_FLIGHT' ? 'ALL' : 'IN_FLIGHT')}
+          active={statusFilter === 'PROCESSING'}
+          onClick={() => setStatusFilter(statusFilter === 'PROCESSING' ? 'ALL' : 'PROCESSING')}
+        />
+        <StatCard
+          label="Retrying"
+          value={stats.retrying}
+          accentColor="#f97316"
+          active={statusFilter === 'RETRYING'}
+          onClick={() => setStatusFilter(statusFilter === 'RETRYING' ? 'ALL' : 'RETRYING')}
         />
         <StatCard
           label="Succeeded"
@@ -1154,10 +1228,31 @@ export function JobsView({
           onClick={() => setStatusFilter(statusFilter === 'SUCCEEDED' ? 'ALL' : 'SUCCEEDED')}
         />
         <StatCard
+          label="Failed"
+          value={stats.failed}
+          accentColor="#ef4444"
+          active={statusFilter === 'FAILED'}
+          onClick={() => setStatusFilter(statusFilter === 'FAILED' ? 'ALL' : 'FAILED')}
+        />
+        <StatCard
+          label="Cancelled"
+          value={stats.cancelled}
+          accentColor="#a855f7"
+          active={statusFilter === 'CANCELLED'}
+          onClick={() => setStatusFilter(statusFilter === 'CANCELLED' ? 'ALL' : 'CANCELLED')}
+        />
+        <StatCard
+          label="DLQ"
+          value={stats.dlqCount}
+          accentColor="#f43f5e"
+          active={isDlqModalOpen}
+          onClick={() => setIsDlqModalOpen(true)}
+        />
+        <StatCard
           label="Total"
           value={stats.total}
           accentColor="#6366f1"
-          active={statusFilter === 'ALL'}
+          active={statusFilter === 'ALL' && !isDlqModalOpen}
           onClick={() => {
             setStatusFilter('ALL');
             setModelFilter('ALL');
@@ -1366,6 +1461,9 @@ export function JobsView({
                     <SortableHeader column="avgDuration" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Avg Latency
                     </SortableHeader>
+                    <SortableHeader column="peakVramMb" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
+                      VRAM (avg / peak)
+                    </SortableHeader>
                     <SortableHeader column="totalTokens" currentSortKey={modelSortKey} currentSortDir={modelSortDir} onSort={handleModelSort} style={{ padding: '10px 16px' }}>
                       Total Tokens
                     </SortableHeader>
@@ -1394,6 +1492,14 @@ export function JobsView({
                           <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({m.successRate}%)</span>
                         </td>
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{m.avgDuration > 0 ? `${m.avgDuration} ms` : '—'}</td>
+                        <td
+                          style={{ padding: '10px 16px', color: '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap' }}
+                          title="Average / max peak VRAM from worker telemetry (jobs with measured GPU usage)"
+                        >
+                          {m.peakVramMb > 0
+                            ? `${formatVramMb(m.avgVramMb)} / ${formatVramMb(m.peakVramMb)}`
+                            : '—'}
+                        </td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{m.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${m.costUsd}</td>
                       </tr>
@@ -1412,6 +1518,7 @@ export function JobsView({
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>In Flight</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>VRAM (avg / peak)</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Compute Spend ($)</th>
                   </tr>
@@ -1436,6 +1543,11 @@ export function JobsView({
                           <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({t.successRate}%)</span>
                         </td>
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{t.avgDuration > 0 ? `${t.avgDuration} ms` : '—'}</td>
+                        <td style={{ padding: '10px 16px', color: '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                          {t.peakVramMb > 0
+                            ? `${formatVramMb(t.avgVramMb)} / ${formatVramMb(t.peakVramMb)}`
+                            : '—'}
+                        </td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{t.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${t.costUsd}</td>
                       </tr>
@@ -1454,6 +1566,7 @@ export function JobsView({
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>In Flight</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>VRAM (avg / peak)</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Cost ($)</th>
                   </tr>
@@ -1478,6 +1591,11 @@ export function JobsView({
                           <span style={{ color: '#94a3b8', marginLeft: '6px', fontSize: '11px' }}>({p.successRate}%)</span>
                         </td>
                         <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{p.avgDuration > 0 ? `${p.avgDuration} ms` : '—'}</td>
+                        <td style={{ padding: '10px 16px', color: '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                          {p.peakVramMb > 0
+                            ? `${formatVramMb(p.avgVramMb)} / ${formatVramMb(p.peakVramMb)}`
+                            : '—'}
+                        </td>
                         <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{p.totalTokens.toLocaleString()}</td>
                         <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${p.costUsd}</td>
                       </tr>
@@ -1495,6 +1613,7 @@ export function JobsView({
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Workload Count</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Success / Fail</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Avg Latency</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600 }}>VRAM (avg / peak)</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Tokens</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600 }}>Total Cost ($)</th>
                   </tr>
@@ -1509,6 +1628,11 @@ export function JobsView({
                         {g.failed > 0 && <span style={{ color: '#f87171', marginLeft: '6px', fontWeight: 600 }}>/ {g.failed} fail</span>}
                       </td>
                       <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{g.avgDuration > 0 ? `${g.avgDuration} ms` : '—'}</td>
+                      <td style={{ padding: '10px 16px', color: '#a78bfa', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {g.peakVramMb > 0
+                          ? `${formatVramMb(g.avgVramMb)} / ${formatVramMb(g.peakVramMb)}`
+                          : '—'}
+                      </td>
                       <td style={{ padding: '10px 16px', color: '#38bdf8', fontWeight: 500 }}>{g.totalTokens.toLocaleString()}</td>
                       <td style={{ padding: '10px 16px', color: '#f87171', fontWeight: 600 }}>${g.costUsd}</td>
                     </tr>
@@ -1561,26 +1685,6 @@ export function JobsView({
             DLQ Messages ({stats.dlqCount})
           </button>
 
-          {residentLabel && (
-            <span
-              data-testid="local-resident-status"
-              title="Models currently held in the persistent local worker"
-              style={{
-                fontSize: '12px',
-                color: '#94a3b8',
-                fontFamily: 'monospace',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                border: '1px solid #334155',
-                backgroundColor: '#0b1220',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-            >
-              Loaded · {residentLabel}
-            </span>
-          )}
-
           {onReapExpired && (
             <button
               onClick={onReapExpired}
@@ -1624,7 +1728,7 @@ export function JobsView({
           >
             <span>{isProcessingWorker ? '⏳' : '▶'}</span>
             <span>{isProcessingWorker ? 'Processing...' : 'Process Next (Worker)'}</span>
-            {stats.queued > 0 && (
+            {stats.submitted + stats.queued > 0 && (
               <span
                 style={{
                   backgroundColor: '#0284c7',
@@ -1634,8 +1738,9 @@ export function JobsView({
                   padding: '2px 6px',
                   borderRadius: '10px',
                 }}
+                title="Submitted + Queued waiting for the worker"
               >
-                {stats.queued}
+                {stats.submitted + stats.queued}
               </span>
             )}
           </button>
@@ -1823,12 +1928,13 @@ export function JobsView({
                       aria-label="Filter by status"
                     >
                       <option value="ALL">All</option>
-                      <option value="FAILED">Failed</option>
+                      <option value="SUBMITTED">Submitted</option>
                       <option value="QUEUED">Queued</option>
-                      <option value="IN_FLIGHT">In Flight</option>
-                      <option value="SUCCEEDED">Succeeded</option>
                       <option value="PROCESSING">Processing</option>
                       <option value="RETRYING">Retrying</option>
+                      <option value="IN_FLIGHT">In Flight (Processing+Retrying)</option>
+                      <option value="SUCCEEDED">Succeeded</option>
+                      <option value="FAILED">Failed</option>
                       <option value="CANCELLED">Cancelled</option>
                     </select>
                   }
@@ -1892,7 +1998,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '8px 6px', width: '14%' }}
+                  style={{ padding: '8px 6px', width: '11%' }}
                   filter={
                     <select
                       value={computeFilter}
@@ -1941,12 +2047,16 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '8px 6px', width: '8%' }}
+                  style={{ padding: '8px 4px', width: '6.75rem' }}
                   filter={
                     <select
                       value={inferenceFilter}
                       onChange={(e) => setInferenceFilter(e.target.value)}
-                      style={headerFilterStyle}
+                      style={{
+                        ...headerFilterStyle,
+                        width: '100%',
+                        maxWidth: '100%',
+                      }}
                       aria-label="Filter by inference mode"
                     >
                       <option value="ALL">All</option>
@@ -1971,7 +2081,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '8px 6px', width: '8%' }}
+                  style={{ padding: '8px 6px', width: '11%' }}
                 >
                   Duration
                 </SortableHeader>
@@ -1980,7 +2090,7 @@ export function JobsView({
                   currentSortKey={jobSortKey}
                   currentSortDir={jobSortDir}
                   onSort={handleJobSort}
-                  style={{ padding: '8px 6px', width: '9%' }}
+                  style={{ padding: '8px 6px', width: '11%' }}
                 >
                   Tokens
                 </SortableHeader>
@@ -2013,12 +2123,12 @@ export function JobsView({
                   const inTok = job.usage?.prompt_tokens ?? 0;
                   const outTok = job.usage?.completion_tokens ?? 0;
                   const totalTok = (job.usage?.total_tokens ?? (inTok + outTok));
-                  const costUsd = ((job.usage?.cost_microcents ?? 0) / 100_000_000).toFixed(5);
                   const progressPct = job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0);
                   const mode = getJobExecutionMode(job);
                   const inference = getJobInferenceMode(job);
                   const hardware = getJobHardware(job);
                   const computeLabel = getJobComputeLabel(job);
+                  const timing = resolveJobTiming(job);
                   const isIdExpanded = expandedJobIds.has(job.job_id);
 
                   return (
@@ -2102,7 +2212,7 @@ export function JobsView({
                       >
                         {formatModelName(job.model_id)}
                       </td>
-                      <td style={{ padding: '8px 6px' }}>
+                      <td style={{ padding: '8px 6px', maxWidth: 0 }}>
                         <div
                           style={{
                             fontSize: '11px',
@@ -2115,13 +2225,23 @@ export function JobsView({
                             fontWeight: 700,
                             whiteSpace: 'nowrap',
                             display: 'inline-block',
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                           }}
                           title="Device class / execution engine"
                         >
                           {computeLabel}
                         </div>
                         <div
-                          style={{ color: '#94a3b8', fontSize: '10px', marginTop: '3px', whiteSpace: 'nowrap' }}
+                          style={{
+                            color: '#94a3b8',
+                            fontSize: '10px',
+                            marginTop: '3px',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
                           title={hardware}
                         >
                           {hardware || '—'}
@@ -2160,7 +2280,7 @@ export function JobsView({
                           {mode.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
-                      <td style={{ padding: '8px 6px' }}>
+                      <td style={{ padding: '8px 4px' }}>
                         {inference ? (
                           <span
                             title={
@@ -2213,14 +2333,81 @@ export function JobsView({
                           <span style={{ fontSize: '10px', color: '#94a3b8' }}>{progressPct}%</span>
                         </div>
                       </td>
-                      <td style={{ padding: '8px 6px', color: '#e2e8f0', fontSize: '12px', whiteSpace: 'nowrap' }}>
-                        {job.duration_ms !== null ? `${job.duration_ms} ms` : '—'}
+                      <td
+                        style={{ padding: '8px 6px', color: '#e2e8f0', fontSize: '12px', whiteSpace: 'nowrap' }}
+                        title={
+                          timing.modelLoadMs !== null || timing.wallMs !== null
+                            ? [
+                                timing.warmStart === false ? 'COLD START' : timing.warmStart === true ? 'WARM' : null,
+                                timing.modelLoadMs !== null ? `model load ${formatLatencyMs(timing.modelLoadMs)}` : null,
+                                timing.inferenceMs !== null ? `inference ${formatLatencyMs(timing.inferenceMs)}` : null,
+                                timing.totalProviderMs !== null
+                                  ? `provider total ${formatLatencyMs(timing.totalProviderMs)}`
+                                  : null,
+                                timing.wallMs !== null ? `wall ${formatLatencyMs(timing.wallMs)}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')
+                            : undefined
+                        }
+                      >
+                        {timing.inferenceMs !== null || job.duration_ms !== null ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                            {timing.modelLoadMs !== null && timing.modelLoadMs > 0 ? (
+                              <span style={{ fontWeight: 600 }}>
+                                {formatLatencyMs(timing.modelLoadMs)}
+                                <span style={{ color: '#94a3b8', fontWeight: 500 }}> / </span>
+                                {formatLatencyMs(timing.inferenceMs ?? job.duration_ms)}
+                              </span>
+                            ) : (
+                              <span style={{ fontWeight: 600 }}>
+                                {formatLatencyMs(timing.inferenceMs ?? job.duration_ms)}
+                              </span>
+                            )}
+                            {timing.modelLoadMs !== null && timing.modelLoadMs > 0 ? (
+                              <span style={{ fontSize: '10px', color: '#fbbf24', fontWeight: 600 }}>
+                                load / inference
+                              </span>
+                            ) : timing.warmStart === true ? (
+                              <span style={{ fontSize: '10px', color: '#34d399' }}>warm</span>
+                            ) : timing.wallMs !== null &&
+                              timing.inferenceMs !== null &&
+                              timing.wallMs > timing.inferenceMs * 2 ? (
+                              <span style={{ fontSize: '10px', color: '#94a3b8' }}>
+                                wall {formatLatencyMs(timing.wallMs)}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          '—'
+                        )}
                       </td>
-                      <td style={{ padding: '8px 6px', fontSize: '12px' }}>
+                      <td
+                        style={{ padding: '8px 6px', fontSize: '12px' }}
+                        title={
+                          (() => {
+                            const meta = getJobResultMetadata(job);
+                            const unit = typeof meta.token_unit_label === 'string' ? meta.token_unit_label : 'tokens';
+                            const accounting =
+                              typeof meta.token_accounting === 'string' ? meta.token_accounting : null;
+                            const tin = job.usage?.prompt_tokens ?? 0;
+                            const tout = job.usage?.completion_tokens ?? 0;
+                            return `${tin} in / ${tout} out · ${unit}${accounting ? ` (${accounting})` : ''}`;
+                          })()
+                        }
+                      >
                         {totalTok > 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                            <span style={{ color: '#f8fafc', fontWeight: 600 }}>{totalTok.toLocaleString()} tok</span>
-                            <span style={{ color: '#94a3b8', fontSize: '11px' }}>(${costUsd})</span>
+                            <span style={{ color: '#f8fafc', fontWeight: 600 }}>
+                              {(job.usage?.prompt_tokens ?? 0).toLocaleString()}
+                              <span style={{ color: '#94a3b8', fontWeight: 500 }}> / </span>
+                              {(job.usage?.completion_tokens ?? 0).toLocaleString()}
+                            </span>
+                            <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+                              {typeof getJobResultMetadata(job).token_unit_label === 'string'
+                                ? String(getJobResultMetadata(job).token_unit_label)
+                                : 'in / out'}
+                            </span>
                           </div>
                         ) : (
                           <span style={{ color: '#64748b' }}>—</span>

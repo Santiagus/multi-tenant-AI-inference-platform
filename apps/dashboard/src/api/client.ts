@@ -86,10 +86,25 @@ export class PlatformApiClient {
       headers.set('Content-Type', 'application/json');
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : String(err);
+      // Browser TypeError when the Vite proxy / API is down or the connection resets mid-job.
+      if (/failed to fetch|networkerror|load failed|fetch failed/i.test(raw)) {
+        throw new ApiError(
+          0,
+          `API unreachable (${endpoint}): nothing answered at the dashboard proxy target ` +
+            `(usually http://localhost:3000). Start the stack with \`docker compose up -d\` ` +
+            `(or restart Docker Desktop), confirm \`curl http://localhost:3000/healthz\`, then retry.`
+        );
+      }
+      throw err instanceof Error ? err : new Error(raw);
+    }
 
     if (!response.ok) {
       let errorData: unknown;

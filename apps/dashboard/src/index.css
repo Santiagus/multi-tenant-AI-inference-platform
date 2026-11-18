@@ -86,8 +86,13 @@ code, pre, .font-mono {
   background: var(--bg-surface-hover);
 }
 
-/* Jobs Status Grid & 1200x1900 KPI Single-Row Grids */
-.jobs-status-grid,
+/* Jobs Status Grid — Submitted…Cancelled + DLQ + Total (9 cards) */
+.jobs-status-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .kpi-grid-5 {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -114,8 +119,16 @@ code, pre, .font-mono {
   box-sizing: border-box;
 }
 
+@media (max-width: 1200px) {
+  .jobs-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
-  .jobs-status-grid,
+  .jobs-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
   .kpi-grid-5 {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   }
