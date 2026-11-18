@@ -51,6 +51,30 @@ export interface ModelBenchmarkRef {
 }
 
 export const MODEL_PUBLIC_BENCHMARKS: Record<string, ModelBenchmarkRef> = {
+  'TinyLlama/TinyLlama-1.1B-Chat-v1.0': {
+    benchmarkSuite: 'Local RTX 5070 Ti · TinyLlama ShareGPT smoke',
+    taskProfile: '512 in / 128 out tokens (FP16 batch=1)',
+    referenceUrl: 'https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+    referenceTaskTokens: 640,
+    concernUnitLabel: '1M tok',
+    tokensPerConcernUnit: 1_000_000,
+  },
+  'Qwen/Qwen2.5-7B-Instruct': {
+    benchmarkSuite: 'Artificial Analysis · Qwen2.5-7B Instruct',
+    taskProfile: '2,048 in / 512 out tokens (INT4/FP16)',
+    referenceUrl: 'https://artificialanalysis.ai/models/qwen2-5-7b-instruct',
+    referenceTaskTokens: 2560,
+    concernUnitLabel: '1M tok',
+    tokensPerConcernUnit: 1_000_000,
+  },
+  'stabilityai/sd-turbo': {
+    benchmarkSuite: 'Local RTX 5070 Ti · SD-Turbo 512×512 1–4 step',
+    taskProfile: '512×512 · 1–4 steps ≈ 1,024–4,096 latent tokens/img',
+    referenceUrl: 'https://huggingface.co/stabilityai/sd-turbo',
+    referenceTaskTokens: 2048,
+    concernUnitLabel: '1k imgs (0.25MP)',
+    tokensPerConcernUnit: 2_048_000,
+  },
   'meta-llama/Llama-3-8B-Instruct': {
     benchmarkSuite: 'MLPerf Inference v4.1 · ShareGPT FP16',
     taskProfile: '2,048 in / 512 out tokens (batch=1, FP16/FP8)',
@@ -115,6 +139,22 @@ export const MODEL_PUBLIC_BENCHMARKS: Record<string, ModelBenchmarkRef> = {
     concernUnitLabel: '1k imgs (1MP)',
     tokensPerConcernUnit: 5_120_000,
   },
+  'Wan-AI/Wan2.1-T2V-1.3B': {
+    benchmarkSuite: 'VBench / Local RTX 5070 Ti · 640×368 @ 24fps (3D DiT)',
+    taskProfile: '3s clip (~72 frames) = 12,000 spatio-temporal tokens/clip',
+    referenceUrl: 'https://vchitect.github.io/VBench-project/',
+    referenceTaskTokens: 12_000,
+    concernUnitLabel: '100 clips (3s)',
+    tokensPerConcernUnit: 1_200_000,
+  },
+  'THUDM/CogVideoX-2b': {
+    benchmarkSuite: 'Local RTX 5070 Ti · CogVideoX-2b FP16 (measured harness)',
+    taskProfile: 'Short clip denoising path ≈ 8,000–12,000 tokens/clip',
+    referenceUrl: 'https://github.com/THUDM/CogVideo',
+    referenceTaskTokens: 10_000,
+    concernUnitLabel: '100 clips (short)',
+    tokensPerConcernUnit: 1_000_000,
+  },
   'THUDM/CogVideoX-5b': {
     benchmarkSuite: 'VBench Public Suite · 720×480 @ 49f (50-Step 3D-DiT)',
     taskProfile: '6s clip (49 frames, 50 steps) = 36,000 spatio-temporal tokens/clip',
@@ -130,6 +170,14 @@ export const MODEL_PUBLIC_BENCHMARKS: Record<string, ModelBenchmarkRef> = {
     referenceTaskTokens: 48_000,
     concernUnitLabel: '100 clips (6s)',
     tokensPerConcernUnit: 4_800_000,
+  },
+  'openai/whisper-tiny': {
+    benchmarkSuite: 'HuggingFace Open ASR Leaderboard · LibriSpeech Clean (tiny)',
+    taskProfile: '60s 16kHz audio chunk ≈ 800 acoustic/decoder tokens/min',
+    referenceUrl: 'https://huggingface.co/spaces/hf-audio/open_asr_leaderboard',
+    referenceTaskTokens: 800,
+    concernUnitLabel: '1 hr audio',
+    tokensPerConcernUnit: 48_000,
   },
   'openai/whisper-large-v3': {
     benchmarkSuite: 'HuggingFace Open ASR Leaderboard · LibriSpeech Clean',

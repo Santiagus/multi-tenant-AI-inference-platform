@@ -2,35 +2,57 @@ import { useEffect, useState, useMemo, type CSSProperties } from 'react';
 import { StatCard } from '../common/StatCard';
 import { StatusBadge } from '../common/Badge';
 import { SortableHeader, genericSort, type SortDirection } from '../common/SortableHeader';
-import { SubmitJobModal } from './SubmitJobModal';
+import { SubmitJobModal, type SubmitJobPayload } from './SubmitJobModal';
 import { JobDetailModal } from './JobDetailModal';
 import { DlqModal } from './DlqModal';
-import type { DlqMessage, JobItem, RoutingPreference } from '../../types';
+import { apiClient } from '../../api/client';
+import type { DlqMessage, JobItem } from '../../types';
+import type { SubmitJobPrefill } from './submitJobHelpers';
 
 interface JobsViewProps {
   jobs: JobItem[];
   dlqMessages: DlqMessage[];
   isLoading: boolean;
   onRefresh: () => void;
-  onSubmitJob: (payload: {
-    model_id: string;
-    routing_preference: RoutingPreference;
-    priority: number;
-    max_retries: number;
-    input: { prompt: string; parameters?: Record<string, unknown> };
-  }) => Promise<void>;
+  onSubmitJob: (payload: SubmitJobPayload) => Promise<void>;
   onCancelJob: (jobId: string) => Promise<void>;
   onRetryJob?: (jobId: string) => Promise<void>;
   onReapExpired?: () => Promise<void>;
   onDiscardDlqMessage?: (messageId: string, tenantId: string) => Promise<void>;
+  /** Fetch full job detail (includes signed artifact URLs) when opening Job Inspection. */
+  onInspectJob?: (job: JobItem) => Promise<JobItem>;
   onInspectJobFromDlq?: (jobId: string, tenantId: string) => Promise<JobItem | null>;
   onTriggerWorker: () => Promise<void>;
   isProcessingWorker: boolean;
   inferenceMode?: 'mock' | 'real';
   onToggleInferenceMode?: (mode: 'mock' | 'real') => Promise<void>;
   workerFeedback?: string | null;
+  workerFeedbackTone?: 'info' | 'error';
+  onDismissWorkerFeedback?: () => void;
   /** True when the header tenant filter is All Tenants. Per-tenant aggregation is only meaningful then. */
   viewingAllTenants?: boolean;
+  /** Prefill from GPU pricing "Run with this option" handoff. */
+  submitPrefill?: SubmitJobPrefill | null;
+  forceOpenSubmit?: boolean;
+  onSubmitPrefillConsumed?: () => void;
+  onSubmitModalClosed?: () => void;
+  /** Tenant used for media presign uploads. */
+  tenantId?: string;
+  /** Deployment stage from /healthz — gates local/dev purge tools. */
+  stage?: string;
+}
+
+export function artifactPaperclipTitle(job: Pick<JobItem, 'has_artifacts' | 'artifact_kind'>): string {
+  if (!job.has_artifacts) return '';
+  const kind = job.artifact_kind ? ` (${job.artifact_kind})` : '';
+  return `Artifacts attached${kind}. Open job to preview.`;
+}
+
+function summarizeActiveFilters(parts: Record<string, string>): string {
+  return Object.entries(parts)
+    .filter(([, v]) => v && v !== 'ALL')
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' · ');
 }
 
 export const ALL_PLATFORM_PROVIDERS = [
@@ -400,14 +422,133 @@ export function JobsView({
   onRetryJob,
   onReapExpired,
   onDiscardDlqMessage,
+  onInspectJob,
   onInspectJobFromDlq,
   onTriggerWorker,
   isProcessingWorker,
+  inferenceMode = 'mock',
+  onToggleInferenceMode,
   workerFeedback = null,
+  workerFeedbackTone = 'info',
+  onDismissWorkerFeedback,
   viewingAllTenants = false,
+  submitPrefill = null,
+  forceOpenSubmit = false,
+  onSubmitPrefillConsumed,
+  onSubmitModalClosed,
+  tenantId = 'tenant-default',
+  stage = 'LOCAL',
 }: JobsViewProps) {
   const [selectedJob, setSelectedJob] = useState<JobItem | null>(null);
+  const [isLoadingJobDetail, setIsLoadingJobDetail] = useState(false);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [isDeletingMatching, setIsDeletingMatching] = useState(false);
+  const [orphanCount, setOrphanCount] = useState(0);
+  const [residentLabel, setResidentLabel] = useState<string | null>(null);
+  const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
+  const isLocalOrDev =
+    stage.toUpperCase().includes('LOCAL') || stage.toUpperCase().includes('DEV');
+
+  const openJobInspection = async (job: JobItem) => {
+    setSelectedJob(job);
+    if (!onInspectJob) return;
+    setIsLoadingJobDetail(true);
+    try {
+      const detailed = await onInspectJob(job);
+      setSelectedJob(detailed);
+    } finally {
+      setIsLoadingJobDetail(false);
+    }
+  };
+
+  // Match model-download cadence: poll inference progress every 1.5s while Job Inspection is open.
+  useEffect(() => {
+    if (!selectedJob || !onInspectJob) return;
+    const inflight = new Set(['QUEUED', 'SUBMITTED', 'PROCESSING', 'RETRYING']);
+    if (!inflight.has(selectedJob.status)) return;
+
+    const jobId = selectedJob.job_id;
+    const tenant = selectedJob.tenant_id;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const detailed = await onInspectJob({
+            ...selectedJob,
+            job_id: jobId,
+            tenant_id: tenant,
+          });
+          setSelectedJob(detailed);
+          // Also refresh the jobs table so % stays in sync when the modal closes.
+          if (
+            detailed.status === 'SUCCEEDED' ||
+            detailed.status === 'FAILED' ||
+            detailed.status === 'CANCELLED'
+          ) {
+            onRefresh();
+          }
+        } catch {
+          // keep last known inspection snapshot
+        }
+      })();
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [selectedJob?.job_id, selectedJob?.status, onInspectJob, onRefresh]);
+
+  useEffect(() => {
+    if (forceOpenSubmit || submitPrefill) {
+      setIsSubmitModalOpen(true);
+    }
+  }, [forceOpenSubmit, submitPrefill]);
+
+  useEffect(() => {
+    if (!isLocalOrDev || viewingAllTenants || !tenantId || tenantId === 'ALL') {
+      setOrphanCount(0);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiClient.getOrphanArtifacts(tenantId);
+        if (!cancelled) setOrphanCount(res.count ?? 0);
+      } catch {
+        if (!cancelled) setOrphanCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLocalOrDev, viewingAllTenants, tenantId, jobs.length]);
+
+  useEffect(() => {
+    if (inferenceMode !== 'real') {
+      setResidentLabel(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const res = await apiClient.getLocalResidentStatus();
+        if (cancelled) return;
+        const gpu = res.resident?.gpu?.model_id;
+        const cpu = res.resident?.cpu?.model_id;
+        const short = (id: string | null | undefined) =>
+          id ? id.split('/').pop() || id : '—';
+        setResidentLabel(`GPU: ${short(gpu)} · CPU: ${short(cpu)}`);
+      } catch {
+        if (!cancelled) setResidentLabel(null);
+      }
+    };
+    void refresh();
+    const id = window.setInterval(() => {
+      void refresh();
+    }, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [inferenceMode, jobs.length, isProcessingWorker]);
+
   const [isDlqModalOpen, setIsDlqModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -784,6 +925,110 @@ export function JobsView({
     providerFilter,
     searchQuery,
   ]);
+
+  const activeFilterSummary = useMemo(
+    () =>
+      summarizeActiveFilters({
+        tenant: viewingAllTenants ? tenantFilter : tenantId,
+        provider: providerFilter,
+        status: statusFilter,
+        model: modelFilter,
+        mode: modeFilter,
+        inference: inferenceFilter,
+        compute: computeFilter,
+        search: searchQuery.trim() || 'ALL',
+      }),
+    [
+      viewingAllTenants,
+      tenantFilter,
+      tenantId,
+      providerFilter,
+      statusFilter,
+      modelFilter,
+      modeFilter,
+      inferenceFilter,
+      computeFilter,
+      searchQuery,
+    ]
+  );
+
+  const hasScopedDeleteFilter = useMemo(() => {
+    const concreteTenant = !viewingAllTenants && tenantId !== 'ALL';
+    return Boolean(
+      concreteTenant ||
+        (tenantFilter !== 'ALL' && viewingAllTenants) ||
+        providerFilter !== 'ALL' ||
+        statusFilter !== 'ALL' ||
+        modelFilter !== 'ALL' ||
+        searchQuery.trim()
+    );
+  }, [
+    viewingAllTenants,
+    tenantId,
+    tenantFilter,
+    providerFilter,
+    statusFilter,
+    modelFilter,
+    searchQuery,
+  ]);
+
+  const handleDeleteMatchingFilters = async () => {
+    if (!isLocalOrDev || filteredJobs.length === 0) return;
+    if (!hasScopedDeleteFilter) {
+      const ok = window.confirm(
+        `Delete ALL ${filteredJobs.length} visible job(s) across tenants?\n\nFilters: (none — cross-tenant)\n\nThis also removes related S3 output artifacts.`
+      );
+      if (!ok) return;
+    } else {
+      const ok = window.confirm(
+        `Delete ${filteredJobs.length} job(s) matching filters?\n\n${activeFilterSummary || '(scoped tenant)'}\n\nRelated S3 output artifacts will also be removed. Showcase rows can be re-seeded.`
+      );
+      if (!ok) return;
+    }
+
+    setIsDeletingMatching(true);
+    try {
+      await apiClient.deleteMatchingJobs({
+        tenant_id: viewingAllTenants
+          ? tenantFilter !== 'ALL'
+            ? tenantFilter
+            : 'ALL'
+          : tenantId,
+        provider: providerFilter !== 'ALL' ? providerFilter : undefined,
+        status: statusFilter !== 'ALL' ? statusFilter : undefined,
+        model_id: modelFilter !== 'ALL' ? modelFilter : undefined,
+        search: searchQuery.trim() || undefined,
+        // Exact parity with client-side filters (mode/inference/compute/etc.).
+        job_ids: filteredJobs.map((j) => j.job_id),
+        confirm_cross_tenant: !hasScopedDeleteFilter,
+      });
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to delete matching jobs:', err);
+      window.alert(err instanceof Error ? err.message : 'Failed to delete matching jobs');
+    } finally {
+      setIsDeletingMatching(false);
+    }
+  };
+
+  const handleCleanOrphans = async () => {
+    if (!isLocalOrDev || viewingAllTenants || !tenantId || tenantId === 'ALL') return;
+    const ok = window.confirm(
+      `Clean ${orphanCount} orphan artifact folder(s) for ${tenantId}?\n\nThese are S3 outputs with no matching job row.`
+    );
+    if (!ok) return;
+    setIsCleaningOrphans(true);
+    try {
+      const res = await apiClient.purgeOrphanArtifacts(tenantId);
+      setOrphanCount(0);
+      window.alert(res.message ?? `Purged ${res.purged_prefixes} orphan prefix(es).`);
+    } catch (err) {
+      console.error('Failed to purge orphan artifacts:', err);
+      window.alert(err instanceof Error ? err.message : 'Failed to purge orphan artifacts');
+    } finally {
+      setIsCleaningOrphans(false);
+    }
+  };
 
   const computeFilterOptions = useMemo(() => {
     const labels = new Set<string>();
@@ -1275,19 +1520,27 @@ export function JobsView({
         )}
       </div>
 
-      {/* Worker / enqueue controls (row actions live in the job detail modal) */}
+      {/* Worker / enqueue controls — actions stay on one row; messages use a dedicated strip below */}
       <div
         style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          flexWrap: 'wrap',
+          flexDirection: 'column',
+          gap: '8px',
           backgroundColor: '#0f172a',
           padding: '12px 16px',
           borderRadius: '12px',
           border: '1px solid #1e293b',
         }}
       >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            flexWrap: 'nowrap',
+            minWidth: 0,
+          }}
+        >
           <button
             onClick={() => setIsDlqModalOpen(true)}
             style={{
@@ -1302,10 +1555,31 @@ export function JobsView({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
+              flexShrink: 0,
             }}
           >
             DLQ Messages ({stats.dlqCount})
           </button>
+
+          {residentLabel && (
+            <span
+              data-testid="local-resident-status"
+              title="Models currently held in the persistent local worker"
+              style={{
+                fontSize: '12px',
+                color: '#94a3b8',
+                fontFamily: 'monospace',
+                padding: '6px 10px',
+                borderRadius: '8px',
+                border: '1px solid #334155',
+                backgroundColor: '#0b1220',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
+            >
+              Loaded · {residentLabel}
+            </span>
+          )}
 
           {onReapExpired && (
             <button
@@ -1319,6 +1593,7 @@ export function JobsView({
                 fontSize: '13px',
                 fontWeight: 600,
                 cursor: 'pointer',
+                flexShrink: 0,
               }}
               title="Scans for queued jobs exceeding expiration TTL or retries and marks them FAILED"
             >
@@ -1343,6 +1618,7 @@ export function JobsView({
               alignItems: 'center',
               gap: '6px',
               transition: 'all 0.15s ease',
+              flexShrink: 0,
             }}
             title="POST /v1/worker/process-next - Triggers background worker to poll and process next queued job from SQS"
           >
@@ -1364,19 +1640,34 @@ export function JobsView({
             )}
           </button>
 
-          {workerFeedback && (
-            <span
+          {isLocalOrDev && (
+            <button
+              data-testid="delete-matching-filters"
+              onClick={() => void handleDeleteMatchingFilters()}
+              disabled={isDeletingMatching || filteredJobs.length === 0}
+              title={
+                filteredJobs.length === 0
+                  ? 'No jobs match the current filters'
+                  : `Delete ${filteredJobs.length} job(s) matching: ${activeFilterSummary || 'current view'}`
+              }
               style={{
-                fontSize: '12px',
-                color: workerFeedback.includes('failed') ? '#f87171' : '#38bdf8',
-                backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                border: '1px solid #334155',
-                padding: '6px 12px',
-                borderRadius: '6px',
+                backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                color: '#f87171',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                padding: '8px 14px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: isDeletingMatching || filteredJobs.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: filteredJobs.length === 0 ? 0.5 : 1,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
             >
-              {workerFeedback}
-            </span>
+              {isDeletingMatching
+                ? 'Deleting…'
+                : `Delete matching (${filteredJobs.length})`}
+            </button>
           )}
 
           <button
@@ -1394,14 +1685,115 @@ export function JobsView({
               alignItems: 'center',
               gap: '6px',
               marginLeft: 'auto',
+              flexShrink: 0,
             }}
           >
             + Submit Job
           </button>
           {viewingAllTenants && (
-            <span style={{ fontSize: '11px', color: '#94a3b8' }}>Submits as tenant-default</span>
+            <span style={{ fontSize: '11px', color: '#94a3b8', flexShrink: 0 }}>
+              Submits as tenant-default
+            </span>
           )}
+        </div>
+
+        {(workerFeedback || isProcessingWorker) && (
+          <div
+            data-testid="jobs-worker-feedback"
+            role={workerFeedbackTone === 'error' ? 'alert' : 'status'}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+              width: '100%',
+              boxSizing: 'border-box',
+              fontSize: '12px',
+              lineHeight: 1.45,
+              color: workerFeedbackTone === 'error' ? '#fecaca' : '#e0f2fe',
+              backgroundColor:
+                workerFeedbackTone === 'error'
+                  ? 'rgba(127, 29, 29, 0.45)'
+                  : 'rgba(14, 116, 144, 0.18)',
+              border:
+                workerFeedbackTone === 'error'
+                  ? '1px solid rgba(248, 113, 113, 0.45)'
+                  : '1px solid rgba(56, 189, 248, 0.35)',
+              padding: '10px 12px',
+              borderRadius: '8px',
+            }}
+          >
+            <span style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {workerFeedback
+                ? workerFeedback
+                : 'Worker running… refreshing job statuses (QUEUED → PROCESSING).'}
+            </span>
+            {workerFeedback && (
+              <button
+                type="button"
+                onClick={() => onDismissWorkerFeedback?.()}
+                title="Dismiss"
+                aria-label="Dismiss worker feedback"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: workerFeedbackTone === 'error' ? '#fca5a5' : '#94a3b8',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  lineHeight: 1,
+                  padding: '0 2px',
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {isLocalOrDev && orphanCount > 0 && !viewingAllTenants && (
+        <div
+          data-testid="orphan-artifacts-banner"
+          role="status"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            marginBottom: '12px',
+            padding: '10px 14px',
+            borderRadius: '8px',
+            backgroundColor: 'rgba(245, 158, 11, 0.12)',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            color: '#fbbf24',
+            fontSize: '12px',
+            fontWeight: 600,
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            {orphanCount} orphan artifact folder{orphanCount === 1 ? '' : 's'} under{' '}
+            <code style={{ fontWeight: 700 }}>tenants/{tenantId}/outputs/</code> with no matching job.
+          </span>
+          <button
+            type="button"
+            data-testid="clean-orphan-artifacts"
+            onClick={() => void handleCleanOrphans()}
+            disabled={isCleaningOrphans}
+            style={{
+              backgroundColor: 'rgba(245, 158, 11, 0.2)',
+              color: '#fbbf24',
+              border: '1px solid rgba(245, 158, 11, 0.45)',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: isCleaningOrphans ? 'wait' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {isCleaningOrphans ? 'Cleaning…' : 'Clean orphans'}
+          </button>
+        </div>
+      )}
 
       {/* Jobs Table — filters live in column headers for 1200×1900 fit */}
       <div
@@ -1495,32 +1887,6 @@ export function JobsView({
                 >
                   Model
                 </SortableHeader>
-                {viewingAllTenants && (
-                  <SortableHeader
-                    column="tenant_id"
-                    currentSortKey={jobSortKey}
-                    currentSortDir={jobSortDir}
-                    onSort={handleJobSort}
-                    style={{ padding: '8px 6px', width: '10%' }}
-                    filter={
-                      <select
-                        value={tenantFilter}
-                        onChange={(e) => setTenantFilter(e.target.value)}
-                        style={headerFilterStyle}
-                        aria-label="Filter by tenant"
-                      >
-                        <option value="ALL">All</option>
-                        {tenantStats.map((t) => (
-                          <option key={t.tenantId} value={t.tenantId}>
-                            {t.tenantId}
-                          </option>
-                        ))}
-                      </select>
-                    }
-                  >
-                    Tenant
-                  </SortableHeader>
-                )}
                 <SortableHeader
                   column="hardware"
                   currentSortKey={jobSortKey}
@@ -1632,13 +1998,13 @@ export function JobsView({
             <tbody>
               {isLoading && jobs.length === 0 ? (
                 <tr>
-                  <td colSpan={viewingAllTenants ? 11 : 10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     Loading inference jobs...
                   </td>
                 </tr>
               ) : sortedJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={viewingAllTenants ? 11 : 10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan={10} style={{ padding: '48px 16px', textAlign: 'center', color: '#64748b' }}>
                     No inference jobs match the current filters. Click a row for job actions, or "+ Submit Job" to enqueue one.
                   </td>
                 </tr>
@@ -1658,7 +2024,9 @@ export function JobsView({
                   return (
                     <tr
                       key={job.job_id}
-                      onClick={() => setSelectedJob(job)}
+                      onClick={() => {
+                        void openJobInspection(job);
+                      }}
                       style={{
                         borderBottom: '1px solid #1e293b',
                         cursor: 'pointer',
@@ -1689,27 +2057,44 @@ export function JobsView({
                         </div>
                       </td>
                       <td style={{ padding: '8px 6px', fontFamily: 'monospace', fontSize: '12px' }}>
-                        <button
-                          type="button"
-                          onClick={(e) => toggleExpandJobId(job.job_id, e)}
-                          title={isIdExpanded ? 'Click to collapse' : 'Click to view full ID'}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 0,
-                            margin: 0,
-                            fontFamily: 'inherit',
-                            fontSize: 'inherit',
-                            color: '#818cf8',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            textDecoration: 'underline',
-                            textDecorationStyle: 'dotted',
-                            textUnderlineOffset: '2px',
-                          }}
-                        >
-                          {isIdExpanded ? job.job_id : job.job_id.slice(0, 8)}
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={(e) => toggleExpandJobId(job.job_id, e)}
+                            title={isIdExpanded ? 'Click to collapse' : 'Click to view full ID'}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              padding: 0,
+                              margin: 0,
+                              fontFamily: 'inherit',
+                              fontSize: 'inherit',
+                              color: '#818cf8',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              textDecoration: 'underline',
+                              textDecorationStyle: 'dotted',
+                              textUnderlineOffset: '2px',
+                            }}
+                          >
+                            {isIdExpanded ? job.job_id : job.job_id.slice(0, 8)}
+                          </button>
+                          {job.has_artifacts && (
+                            <span
+                              data-testid="job-artifact-clip"
+                              title={artifactPaperclipTitle(job)}
+                              aria-label={artifactPaperclipTitle(job)}
+                              style={{
+                                color: '#94a3b8',
+                                fontSize: '12px',
+                                lineHeight: 1,
+                                flexShrink: 0,
+                              }}
+                            >
+                              📎
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td
                         style={{ padding: '8px 6px', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap' }}
@@ -1717,11 +2102,6 @@ export function JobsView({
                       >
                         {formatModelName(job.model_id)}
                       </td>
-                      {viewingAllTenants && (
-                        <td style={{ padding: '8px 6px', fontFamily: 'monospace', color: '#10b981', whiteSpace: 'nowrap' }}>
-                          {job.tenant_id || 'tenant-default'}
-                        </td>
-                      )}
                       <td style={{ padding: '8px 6px' }}>
                         <div
                           style={{
@@ -1810,7 +2190,16 @@ export function JobsView({
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '8px 6px' }}>
+                      <td
+                        style={{ padding: '8px 6px' }}
+                        title={
+                          job.progress?.message
+                            ? `${job.progress.phase || job.status}: ${job.progress.message}`
+                            : job.progress?.phase
+                              ? String(job.progress.phase)
+                              : undefined
+                        }
+                      >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                           <div style={{ width: '28px', height: '4px', backgroundColor: '#334155', borderRadius: '2px', overflow: 'hidden' }}>
                             <div
@@ -1856,7 +2245,15 @@ export function JobsView({
       {/* Modals */}
       <SubmitJobModal
         isOpen={isSubmitModalOpen}
-        onClose={() => setIsSubmitModalOpen(false)}
+        tenantId={tenantId === 'ALL' ? 'tenant-default' : tenantId}
+        initialPrefill={submitPrefill}
+        onPrefillConsumed={onSubmitPrefillConsumed}
+        apiInferenceMode={inferenceMode}
+        onEnsureInferenceMode={onToggleInferenceMode}
+        onClose={() => {
+          setIsSubmitModalOpen(false);
+          onSubmitModalClosed?.();
+        }}
         onSubmit={async (payload) => {
           await onSubmitJob(payload);
           onRefresh();
@@ -1866,7 +2263,11 @@ export function JobsView({
       <JobDetailModal
         job={selectedJob}
         isOpen={selectedJob !== null}
-        onClose={() => setSelectedJob(null)}
+        isLoadingArtifacts={isLoadingJobDetail}
+        onClose={() => {
+          setSelectedJob(null);
+          setIsLoadingJobDetail(false);
+        }}
         onCancelJob={async (id) => {
           await onCancelJob(id);
           setSelectedJob(null);
@@ -1888,12 +2289,20 @@ export function JobsView({
         isLoading={isLoading}
         onRefresh={onRefresh}
         onDiscardMessage={onDiscardDlqMessage}
-        onInspectJob={async (jobId, tenantId) => {
+        onInspectJob={async (jobId, messageTenantId) => {
+          setIsDlqModalOpen(false);
           const fromList = jobs.find((j) => j.job_id === jobId) ?? null;
-          const job = fromList ?? (onInspectJobFromDlq ? await onInspectJobFromDlq(jobId, tenantId) : null);
-          if (job) {
-            setIsDlqModalOpen(false);
-            setSelectedJob(job);
+          if (fromList) {
+            await openJobInspection(fromList);
+            return;
+          }
+          if (!onInspectJobFromDlq) return;
+          setIsLoadingJobDetail(true);
+          try {
+            const job = await onInspectJobFromDlq(jobId, messageTenantId);
+            if (job) setSelectedJob(job);
+          } finally {
+            setIsLoadingJobDetail(false);
           }
         }}
       />

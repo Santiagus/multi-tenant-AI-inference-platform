@@ -25,9 +25,11 @@ export type RoutingPreference =
   | 'local_first';
 
 export interface JobProgress {
-  phase: 'queued' | 'loading_model' | 'denoising' | 'generating' | 'encoding_artifact' | 'completed' | 'failed';
+  phase: 'queued' | 'loading_model' | 'denoising' | 'generating' | 'encoding_artifact' | 'completed' | 'failed' | string;
   step?: number;
   totalSteps?: number;
+  /** Snake_case alias from Python worker progress events (normalized by API when possible). */
+  total_steps?: number;
   percent: number;
   message?: string;
 }
@@ -42,6 +44,37 @@ export interface JobUsage {
 export interface JobArtifact {
   name: string;
   download_url: string;
+}
+
+export interface ModelCacheEntry {
+  model_id: string;
+  hub_id: string;
+  cached: boolean;
+  size_bytes: number;
+  files?: number;
+  revision?: string | null;
+  path?: string | null;
+  proprietary?: boolean;
+}
+
+export interface ModelCacheListResponse {
+  ok: boolean;
+  cache_root: string;
+  cached_repo_count: number;
+  catalog_cached_count: number;
+  models: ModelCacheEntry[];
+}
+
+export interface ModelDownloadStatus {
+  model_id: string;
+  hub_id: string;
+  status: 'idle' | 'queued' | 'downloading' | 'ready' | 'error' | 'cancelled';
+  percent: number;
+  message: string;
+  bytes_cached?: number | null;
+  bytes_total?: number | null;
+  error?: string | null;
+  updated_at: string;
 }
 
 export interface JobItem {
@@ -80,6 +113,10 @@ export interface JobItem {
   /** Full input payload as stored (prompt, parameters, internal flags). */
   input?: Record<string, unknown> | null;
   result?: Record<string, unknown>;
+  /** True when the job has a persisted output_uri (list-cheap flag, no S3 roundtrip). */
+  has_artifacts?: boolean;
+  /** Coarse artifact modality for tooltips: json/text, image, or video. */
+  artifact_kind?: 'json' | 'image' | 'video' | null;
   artifacts?: JobArtifact[];
   error?: {
     code?: string | null;

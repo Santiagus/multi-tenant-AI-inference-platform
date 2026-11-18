@@ -3,6 +3,8 @@ import type {
   EconomicsResponse,
   JobItem,
   JobsListResponse,
+  ModelCacheListResponse,
+  ModelDownloadStatus,
   ProviderCatalogResponse,
   RoutingDecision,
   RoutingPreference,
@@ -17,6 +19,49 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+function formatApiErrorMessage(status: number, statusText: string, errorData: unknown): string {
+  if (typeof errorData === 'object' && errorData !== null) {
+    if ('title' in errorData && typeof (errorData as { title: unknown }).title === 'string') {
+      return (errorData as { title: string }).title;
+    }
+    if ('message' in errorData && typeof (errorData as { message: unknown }).message === 'string') {
+      return (errorData as { message: string }).message;
+    }
+    if ('error' in errorData) {
+      const err = (errorData as { error: unknown }).error;
+      if (typeof err === 'string') return err;
+      if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as { message: unknown }).message === 'string') {
+        return (err as { message: string }).message;
+      }
+    }
+  }
+
+  if (typeof errorData === 'string' && errorData.trim().length > 0) {
+    const raw = errorData.trim();
+    // nginx / gateway HTML bodies are unreadable in the jobs toast.
+    if (raw.startsWith('<') || /Gateway Time-?out/i.test(raw) || status === 504 || status === 502) {
+      if (status === 502 || /502\s+Bad Gateway/i.test(raw)) {
+        return '502 Bad Gateway: the API proxy or upstream returned an HTML error page.';
+      }
+      return (
+        'Gateway timeout (504): the API proxy waited too long for /v1/worker/process-next. ' +
+        'Real inference (model download / GPU) often exceeds 60s — recreate the dashboard ' +
+        'nginx proxy with the extended 30m read timeout, then retry.'
+      );
+    }
+    return raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
+  }
+
+  if (status === 504) {
+    return 'Gateway timeout (504): worker process-next exceeded the proxy timeout.';
+  }
+  if (status === 502) {
+    return '502 Bad Gateway';
+  }
+
+  return `API Error ${status}: ${statusText}`;
 }
 
 export class PlatformApiClient {
@@ -82,39 +127,49 @@ export class PlatformApiClient {
         }
       }
 
-      const message =
-        typeof errorData === 'object' && errorData !== null && 'title' in errorData
-          ? (errorData as { title: string }).title
-          : typeof errorData === 'object' && errorData !== null && 'message' in errorData
-            ? (errorData as { message: string }).message
-            : typeof errorData === 'object' && errorData !== null && 'error' in errorData
-              ? typeof (errorData as any).error === 'string'
-                ? (errorData as any).error
-                : typeof (errorData as any).error?.message === 'string'
-                  ? (errorData as any).error.message
-                  : `API Error ${response.status}: ${response.statusText}`
-              : typeof errorData === 'string' && errorData.trim().length > 0
-                ? errorData
-                : `API Error ${response.status}: ${response.statusText}`;
-
-      throw new ApiError(response.status, message, errorData);
+      throw new ApiError(
+        response.status,
+        formatApiErrorMessage(response.status, response.statusText, errorData),
+        errorData
+      );
     }
 
     return response.json() as Promise<T>;
   }
 
-  async getHealth(): Promise<{ ok: boolean; status: string; dataSource: 'real' | 'mock'; environment: string; inferenceMode: 'mock' | 'real' }> {
+  async getHealth(): Promise<{
+    ok: boolean;
+    status: string;
+    dataSource: 'real' | 'mock';
+    environment: string;
+    inferenceMode: 'mock' | 'real';
+    mockProviders: boolean;
+  }> {
     try {
-      const data = await this.request<{ status: string; dataSource?: 'real' | 'mock'; environment?: string; inferenceMode?: 'mock' | 'real' }>('/healthz');
+      const data = await this.request<{
+        status: string;
+        dataSource?: 'real' | 'mock';
+        environment?: string;
+        inferenceMode?: 'mock' | 'real';
+        mockProviders?: boolean;
+      }>('/healthz');
       return {
         ok: true,
         status: data.status || 'healthy',
         dataSource: data.dataSource || 'real',
         environment: data.environment || 'LOCAL',
         inferenceMode: data.inferenceMode || 'mock',
+        mockProviders: Boolean(data.mockProviders ?? data.inferenceMode === 'mock'),
       };
     } catch {
-      return { ok: false, status: 'unhealthy', dataSource: 'real', environment: 'LOCAL', inferenceMode: 'mock' };
+      return {
+        ok: false,
+        status: 'unhealthy',
+        dataSource: 'real',
+        environment: 'LOCAL',
+        inferenceMode: 'mock',
+        mockProviders: true,
+      };
     }
   }
 
@@ -141,6 +196,8 @@ export class PlatformApiClient {
       routing_preference?: RoutingPreference;
       priority?: number;
       max_retries?: number;
+      expires_in_seconds?: number;
+      input_uri?: string;
       input?: { prompt?: string; parameters?: Record<string, unknown> };
     }
   ): Promise<{ job_id: string; status: string; poll_url: string }> {
@@ -152,6 +209,47 @@ export class PlatformApiClient {
       },
       tenantId
     );
+  }
+
+  async createUploadUrl(
+    tenantId: string,
+    payload: { filename: string; content_type: string; expires_in_seconds?: number }
+  ): Promise<{ upload_url: string; asset_uri: string; expires_in_seconds: number }> {
+    return this.request('/v1/jobs/upload-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, tenantId);
+  }
+
+  /** Presign + PUT a browser File; returns the durable asset_uri to use as input_uri. */
+  async uploadMediaFile(
+    tenantId: string,
+    file: File,
+    contentType: string
+  ): Promise<{ asset_uri: string; upload_url: string }> {
+    const presign = await this.createUploadUrl(tenantId, {
+      filename: file.name,
+      content_type: contentType,
+    });
+    const putRes = await fetch(presign.upload_url, {
+      method: 'PUT',
+      body: file,
+      headers: {
+        'Content-Type': contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('application/')
+          ? contentType
+          : contentType === 'png' || contentType === 'jpeg' || contentType === 'jpg' || contentType === 'webp'
+            ? `image/${contentType === 'jpg' ? 'jpeg' : contentType}`
+            : contentType === 'mp4'
+              ? 'video/mp4'
+              : contentType === 'pdf'
+                ? 'application/pdf'
+                : contentType,
+      },
+    });
+    if (!putRes.ok) {
+      throw new ApiError(putRes.status, `Media upload failed (${putRes.status})`);
+    }
+    return { asset_uri: presign.asset_uri, upload_url: presign.upload_url };
   }
 
   async cancelJob(tenantId: string, jobId: string): Promise<{ job_id: string; status: string }> {
@@ -175,8 +273,18 @@ export class PlatformApiClient {
     );
   }
 
-  async reapExpiredJobs(): Promise<{ reaped_count: number; reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }> }> {
-    return this.request<{ reaped_count: number; reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }> }>(
+  async reapExpiredJobs(): Promise<{
+    reaped_count: number;
+    reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }>;
+    reclaimed_orphans?: number;
+    orphan_jobs?: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }>;
+  }> {
+    return this.request<{
+      reaped_count: number;
+      reaped_jobs: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }>;
+      reclaimed_orphans?: number;
+      orphan_jobs?: Array<{ job_id: string; status: string; error_code?: string; error_message?: string }>;
+    }>(
       '/v1/jobs/reap',
       {
         method: 'POST',
@@ -195,18 +303,65 @@ export class PlatformApiClient {
     return this.request(`/v1/jobs/dlq/${encodeURIComponent(messageId)}`, { method: 'DELETE' }, tenantId);
   }
 
+  async getLocalGpu(): Promise<{
+    available: boolean;
+    device_count: number;
+    device_name: string | null;
+    total_vram_mb: number | null;
+    free_vram_mb: number | null;
+    allocated_vram_mb: number | null;
+    total_vram_gb: number | null;
+    free_vram_gb: number | null;
+    source: 'cuda' | 'unavailable' | 'error';
+    error?: string;
+  }> {
+    return this.request('/v1/worker/local-gpu');
+  }
+
+  async getLocalResidentStatus(): Promise<{
+    ok: boolean;
+    inferenceMode: 'mock' | 'real';
+    resident: {
+      gpu: { model_id: string | null; warm: boolean; footprint_mb: number };
+      cpu: { model_id: string | null; warm: boolean; footprint_mb: number };
+      idle_ttl_sec: number;
+    };
+  }> {
+    return this.request('/v1/worker/local-status');
+  }
+
   async getInferenceMode(): Promise<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }> {
     return this.request<{ mode: 'mock' | 'real'; isTest?: boolean; description?: string }>(
       '/v1/worker/inference-mode'
     );
   }
 
-  async setInferenceMode(mode: 'mock' | 'real'): Promise<{ ok: boolean; mode: 'mock' | 'real'; message: string }> {
-    return this.request<{ ok: boolean; mode: 'mock' | 'real'; message: string }>(
+  async setInferenceMode(
+    mode: 'mock' | 'real'
+  ): Promise<{ ok: boolean; mode: 'mock' | 'real'; mockProviders?: boolean; message: string }> {
+    return this.request<{ ok: boolean; mode: 'mock' | 'real'; mockProviders?: boolean; message: string }>(
       '/v1/worker/inference-mode',
       {
         method: 'POST',
         body: JSON.stringify({ mode }),
+      }
+    );
+  }
+
+  async getMockProviders(): Promise<{ enabled: boolean; inferenceMode: 'mock' | 'real'; description?: string }> {
+    return this.request<{ enabled: boolean; inferenceMode: 'mock' | 'real'; description?: string }>(
+      '/v1/worker/mock-providers'
+    );
+  }
+
+  async setMockProviders(
+    enabled: boolean
+  ): Promise<{ ok: boolean; enabled: boolean; inferenceMode: 'mock' | 'real'; message: string }> {
+    return this.request<{ ok: boolean; enabled: boolean; inferenceMode: 'mock' | 'real'; message: string }>(
+      '/v1/worker/mock-providers',
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
       }
     );
   }
@@ -437,9 +592,79 @@ export class PlatformApiClient {
     ok: boolean;
     tenantId: string;
     deletedCount: number;
+    deletedObjects?: number;
     message: string;
   }> {
     return this.request(`/v1/admin/tenants/${encodeURIComponent(tenantId)}/purge`, { method: 'POST' });
+  }
+
+  async deleteMatchingJobs(filters: {
+    tenant_id?: string;
+    provider?: string;
+    status?: string;
+    model_id?: string;
+    search?: string;
+    job_ids?: string[];
+    confirm_cross_tenant?: boolean;
+  }): Promise<{
+    ok: boolean;
+    deleted_jobs: number;
+    deleted_objects: number;
+    filters: Record<string, string | null>;
+    message: string;
+  }> {
+    return this.request('/v1/admin/jobs/delete-matching', {
+      method: 'POST',
+      body: JSON.stringify(filters),
+    });
+  }
+
+  async getOrphanArtifacts(tenantId: string): Promise<{
+    ok: boolean;
+    tenantId: string;
+    orphans: string[];
+    count: number;
+  }> {
+    return this.request(`/v1/admin/tenants/${encodeURIComponent(tenantId)}/artifacts/orphans`);
+  }
+
+  async purgeOrphanArtifacts(tenantId: string): Promise<{
+    ok: boolean;
+    tenantId: string;
+    purged_prefixes: number;
+    deleted_objects: number;
+    orphans: string[];
+    message?: string;
+  }> {
+    return this.request(`/v1/admin/tenants/${encodeURIComponent(tenantId)}/artifacts/orphans/purge`, {
+      method: 'POST',
+    });
+  }
+
+  async getModelCache(models?: string[]): Promise<ModelCacheListResponse> {
+    const qs =
+      models && models.length > 0 ? `?models=${encodeURIComponent(models.join(','))}` : '';
+    return this.request<ModelCacheListResponse>(`/v1/models/cache${qs}`);
+  }
+
+  async getModelCacheStatus(modelId: string): Promise<ModelDownloadStatus> {
+    return this.request<ModelDownloadStatus>(
+      `/v1/models/cache/status?model_id=${encodeURIComponent(modelId)}`
+    );
+  }
+
+  async ensureModelCached(modelId: string): Promise<ModelDownloadStatus> {
+    return this.request<ModelDownloadStatus>('/v1/models/cache/ensure', {
+      method: 'POST',
+      body: JSON.stringify({ model_id: modelId }),
+    });
+  }
+
+  async cancelModelCache(modelId: string): Promise<ModelDownloadStatus> {
+    return this.request<ModelDownloadStatus>('/v1/models/cache/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ model_id: modelId }),
+    });
   }
 }
 

@@ -5,9 +5,13 @@ import type {
   ModelPricingItem,
   PricingHistorySummary,
   PricingSyncAudit,
+  CuratedModelDefinition,
 } from '../../types';
 import { ModelComputeAdvisor } from './ModelComputeAdvisor';
 import { SyncTracesModal } from './SyncTracesModal';
+import type { SubmitJobPrefill } from '../jobs/submitJobHelpers';
+import { providerToRoutingPreference } from '../jobs/submitJobHelpers';
+import type { RankedOption } from './modelAdvisor';
 
 export const HARDWARE_BENCHMARK_THROUGHPUT: Record<
   string,
@@ -200,9 +204,10 @@ export function getGpuPerformance(item: GpuPricingItem) {
 
 interface FinOpsPricingViewProps {
   onNavigateToProviderStatus?: () => void;
+  onRunWithOption?: (prefill: SubmitJobPrefill) => void;
 }
 
-export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
+export function FinOpsPricingView({ onRunWithOption }: FinOpsPricingViewProps = {}) {
   const [gpuPricing, setGpuPricing] = useState<GpuPricingItem[]>([]);
   const [modelPricing, setModelPricing] = useState<ModelPricingItem[]>([]);
   const [historySummaries, setHistorySummaries] = useState<PricingHistorySummary[]>([]);
@@ -381,6 +386,22 @@ export function FinOpsPricingView({}: FinOpsPricingViewProps = {}) {
           modelPricing={modelPricing}
           baseTokensPerSec={(g) => getGpuPerformance(g).tokensPerSec}
           history={historySummaries}
+          onRunWithOption={
+            onRunWithOption
+              ? (opt: RankedOption, model: CuratedModelDefinition | null) => {
+                  onRunWithOption({
+                    modelId: model?.id,
+                    purpose: model?.purpose === 'all' ? undefined : (model?.purpose as SubmitJobPrefill['purpose']),
+                    gpuId: opt.gpu.id,
+                    provider: opt.gpu.provider,
+                    pricingModel: opt.gpu.pricingModel,
+                    hardwareSkuId: opt.gpu.hardwareSkuId,
+                    bidUsdPerHour: opt.gpu.normalizedHourlyUsd,
+                    routingPreference: providerToRoutingPreference(opt.gpu.provider),
+                  });
+                }
+              : undefined
+          }
         />
       )}
 

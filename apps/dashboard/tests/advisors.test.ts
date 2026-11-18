@@ -33,7 +33,9 @@ const gpu = (over: Partial<GpuPricingItem>): GpuPricingItem => ({
 });
 
 describe('Model advisor ranking & public benchmarks', () => {
-  const llama = CATALOG_MODELS[0];
+  // Prefer an 8B+ model so VRAM filters (8 GB card) stay meaningful; catalog[0] may be TinyLlama.
+  const llama =
+    CATALOG_MODELS.find((m) => m.id === 'meta-llama/Llama-3-8B-Instruct') ?? CATALOG_MODELS[0];
   const cons = { requireVpc: false, risk: 'any' as const };
 
   it('defines a public benchmark reference for every model in CATALOG_MODELS', () => {

@@ -2,6 +2,8 @@
  * Domain definitions for FinOps & Neocloud Pricing, GPU Availability & Token Factory Intelligence.
  */
 
+import { filterOptionsByModelCoverage } from './model-provider-coverage.js';
+
 export type GpuPricingModel = 'on_demand' | 'spot_bid' | 'preemptible' | 'serverless';
 
 export interface GpuPricingSnapshot {
@@ -149,60 +151,23 @@ export function computeModelCloudRecommendations(params: {
   const promptTokens = params.promptTokens ?? 128;
   const maxNewTokens = params.maxNewTokens ?? 64;
 
+  const mid = modelId.toLowerCase();
   const isMedia =
-    modelId.includes('flux') ||
-    modelId.includes('stable-diffusion') ||
-    modelId.includes('whisper') ||
-    modelId.includes('fal-ai') ||
-    modelId.includes('runwayml');
+    mid.includes('flux') ||
+    mid.includes('stable-diffusion') ||
+    mid.includes('sd-turbo') ||
+    mid.includes('whisper') ||
+    mid.includes('wan') ||
+    mid.includes('cogvideo') ||
+    mid.includes('fal-ai') ||
+    mid.includes('runwayml');
 
   const options: CloudOption[] = [];
 
-  if (isMedia) {
-    // fal.ai pre-hosted media endpoint
-    const falCostUsd = modelId.includes('whisper') ? 0.0011 : 0.003;
-    options.push({
-      id: 'fal-media-fast',
-      category: 'fastest',
-      provider: 'fal_ai',
-      displayName: 'fal.ai Media Engine',
-      hardwareOrExecution: 'Distributed Tensor Core Pipeline',
-      vramGb: 24,
-      pricingModel: 'pay_per_call',
-      forecastedExecutionMs: 620,
-      forecastedCostUsd: falCostUsd,
-      forecastedCostMicrocents: Math.round(falCostUsd * 100_000_000),
-      tokensPerSec: 0,
-      obtainabilityLabel: 'High',
-      interruptionRiskTier: 'guaranteed',
-      finopsInsight: 'Optimized media pipeline with zero cold start and instant generation.',
-      routingPreference: 'cloud',
-      coldStartEstimatedMs: 0,
-    });
-
-    // Runware ultra-low cost diffusion
-    const runwareCostUsd = 0.0018;
-    options.push({
-      id: 'runware-media-cheap',
-      category: 'cheapest',
-      provider: 'runware',
-      displayName: 'Runware Fast Diffusion',
-      hardwareOrExecution: 'Shared Serverless Engine',
-      vramGb: 24,
-      pricingModel: 'pay_per_call',
-      forecastedExecutionMs: 950,
-      forecastedCostUsd: runwareCostUsd,
-      forecastedCostMicrocents: Math.round(runwareCostUsd * 100_000_000),
-      tokensPerSec: 0,
-      obtainabilityLabel: 'High',
-      interruptionRiskTier: 'guaranteed',
-      finopsInsight: 'Lowest unit cost per megapixel ($0.0018/Mpx) with $0 commitment.',
-      routingPreference: 'cost_optimized',
-      coldStartEstimatedMs: 150,
-    });
-  } else {
+  // GPU BYO + local first so the same Hub model_id can be compared across providers.
+  {
     // 1. Local PyTorch (if model fits 16GB)
-    const fitsLocal = !modelId.includes('70B') && !modelId.includes('405B');
+    const fitsLocal = !modelId.includes('70B') && !modelId.includes('405B') && !mid.includes('claude');
     if (fitsLocal) {
       const localTokSec = 105;
       const execMs = Math.round((maxNewTokens / localTokSec) * 1000 + 40);
@@ -222,7 +187,8 @@ export function computeModelCloudRecommendations(params: {
         obtainabilityLabel: 'High',
         interruptionRiskTier: 'guaranteed',
         finopsInsight: 'Zero cloud cost, zero egress, sub-second latency on local PyTorch worker.',
-        routingPreference: 'local_first',
+        // Concrete dispatch pref — must match RoutingInferenceExecutor (not a policy label).
+        routingPreference: 'local/gpu',
         coldStartEstimatedMs: 0,
       });
     }
@@ -249,7 +215,8 @@ export function computeModelCloudRecommendations(params: {
       obtainabilityLabel: 'High',
       interruptionRiskTier: '<5%',
       finopsInsight: `Ultra-fast 180 tok/s execution (${h100ExecMs}ms) minimizes scale-to-zero runtime, costing just $${h100CostUsd.toFixed(5)} per job.`,
-      routingPreference: 'low_latency',
+      // Must be cloud/runpod — low_latency is a policy label the worker does not dispatch on.
+      routingPreference: 'cloud/runpod',
       coldStartEstimatedMs: 80,
     });
 
@@ -331,37 +298,120 @@ export function computeModelCloudRecommendations(params: {
       coldStartEstimatedMs: 250,
     });
 
-    // 6. JarvisLabs Token Factory (MaaS) - Pay strictly per token
-    const tokenFactoryInputRate = 0.07; // $0.07 / 1M
-    const tokenFactoryOutputRate = 0.49; // $0.49 / 1M
-    const tokenFactoryCostUsd = Number(
-      ((promptTokens * tokenFactoryInputRate + maxNewTokens * tokenFactoryOutputRate) / 1_000_000).toFixed(6)
-    );
-    const tfTokSec = 85;
-    const tfExecMs = Math.round((maxNewTokens / tfTokSec) * 1000 + 150);
+    // JarvisLabs GPU pod (BYO Hub weights) — not Token Factory MaaS (different model catalog).
+    const jlTokSec = 95;
+    const jlExecSec = maxNewTokens / jlTokSec + 0.15;
+    const jlHourly = 0.55;
+    const jlCostUsd = Number(((jlHourly / 3600) * jlExecSec).toFixed(6));
+    const jlExecMs = Math.round(jlExecSec * 1000);
     options.push({
-      id: 'jarvislabs-token-factory',
-      category: 'cheapest',
+      id: 'jarvislabs-gpu-pod',
+      category: 'balanced',
       provider: 'jarvislabs',
-      displayName: 'JarvisLabs Token Factory',
-      hardwareOrExecution: 'Token Factory Serverless MaaS',
-      pricingModel: 'token_factory',
-      forecastedExecutionMs: tfExecMs,
-      forecastedCostUsd: tokenFactoryCostUsd,
-      forecastedCostMicrocents: Math.max(1, Math.round(tokenFactoryCostUsd * 100_000_000)),
-      tokensPerSec: tfTokSec,
+      displayName: 'JarvisLabs GPU Pod',
+      hardwareOrExecution: 'RTX / A100 GPU Pod (BYO weights)',
+      vramGb: 24,
+      pricingModel: 'on_demand',
+      hourlyRateUsd: jlHourly,
+      forecastedExecutionMs: jlExecMs,
+      forecastedCostUsd: jlCostUsd,
+      forecastedCostMicrocents: Math.round(jlCostUsd * 100_000_000),
+      tokensPerSec: jlTokSec,
       obtainabilityLabel: 'High',
       interruptionRiskTier: 'guaranteed',
-      finopsInsight: `Pure pay-per-token API ($0.07/1M in, $0.49/1M out). Zero instance provisioning overhead.`,
+      finopsInsight: 'BYO Hub checkpoint on a JarvisLabs GPU pod — same model_id as local.',
       routingPreference: 'cloud',
+      coldStartEstimatedMs: 180,
+    });
+  }
+
+  if (isMedia) {
+    const falCostUsd = mid.includes('whisper') ? 0.0011 : mid.includes('wan') ? 0.08 : 0.003;
+    options.push({
+      id: 'fal-media-fast',
+      category: 'fastest',
+      provider: 'fal',
+      displayName: 'fal.ai Media Engine',
+      hardwareOrExecution: 'Distributed Tensor Core Pipeline',
+      vramGb: 24,
+      pricingModel: 'pay_per_call',
+      forecastedExecutionMs: mid.includes('wan') ? 12000 : 620,
+      forecastedCostUsd: falCostUsd,
+      forecastedCostMicrocents: Math.round(falCostUsd * 100_000_000),
+      tokensPerSec: 0,
+      obtainabilityLabel: 'High',
+      interruptionRiskTier: 'guaranteed',
+      finopsInsight: 'Hosted media endpoint (exact Hub id when mapped; see model provider coverage).',
+      routingPreference: 'cloud',
+      coldStartEstimatedMs: 0,
+    });
+
+    if (!mid.includes('whisper') && !mid.includes('wan') && !mid.includes('clip')) {
+      const runwareCostUsd = 0.0018;
+      options.push({
+        id: 'runware-media-cheap',
+        category: 'cheapest',
+        provider: 'runware',
+        displayName: 'Runware Fast Diffusion',
+        hardwareOrExecution: 'Shared Serverless Engine',
+        vramGb: 24,
+        pricingModel: 'pay_per_call',
+        forecastedExecutionMs: 950,
+        forecastedCostUsd: runwareCostUsd,
+        forecastedCostMicrocents: Math.round(runwareCostUsd * 100_000_000),
+        tokensPerSec: 0,
+        obtainabilityLabel: 'High',
+        interruptionRiskTier: 'guaranteed',
+        finopsInsight: 'Lowest unit cost per megapixel ($0.0018/Mpx) with $0 commitment.',
+        routingPreference: 'cost_optimized',
+        coldStartEstimatedMs: 150,
+      });
+    }
+  }
+
+  if (mid.includes('claude') || mid.includes('anthropic')) {
+    options.push({
+      id: 'bedrock-claude-haiku',
+      category: 'recommended',
+      provider: 'bedrock',
+      displayName: 'AWS Bedrock Claude 3 Haiku',
+      hardwareOrExecution: 'Managed Bedrock endpoint',
+      pricingModel: 'pay_per_token',
+      forecastedExecutionMs: 420,
+      forecastedCostUsd: 0.0008,
+      forecastedCostMicrocents: 80000,
+      tokensPerSec: 120,
+      obtainabilityLabel: 'High',
+      interruptionRiskTier: 'guaranteed',
+      finopsInsight: 'Proprietary managed API — not available on local/GPU BYO.',
+      routingPreference: 'cloud/bedrock',
       coldStartEstimatedMs: 0,
     });
   }
 
+  const filtered = filterOptionsByModelCoverage(modelId, options);
+  if (filtered.length === 0) {
+    return {
+      ok: true,
+      modelId,
+      promptTokens,
+      maxNewTokens,
+      recommendations: {
+        cheapest: options[0],
+        fastest: options[0],
+        balanced: options[0],
+        recommended: options[0],
+      },
+      allOptions: options,
+      analysisNote:
+        'No provider coverage mapping for this model_id; showing unfiltered candidates. Add it to MODEL_PROVIDER_COVERAGE for strict compare.',
+    };
+  }
+
   // Detect FinOps Powerful GPU Win:
   // If an H100 or RTX 5090 option executed faster and resulted in lower or comparable cost to a slower L4
-  const h100Opt = options.find((o) => o.id === 'runpod-spot-h100');
-  const l4Opt = options.find((o) => o.id === 'baseten-serverless-l4');
+  const h100Opt = filtered.find((o) => o.id === 'runpod-spot-h100');
+  const l4Opt = filtered.find((o) => o.id === 'baseten-serverless-l4');
   if (h100Opt && l4Opt && h100Opt.forecastedCostUsd <= l4Opt.forecastedCostUsd * 1.15) {
     h100Opt.isPowerfulGpuFastExecutionWin = true;
     h100Opt.finopsInsight = `FinOps Win: Powerful H100 SXM5 executes ${Math.round(l4Opt.forecastedExecutionMs / h100Opt.forecastedExecutionMs)}x faster (${h100Opt.forecastedExecutionMs}ms vs ${l4Opt.forecastedExecutionMs}ms), yielding lower/equal per-second bill ($${h100Opt.forecastedCostUsd.toFixed(5)} vs $${l4Opt.forecastedCostUsd.toFixed(5)})!`;
@@ -369,15 +419,15 @@ export function computeModelCloudRecommendations(params: {
 
   // Determine Category Winners:
   // Fastest: lowest execution ms
-  const fastest = [...options].sort((a, b) => a.forecastedExecutionMs - b.forecastedExecutionMs)[0];
+  const fastest = [...filtered].sort((a, b) => a.forecastedExecutionMs - b.forecastedExecutionMs)[0];
 
   // Cheapest: lowest cost (excluding local 0 cost to find cloud cheapest if wanted, but keep local if available)
-  const cheapest = [...options].sort((a, b) => a.forecastedCostUsd - b.forecastedCostUsd)[0];
+  const cheapest = [...filtered].sort((a, b) => a.forecastedCostUsd - b.forecastedCostUsd)[0];
 
   // Balanced: score based on cost and execution time
-  const maxCost = Math.max(...options.map((o) => o.forecastedCostUsd)) || 0.001;
-  const maxMs = Math.max(...options.map((o) => o.forecastedExecutionMs)) || 1000;
-  const balanced = [...options].sort((a, b) => {
+  const maxCost = Math.max(...filtered.map((o) => o.forecastedCostUsd)) || 0.001;
+  const maxMs = Math.max(...filtered.map((o) => o.forecastedExecutionMs)) || 1000;
+  const balanced = [...filtered].sort((a, b) => {
     const scoreA = 0.5 * (a.forecastedCostUsd / maxCost) + 0.5 * (a.forecastedExecutionMs / maxMs);
     const scoreB = 0.5 * (b.forecastedCostUsd / maxCost) + 0.5 * (b.forecastedExecutionMs / maxMs);
     return scoreA - scoreB;
@@ -387,8 +437,8 @@ export function computeModelCloudRecommendations(params: {
   let recommended = balanced;
   if (h100Opt?.isPowerfulGpuFastExecutionWin) {
     recommended = h100Opt;
-  } else if (options.some((o) => o.id === 'local-pytorch')) {
-    recommended = options.find((o) => o.id === 'local-pytorch')!;
+  } else if (filtered.some((o) => o.id === 'local-pytorch')) {
+    recommended = filtered.find((o) => o.id === 'local-pytorch')!;
   }
 
   // Update categories for clarity
@@ -408,9 +458,9 @@ export function computeModelCloudRecommendations(params: {
       balanced,
       recommended,
     },
-    allOptions: options,
+    allOptions: filtered,
     analysisNote:
-      'Recommendations evaluate real-time hourly rates, scale-to-zero execution durations, and per-token rates. Running short jobs on high-throughput GPUs (H100/RTX 5090) often beats slower lower-tier GPUs on total billed cost.',
+      'Options limited to providers that can run this catalog model_id (local + configured GPU BYO / hosted). Same defaults can be compared across those providers.',
   };
 }
 

@@ -24,7 +24,7 @@ describe('Submit Job AUTO Routing & Proposal Match Badge', () => {
     obtainabilityLabel: 'High',
     interruptionRiskTier: 'guaranteed',
     finopsInsight: 'Zero cloud cost, zero egress, sub-second latency on local PyTorch worker.',
-    routingPreference: 'local_first',
+    routingPreference: 'local/gpu',
     coldStartEstimatedMs: 0,
   };
 
@@ -44,7 +44,7 @@ describe('Submit Job AUTO Routing & Proposal Match Badge', () => {
     obtainabilityLabel: 'High',
     interruptionRiskTier: '<5%',
     finopsInsight: 'Ultra-fast execution on H100.',
-    routingPreference: 'low_latency',
+    routingPreference: 'cloud/runpod',
     coldStartEstimatedMs: 80,
   };
 
@@ -62,7 +62,7 @@ describe('Submit Job AUTO Routing & Proposal Match Badge', () => {
     allOptions: [mockLocalOption, mockH100Option],
   };
 
-  it('resolves auto match option from recommendation payload', () => {
+  it('resolves auto match option from recommendation payload (local only)', () => {
     assert.equal(resolveAutoMatchOption(null), null);
 
     const match = resolveAutoMatchOption(mockRecommendationsResponse);
@@ -71,32 +71,38 @@ describe('Submit Job AUTO Routing & Proposal Match Badge', () => {
     assert.equal(match.displayName, 'Local PyTorch');
   });
 
-  it('formats advance proposal label in auto routing dropdown', () => {
-    assert.equal(
-      formatAutoDropdownLabel(null),
-      'auto (Deterministic Engine)'
-    );
+  it('falls back to local when FinOps recommended tip is a cloud SKU', () => {
+    const cloudRecommended: ModelCloudOptionsResponse = {
+      ...mockRecommendationsResponse,
+      recommendations: {
+        ...mockRecommendationsResponse.recommendations,
+        recommended: mockH100Option,
+      },
+    };
+    const match = resolveAutoMatchOption(cloudRecommended);
+    assert.ok(match);
+    assert.equal(match.id, 'local-pytorch');
+  });
+
+  it('formats auto label without implying cloud execution', () => {
+    assert.equal(formatAutoDropdownLabel(null), 'auto (local engine; device inferred)');
 
     assert.equal(
       formatAutoDropdownLabel(mockLocalOption),
-      'auto (Deterministic Engine → Proposal: Local PyTorch)'
+      'auto (local engine · FinOps tip: Local PyTorch)'
     );
 
+    // Even if a cloud tip is passed, wording must not read as "will execute on RunPod".
     assert.equal(
       formatAutoDropdownLabel(mockH100Option),
-      'auto (Deterministic Engine → Proposal: RunPod Spot H100 SXM5)'
+      'auto (local engine · FinOps tip: RunPod Spot H100 SXM5)'
     );
   });
 
-  it('identifies auto match card by key and proposal ID for badge display', () => {
-    // Key 'recommended' is always marked as auto match
-    assert.equal(isOptionAutoMatch('recommended', 'any-id', 'local-pytorch'), true);
-    assert.equal(isOptionAutoMatch('recommended', 'other-id', undefined), true);
-
-    // Matching proposal id is identified as auto match
+  it('identifies auto match card by proposal ID only (not every recommended key)', () => {
+    assert.equal(isOptionAutoMatch('recommended', 'local-pytorch', 'local-pytorch'), true);
+    assert.equal(isOptionAutoMatch('recommended', 'other-id', undefined), false);
     assert.equal(isOptionAutoMatch('cheapest', 'local-pytorch', 'local-pytorch'), true);
-
-    // Unmatched cards do not receive auto match badge
     assert.equal(isOptionAutoMatch('fastest', 'runpod-spot-h100', 'local-pytorch'), false);
     assert.equal(isOptionAutoMatch('balanced', 'vast-spot-rtx5090', 'local-pytorch'), false);
   });

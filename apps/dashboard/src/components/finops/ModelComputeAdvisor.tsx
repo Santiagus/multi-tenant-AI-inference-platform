@@ -30,6 +30,7 @@ interface ModelComputeAdvisorProps {
     model: CuratedModelDefinition | null,
     constraints?: AdvisorConstraints
   ) => void;
+  onRunWithOption?: (opt: RankedOption, model: CuratedModelDefinition | null) => void;
 }
 
 const SERIES_COLORS = [
@@ -95,7 +96,7 @@ function PickCard({ title, color, opt, note }: { title: string; color: string; o
   );
 }
 
-export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensPerSec, history, onModelChange }: ModelComputeAdvisorProps) {
+export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensPerSec, history, onModelChange, onRunWithOption }: ModelComputeAdvisorProps) {
   // A. Model Requirements
   const [weightType, setWeightType] = useState<ModelWeightType>('open');
   const [purpose, setPurpose] = useState<ModelPurpose>('all');
@@ -955,22 +956,45 @@ export function ModelComputeAdvisor({ gpuPricing, modelPricing = [], baseTokensP
                   </div>
                 </td>
                 <td style={td}>
-                  <button
-                    onClick={() => setShowRouting(true)}
-                    style={{
-                      backgroundColor: '#1e293b',
-                      color: '#a5b4fc',
-                      border: '1px solid #4338ca',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Simulate Route
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {onRunWithOption && (
+                      <button
+                        type="button"
+                        data-testid="run-with-option"
+                        onClick={() => onRunWithOption(r.opt, model ?? null)}
+                        style={{
+                          backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                          color: '#34d399',
+                          border: '1px solid #059669',
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Run with this option
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowRouting(true)}
+                      style={{
+                        backgroundColor: '#1e293b',
+                        color: '#a5b4fc',
+                        border: '1px solid #4338ca',
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Simulate Route
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

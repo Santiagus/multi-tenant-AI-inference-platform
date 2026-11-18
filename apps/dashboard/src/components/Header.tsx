@@ -5,8 +5,9 @@ interface HeaderProps {
   onTenantChange: (tenant: string) => void;
   apiHealthy?: boolean;
   stage?: string;
-  autoRefresh: boolean;
-  onAutoRefreshToggle: () => void;
+  /** Dashboard list refresh cadence in seconds; 0 disables auto-refresh. */
+  autoRefreshSeconds: number;
+  onAutoRefreshSecondsChange: (seconds: number) => void;
   onManualRefresh: () => void;
   isRefreshing: boolean;
   onPurgeTenantData?: () => Promise<void>;
@@ -23,6 +24,10 @@ interface HeaderProps {
   workerFeedback?: string | null;
   onToggleShowcase?: (action: 'seed' | 'purge') => Promise<void>;
   isTogglingShowcase?: boolean;
+  /** MOCK_PROVIDERS gate from /healthz (true = simulated providers/worker). */
+  mockProviders?: boolean;
+  onToggleMockProviders?: (enabled: boolean) => Promise<void>;
+  isTogglingMockProviders?: boolean;
 }
 
 function getStageBadgeStyle(stage = 'LOCAL') {
@@ -88,21 +93,76 @@ function serviceLinkStyle(color: string, bg: string, border: string): CSSPropert
   };
 }
 
+/** Local-dev tenant catalog: value shown in the selector + purpose for UI tooltips. */
+export const TENANT_OPTIONS = [
+  {
+    value: 'ALL',
+    label: 'All Tenants',
+    purpose:
+      'Cross-tenant overview. Lists jobs from every tenant in one view — use when checking isolation or showcase coverage across tenants.',
+  },
+  {
+    value: 'tenant-default',
+    label: 'tenant-default',
+    purpose:
+      'Primary local-dev tenant. API and dashboard default (x-tenant-id). Use for everyday feature work and real job submissions.',
+  },
+  {
+    value: 'tenant-demo',
+    label: 'tenant-demo (Showcase / All Possibilities)',
+    purpose:
+      'Showcase / painted dataset tenant. Seed via “Seed Showcase Data” for all statuses, engines, modalities, and placements. Avoid mixing real jobs here.',
+  },
+  {
+    value: 'tenant-dev',
+    label: 'tenant-dev (Development / Sandbox)',
+    purpose:
+      'Throwaway sandbox. Experiment freely; local/dev purge clears jobs and test data for this tenant only.',
+  },
+  {
+    value: 'tenant-acme',
+    label: 'tenant-acme',
+    purpose:
+      'Sample multi-tenant peer (Acme). Sparse cross-tenant fixtures from showcase seed — use to verify isolation against tenant-default.',
+  },
+  {
+    value: 'tenant-finops',
+    label: 'tenant-finops',
+    purpose:
+      'FinOps / cost-attribution sample tenant. Sparse showcase rows for pricing, metering, and economics views.',
+  },
+  {
+    value: 'tenant-enterprise',
+    label: 'tenant-enterprise',
+    purpose:
+      'Enterprise-policy sample tenant. Sparse showcase rows for stricter ABAC / quota-style demos.',
+  },
+] as const;
+
+export function getTenantPurpose(tenantId: string): string {
+  return TENANT_OPTIONS.find((t) => t.value === tenantId)?.purpose ?? `Tenant scope: ${tenantId}`;
+}
+
 export function Header({
   tenantId,
   onTenantChange,
   stage = 'LOCAL',
-  autoRefresh,
-  onAutoRefreshToggle,
+  autoRefreshSeconds,
+  onAutoRefreshSecondsChange,
   onManualRefresh,
   isRefreshing,
   onPurgeTenantData,
   isPurgingTenant = false,
   onSeedShowcaseData,
   isSeedingShowcase = false,
+  mockProviders = true,
+  onToggleMockProviders,
+  isTogglingMockProviders = false,
 }: HeaderProps) {
   const stageStyle = getStageBadgeStyle(stage);
   const isLocalOrDev = stage.toUpperCase().includes('LOCAL') || stage.toUpperCase().includes('DEV');
+  const mockProvidersTip =
+    'MOCK_PROVIDERS: when ON, the API simulates providers and local workers (no cloud spend, no PyTorch forward pass). When OFF, live local/cloud inference is allowed — the API image must already include Python/CUDA; this toggle only opens the gate.';
 
   return (
     <header
@@ -156,8 +216,48 @@ export function Header({
           </div>
         </div>
 
-        {/* Top Right: Stage info (just Stage: <STAGE>) */}
+        {/* Top Right: MOCK_PROVIDERS toggle (left of stage) + Stage badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            type="button"
+            data-testid="mock-providers-toggle"
+            title={mockProvidersTip}
+            aria-pressed={mockProviders}
+            aria-label={mockProviders ? 'MOCK_PROVIDERS on' : 'MOCK_PROVIDERS off'}
+            disabled={!onToggleMockProviders || isTogglingMockProviders}
+            onClick={() => {
+              void onToggleMockProviders?.(!mockProviders);
+            }}
+            style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              backgroundColor: mockProviders ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+              color: mockProviders ? '#fbbf24' : '#34d399',
+              border: `1px solid ${mockProviders ? 'rgba(245, 158, 11, 0.45)' : 'rgba(16, 185, 129, 0.45)'}`,
+              padding: '4px 10px',
+              borderRadius: '6px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              whiteSpace: 'nowrap',
+              letterSpacing: '0.04em',
+              cursor: onToggleMockProviders && !isTogglingMockProviders ? 'pointer' : 'default',
+              opacity: isTogglingMockProviders ? 0.7 : 1,
+            }}
+          >
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: mockProviders ? '#fbbf24' : '#34d399',
+                boxShadow: mockProviders
+                  ? '0 0 0 2px rgba(245, 158, 11, 0.25)'
+                  : '0 0 0 2px rgba(16, 185, 129, 0.25)',
+              }}
+            />
+            <span>MOCK_PROVIDERS: {mockProviders ? 'ON' : 'OFF'}</span>
+          </button>
           <div
             data-testid="stage-badge"
             title={`Active Deployment Stage: ${stageStyle.label}`}
@@ -197,14 +297,22 @@ export function Header({
       >
         {/* Left: Tenant Dropdown, Refresh Controls & Debug Purge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            title={getTenantPurpose(tenantId)}
+          >
+            <span
+              style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}
+              title={getTenantPurpose(tenantId)}
+            >
               Tenant:
             </span>
             <select
               data-testid="tenant-select"
               value={tenantId}
               onChange={(e) => onTenantChange(e.target.value)}
+              title={getTenantPurpose(tenantId)}
+              aria-label={`Tenant: ${tenantId}. ${getTenantPurpose(tenantId)}`}
               style={{
                 backgroundColor: '#1e293b',
                 color: '#f8fafc',
@@ -214,38 +322,58 @@ export function Header({
                 fontSize: '12px',
                 fontWeight: 600,
                 outline: 'none',
-                cursor: 'pointer',
+                cursor: 'help',
               }}
             >
-              <option value="ALL">All Tenants</option>
-              <option value="tenant-default">tenant-default</option>
-              <option value="tenant-demo">tenant-demo (Showcase / All Possibilities)</option>
-              <option value="tenant-dev">tenant-dev (Development / Sandbox)</option>
-              <option value="tenant-acme">tenant-acme</option>
-              <option value="tenant-finops">tenant-finops</option>
-              <option value="tenant-enterprise">tenant-enterprise</option>
+              {TENANT_OPTIONS.map((tenant) => (
+                <option key={tenant.value} value={tenant.value} title={tenant.purpose}>
+                  {tenant.label}
+                </option>
+              ))}
             </select>
           </div>
 
-          {/* Auto Refresh & Force Refresh Buttons */}
+          {/* Auto Refresh cadence & Force Refresh */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button
-              onClick={onAutoRefreshToggle}
-              title="Auto-refresh interval set to 60s optimal for real-time spot auctions (Vast 1m, RunPod 2m)"
+            <label
+              title="Dashboard auto-refresh cadence. Use 5s/15s while developing; 60s suits spot auction polls."
               style={{
-                backgroundColor: autoRefresh ? 'rgba(99, 102, 241, 0.2)' : '#1e293b',
-                color: autoRefresh ? '#a5b4fc' : '#94a3b8',
-                border: `1px solid ${autoRefresh ? '#6366f1' : '#334155'}`,
-                padding: '5px 10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: autoRefreshSeconds > 0 ? 'rgba(99, 102, 241, 0.2)' : '#1e293b',
+                color: autoRefreshSeconds > 0 ? '#a5b4fc' : '#94a3b8',
+                border: `1px solid ${autoRefreshSeconds > 0 ? '#6366f1' : '#334155'}`,
+                padding: '4px 8px',
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 600,
-                cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
-              {autoRefresh ? 'Auto 60s ON' : 'Auto OFF'}
-            </button>
+              Auto
+              <select
+                data-testid="auto-refresh-seconds"
+                value={autoRefreshSeconds}
+                onChange={(e) => onAutoRefreshSecondsChange(Number(e.target.value))}
+                style={{
+                  backgroundColor: '#0f172a',
+                  color: '#e2e8f0',
+                  border: '1px solid #334155',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '2px 4px',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value={0}>OFF</option>
+                <option value={5}>5s</option>
+                <option value={15}>15s</option>
+                <option value={30}>30s</option>
+                <option value={60}>60s</option>
+              </select>
+            </label>
             <button
               onClick={onManualRefresh}
               disabled={isRefreshing}
@@ -294,13 +422,18 @@ export function Header({
             </button>
           )}
 
-          {/* Debug Utility Button: Remove all tenant data for tenant-dev in local/dev */}
-          {isLocalOrDev && tenantId === 'tenant-dev' && onPurgeTenantData && (
+          {/* Local/dev: wipe all jobs + cascaded S3 outputs for the selected concrete tenant */}
+          {isLocalOrDev && tenantId !== 'ALL' && onPurgeTenantData && (
             <button
               data-testid="debug-purge-tenant-data"
-              onClick={onPurgeTenantData}
+              onClick={() => {
+                const ok = window.confirm(
+                  `Purge ALL jobs and output artifacts for ${tenantId}?\n\nThis cannot be undone. Showcase painted rows can be restored via Seed Showcase Data.`
+                );
+                if (ok) void onPurgeTenantData();
+              }}
               disabled={isPurgingTenant}
-              title="Debug Utility: Purge all jobs and test data for tenant-dev (only available for local/dev)"
+              title={`Purge all jobs and S3 output artifacts for ${tenantId} (local/dev only). ${getTenantPurpose(tenantId)}`}
               style={{
                 backgroundColor: 'rgba(239, 68, 68, 0.15)',
                 color: '#f87171',
@@ -317,7 +450,7 @@ export function Header({
               }}
             >
               <span>🗑️</span>
-              <span>{isPurgingTenant ? 'Purging dev data...' : 'Purge Tenant Data'}</span>
+              <span>{isPurgingTenant ? 'Purging…' : 'Purge Tenant Data'}</span>
             </button>
           )}
         </div>
