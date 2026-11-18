@@ -29,6 +29,8 @@ if command -v nvidia-ctk >/dev/null 2>&1 && docker info 2>/dev/null | grep -qi n
   exit 0
 fi
 
+# Host os-release is only available at install time on the Compose/WSL host.
+# shellcheck source=/dev/null
 . /etc/os-release
 case "${ID:-}" in
   debian|ubuntu) ;;
