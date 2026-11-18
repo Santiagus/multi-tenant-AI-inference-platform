@@ -25,7 +25,7 @@
 # Runtime inference gates (api.environment — hardcoded so .env cannot silently mock):
 #   MOCK_PROVIDERS=0           live local/cloud paths (dashboard can still flip mock)
 #   FORCE_REAL_INFERENCE=1     require Python/PyTorch worker (needs torch in the image)
-#   WORKER_ENABLED=false       drain queue via POST /v1/worker/process-next (or dashboard)
+#   WORKER_ENABLED=true        background poller drains SQS automatically (recommended for local UI jobs)
 services:
   postgres:
     image: postgres:16-alpine
@@ -130,7 +130,7 @@ services:
       # See file header for MOCK_PROVIDERS / FORCE_REAL_INFERENCE / WORKER_ENABLED.
       MOCK_PROVIDERS: "0"
       FORCE_REAL_INFERENCE: "1"
-      WORKER_ENABLED: "false"
+      WORKER_ENABLED: "true"
       # Consumed by the NVIDIA Container Toolkit when api.deploy reserves a GPU.
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
