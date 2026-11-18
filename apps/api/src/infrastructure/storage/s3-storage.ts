@@ -4,6 +4,8 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { IStorageClient } from './storage-client.js';
@@ -122,5 +124,49 @@ export class S3StorageClient implements IStorageClient {
     } catch {
       return false;
     }
+  }
+
+  async listKeysByPrefix(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const response = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
+      for (const obj of response.Contents ?? []) {
+        if (obj.Key) {
+          keys.push(obj.Key);
+        }
+      }
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys;
+  }
+
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const keys = await this.listKeysByPrefix(prefix);
+    if (keys.length === 0) {
+      return 0;
+    }
+    let deleted = 0;
+    // S3 DeleteObjects accepts at most 1000 keys per request.
+    for (let i = 0; i < keys.length; i += 1000) {
+      const chunk = keys.slice(i, i + 1000);
+      const response = await this.client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket,
+          Delete: {
+            Objects: chunk.map((Key) => ({ Key })),
+            Quiet: true,
+          },
+        })
+      );
+      deleted += chunk.length - (response.Errors?.length ?? 0);
+    }
+    return deleted;
   }
 }

@@ -2,6 +2,14 @@ import type { FastifyPluginAsync } from 'fastify';
 import { runShowcaseSeed } from '../infrastructure/db/seeds/showcase-seed.js';
 import { buildShowcaseJobTemplates } from '../infrastructure/db/seeds/showcase-coverage.js';
 import type { IQueueClient } from '../infrastructure/queue/queue-client.js';
+import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
+import type { IJobRepository } from '../infrastructure/db/job-repository.js';
+import {
+  deleteJobArtifactPrefixes,
+  findOrphanOutputPrefixes,
+  purgeOrphanOutputPrefixes,
+} from '../application/artifact-hygiene.js';
+import { ValidationError } from '../domain/errors.js';
 
 export interface ShowcaseRoutesOptions {
   db: {
@@ -12,6 +20,26 @@ export interface ShowcaseRoutesOptions {
   getDataSource: () => 'real' | 'mock';
   setDataSource: (mode: 'real' | 'mock') => void;
   queueClient?: IQueueClient;
+  storageClient?: IStorageClient;
+  jobRepo?: IJobRepository;
+}
+
+function hasScopedFilter(body: {
+  tenant_id?: string;
+  provider?: string;
+  status?: string;
+  model_id?: string;
+  search?: string;
+}): boolean {
+  const concreteTenant =
+    body.tenant_id && body.tenant_id !== 'ALL' && body.tenant_id !== 'all' && body.tenant_id !== '*';
+  return Boolean(
+    concreteTenant ||
+      (body.provider && body.provider !== 'ALL') ||
+      (body.status && body.status !== 'ALL') ||
+      (body.model_id && body.model_id !== 'ALL') ||
+      body.search?.trim()
+  );
 }
 
 export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (fastify, options) => {
@@ -146,7 +174,8 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
       schema: {
         tags: ['Health'],
         summary: 'Purge Tenant Jobs (Local/Dev Debug Only)',
-        description: 'Deletes all jobs for the specified tenant. Used for local debugging and tenant-dev resetting.',
+        description:
+          'Deletes all jobs for the specified tenant and cascades S3 output prefixes under tenants/{tenantId}/outputs/.',
         params: {
           type: 'object',
           properties: {
@@ -158,9 +187,17 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
     },
     async (req, reply) => {
       const { tenantId } = req.params;
-      let deletedCount = 0;
+      if (tenantId === 'ALL' || tenantId === 'all' || tenantId === '*') {
+        throw new ValidationError('Purge requires a concrete tenant id (not ALL).');
+      }
 
-      if (typeof options.db.query === 'function') {
+      let deletedCount = 0;
+      let deletedObjects = 0;
+      const jobs = options.jobRepo ? await options.jobRepo.findMatching({ tenantId }) : [];
+
+      if (options.jobRepo) {
+        deletedCount = await options.jobRepo.deleteByIds(jobs.map((j) => j.id));
+      } else if (typeof options.db.query === 'function') {
         try {
           const res = await options.db.query('DELETE FROM jobs WHERE tenant_id = $1 RETURNING id', [tenantId]);
           deletedCount = res.rowCount ?? (Array.isArray(res.rows) ? res.rows.length : 0);
@@ -169,11 +206,186 @@ export const showcaseRoutes: FastifyPluginAsync<ShowcaseRoutesOptions> = async (
         }
       }
 
+      if (options.storageClient) {
+        if (jobs.length > 0) {
+          deletedObjects += await deleteJobArtifactPrefixes(options.storageClient, jobs);
+        }
+        // Clear any remaining output folders for the tenant (orphans included).
+        deletedObjects += await options.storageClient.deleteByPrefix(`tenants/${tenantId}/outputs/`);
+      }
+
       return reply.status(200).send({
         ok: true,
         tenantId,
         deletedCount,
+        deletedObjects,
         message: `Purged all data for tenant ${tenantId}.`,
+      });
+    }
+  );
+
+  fastify.post<{
+    Body: {
+      tenant_id?: string;
+      provider?: string;
+      status?: string;
+      model_id?: string;
+      search?: string;
+      job_ids?: string[];
+      confirm_cross_tenant?: boolean;
+    };
+  }>(
+    '/v1/admin/jobs/delete-matching',
+    {
+      schema: {
+        tags: ['Health'],
+        summary: 'Delete Jobs Matching Filters (Local/Dev)',
+        description:
+          'Hard-deletes jobs matching tenant/provider/status/model/search filters (or an explicit job_ids list from the dashboard filtered view) and cascades related S3 output prefixes. Requires at least one concrete filter, job_ids, or confirm_cross_tenant for ALL.',
+        body: {
+          type: 'object',
+          properties: {
+            tenant_id: { type: 'string' },
+            provider: { type: 'string' },
+            status: { type: 'string' },
+            model_id: { type: 'string' },
+            search: { type: 'string' },
+            job_ids: { type: 'array', items: { type: 'string' } },
+            confirm_cross_tenant: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      if (!options.jobRepo) {
+        throw new ValidationError('Job repository unavailable for delete-matching.');
+      }
+      const body = req.body ?? {};
+      const explicitIds = Array.isArray(body.job_ids)
+        ? body.job_ids.filter((id) => typeof id === 'string' && id.length > 0)
+        : [];
+      const scoped = hasScopedFilter(body) || explicitIds.length > 0;
+      if (!scoped && !body.confirm_cross_tenant) {
+        throw new ValidationError(
+          'Refusing unscoped delete. Pass a concrete tenant_id / provider / status / model_id / search / job_ids, or confirm_cross_tenant=true.'
+        );
+      }
+
+      let matches =
+        explicitIds.length > 0
+          ? (await options.jobRepo.findMatching({ tenantId: body.tenant_id ?? 'ALL' })).filter((j) =>
+              explicitIds.includes(j.id)
+            )
+          : await options.jobRepo.findMatching({
+              tenantId: body.tenant_id,
+              provider: body.provider,
+              status: body.status,
+              modelId: body.model_id,
+              search: body.search,
+            });
+
+      // When job_ids are provided with a concrete tenant, enforce tenant boundary.
+      if (
+        explicitIds.length > 0 &&
+        body.tenant_id &&
+        body.tenant_id !== 'ALL' &&
+        body.tenant_id !== 'all' &&
+        body.tenant_id !== '*'
+      ) {
+        matches = matches.filter((j) => j.tenantId === body.tenant_id);
+      }
+
+      const deletedJobs = await options.jobRepo.deleteByIds(matches.map((j) => j.id));
+      let deletedObjects = 0;
+      if (options.storageClient && matches.length > 0) {
+        deletedObjects = await deleteJobArtifactPrefixes(options.storageClient, matches);
+      }
+
+      return reply.status(200).send({
+        ok: true,
+        deleted_jobs: deletedJobs,
+        deleted_objects: deletedObjects,
+        filters: {
+          tenant_id: body.tenant_id ?? null,
+          provider: body.provider ?? null,
+          status: body.status ?? null,
+          model_id: body.model_id ?? null,
+          search: body.search ?? null,
+          job_ids_count: explicitIds.length > 0 ? String(explicitIds.length) : null,
+        },
+        message: `Deleted ${deletedJobs} job(s) and ${deletedObjects} artifact object(s).`,
+      });
+    }
+  );
+
+  fastify.get<{ Params: { tenantId: string } }>(
+    '/v1/admin/tenants/:tenantId/artifacts/orphans',
+    {
+      schema: {
+        tags: ['Health'],
+        summary: 'List Orphan Artifact Prefixes (Local/Dev)',
+        description:
+          'Lists tenants/{tenantId}/outputs/{jobId}/ prefixes whose job id is not present in the jobs table.',
+        params: {
+          type: 'object',
+          properties: { tenantId: { type: 'string' } },
+          required: ['tenantId'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const { tenantId } = req.params;
+      if (tenantId === 'ALL' || tenantId === 'all' || tenantId === '*') {
+        throw new ValidationError('Orphan scan requires a concrete tenant id (not ALL).');
+      }
+      if (!options.storageClient) {
+        return reply.status(200).send({ ok: true, tenantId, orphans: [], count: 0 });
+      }
+
+      const knownIds = options.jobRepo ? await options.jobRepo.listJobIds(tenantId) : [];
+      const orphans = await findOrphanOutputPrefixes(options.storageClient, tenantId, knownIds);
+      return reply.status(200).send({
+        ok: true,
+        tenantId,
+        orphans,
+        count: orphans.length,
+      });
+    }
+  );
+
+  fastify.post<{ Params: { tenantId: string } }>(
+    '/v1/admin/tenants/:tenantId/artifacts/orphans/purge',
+    {
+      schema: {
+        tags: ['Health'],
+        summary: 'Purge Orphan Artifact Prefixes (Local/Dev)',
+        description: 'Deletes S3 output prefixes that no longer have a matching job row.',
+        params: {
+          type: 'object',
+          properties: { tenantId: { type: 'string' } },
+          required: ['tenantId'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const { tenantId } = req.params;
+      if (tenantId === 'ALL' || tenantId === 'all' || tenantId === '*') {
+        throw new ValidationError('Orphan purge requires a concrete tenant id (not ALL).');
+      }
+      if (!options.storageClient) {
+        return reply.status(200).send({ ok: true, tenantId, deleted_objects: 0, purged_prefixes: 0 });
+      }
+
+      const knownIds = options.jobRepo ? await options.jobRepo.listJobIds(tenantId) : [];
+      const orphans = await findOrphanOutputPrefixes(options.storageClient, tenantId, knownIds);
+      const deletedObjects = await purgeOrphanOutputPrefixes(options.storageClient, orphans);
+      return reply.status(200).send({
+        ok: true,
+        tenantId,
+        purged_prefixes: orphans.length,
+        deleted_objects: deletedObjects,
+        orphans,
+        message: `Purged ${orphans.length} orphan prefix(es), ${deletedObjects} object(s).`,
       });
     }
   );

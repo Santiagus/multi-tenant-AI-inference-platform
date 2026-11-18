@@ -36,5 +36,21 @@ describe('Storage Abstraction', () => {
     storage.setHealthy(false);
     assert.equal(await storage.isHealthy(), false);
   });
+
+  test('lists and deletes keys by prefix', async () => {
+    const storage = new InMemoryStorageClient();
+    await storage.putObject('tenants/t1/outputs/job-a/result.json', '{}');
+    await storage.putObject('tenants/t1/outputs/job-a/output.png', 'img');
+    await storage.putObject('tenants/t1/outputs/job-b/result.json', '{}');
+    await storage.putObject('tenants/t2/outputs/job-c/result.json', '{}');
+
+    const listed = await storage.listKeysByPrefix('tenants/t1/outputs/');
+    assert.equal(listed.length, 3);
+
+    const deleted = await storage.deleteByPrefix('tenants/t1/outputs/job-a/');
+    assert.equal(deleted, 2);
+    assert.equal((await storage.listKeysByPrefix('tenants/t1/outputs/')).length, 1);
+    assert.ok(await storage.getObject('tenants/t2/outputs/job-c/result.json'));
+  });
 });
 
