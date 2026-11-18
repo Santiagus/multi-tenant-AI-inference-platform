@@ -29,6 +29,16 @@ export interface UpdateJobOptions {
   startedAt?: Date | null;
   completedAt?: Date | null;
   expiresAt?: Date | null;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: Date | null;
+}
+
+export interface JobDeleteMatchFilters {
+  tenantId?: string;
+  provider?: string;
+  status?: JobStatusType | string;
+  modelId?: string;
+  search?: string;
 }
 
 export interface IJobRepository {
@@ -38,6 +48,17 @@ export interface IJobRepository {
   update(tenantId: string, id: string, updates: UpdateJobOptions): Promise<Job | null>;
   list(tenantId: string, options?: { limit?: number; offset?: number; status?: JobStatusType }): Promise<Job[]>;
   expireStaleJobs(options?: { defaultExpirationSeconds?: number }): Promise<Job[]>;
+  /**
+   * PROCESSING jobs whose worker lease is missing or expired (excludes showcase seed ids).
+   * Does not mutate rows — caller decides retry vs fail.
+   */
+  findOrphanedProcessingJobs(): Promise<Job[]>;
+  /** List job ids for a tenant (or all tenants when tenantId is ALL/*). */
+  listJobIds(tenantId: string): Promise<string[]>;
+  /** Find jobs matching admin purge filters (no pagination cap). */
+  findMatching(filters: JobDeleteMatchFilters): Promise<Job[]>;
+  /** Hard-delete jobs by id. Returns number of deleted rows. */
+  deleteByIds(ids: string[]): Promise<number>;
 }
 
 interface JobRow {
@@ -70,6 +91,8 @@ interface JobRow {
   started_at: Date | null;
   completed_at: Date | null;
   expires_at?: Date | null;
+  lease_owner?: string | null;
+  lease_expires_at?: Date | null;
   updated_at: Date;
 }
 
@@ -104,6 +127,8 @@ function mapRowToJob(row: JobRow): Job {
     startedAt: row.started_at ? new Date(row.started_at) : null,
     completedAt: row.completed_at ? new Date(row.completed_at) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    leaseOwner: row.lease_owner ?? null,
+    leaseExpiresAt: row.lease_expires_at ? new Date(row.lease_expires_at) : null,
     updatedAt: new Date(row.updated_at),
   };
 }
@@ -248,6 +273,14 @@ export class PostgresJobRepository implements IJobRepository {
       setClauses.push(`expires_at = $${paramIndex++}`);
       values.push(updates.expiresAt);
     }
+    if (updates.leaseOwner !== undefined) {
+      setClauses.push(`lease_owner = $${paramIndex++}`);
+      values.push(updates.leaseOwner);
+    }
+    if (updates.leaseExpiresAt !== undefined) {
+      setClauses.push(`lease_expires_at = $${paramIndex++}`);
+      values.push(updates.leaseExpiresAt);
+    }
 
     let whereClause = 'WHERE tenant_id = $1 AND id = $2';
     if (updates.expectedCurrentStatuses && updates.expectedCurrentStatuses.length > 0) {
@@ -282,6 +315,8 @@ export class PostgresJobRepository implements IJobRepository {
           ELSE 'Job expired: exceeded queue expiration timeout'
         END,
         completed_at = NOW(),
+        lease_owner = NULL,
+        lease_expires_at = NULL,
         updated_at = NOW()
       WHERE status IN ('QUEUED', 'PROCESSING', 'RETRYING')
         AND (
@@ -292,6 +327,19 @@ export class PostgresJobRepository implements IJobRepository {
       RETURNING *;
     `;
     const res = await this.db.query<JobRow>(sql, [defaultExpSec]);
+    return res.rows.map(mapRowToJob);
+  }
+
+  async findOrphanedProcessingJobs(): Promise<Job[]> {
+    const sql = `
+      SELECT *
+      FROM jobs
+      WHERE status = 'PROCESSING'
+        AND id::text NOT LIKE '00000000-0000-4000-a000-%'
+        AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+      ORDER BY started_at ASC NULLS FIRST, created_at ASC
+    `;
+    const res = await this.db.query<JobRow>(sql);
     return res.rows.map(mapRowToJob);
   }
 
@@ -316,6 +364,64 @@ export class PostgresJobRepository implements IJobRepository {
 
     const res = await this.db.query<JobRow>(sql, params);
     return res.rows.map(mapRowToJob);
+  }
+
+  async listJobIds(tenantId: string): Promise<string[]> {
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    const sql = isAllTenants ? 'SELECT id FROM jobs' : 'SELECT id FROM jobs WHERE tenant_id = $1';
+    const res = await this.db.query<{ id: string }>(sql, isAllTenants ? [] : [tenantId]);
+    return res.rows.map((r) => r.id);
+  }
+
+  async findMatching(filters: JobDeleteMatchFilters): Promise<Job[]> {
+    const isAllTenants =
+      !filters.tenantId ||
+      filters.tenantId === 'ALL' ||
+      filters.tenantId === 'all' ||
+      filters.tenantId === '*';
+    let sql = isAllTenants ? 'SELECT * FROM jobs WHERE 1=1' : 'SELECT * FROM jobs WHERE tenant_id = $1';
+    const params: unknown[] = isAllTenants ? [] : [filters.tenantId];
+
+    if (filters.status && filters.status !== 'ALL') {
+      if (filters.status === 'IN_FLIGHT') {
+        sql += ` AND status = ANY($${params.length + 1}::text[])`;
+        params.push(['PROCESSING', 'RETRYING']);
+      } else if (filters.status === 'QUEUED') {
+        sql += ` AND status = ANY($${params.length + 1}::text[])`;
+        params.push(['QUEUED', 'SUBMITTED']);
+      } else {
+        sql += ` AND status = $${params.length + 1}`;
+        params.push(filters.status);
+      }
+    }
+    if (filters.provider && filters.provider !== 'ALL') {
+      sql += ` AND lower(coalesce(provider, '')) = lower($${params.length + 1})`;
+      params.push(filters.provider);
+    }
+    if (filters.modelId && filters.modelId !== 'ALL') {
+      sql += ` AND model_id = $${params.length + 1}`;
+      params.push(filters.modelId);
+    }
+    if (filters.search?.trim()) {
+      const q = `%${filters.search.trim().toLowerCase()}%`;
+      sql += ` AND (
+        lower(id::text) LIKE $${params.length + 1}
+        OR lower(model_id) LIKE $${params.length + 1}
+        OR lower(coalesce(provider, '')) LIKE $${params.length + 1}
+        OR lower(tenant_id) LIKE $${params.length + 1}
+      )`;
+      params.push(q);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+    const res = await this.db.query<JobRow>(sql, params);
+    return res.rows.map(mapRowToJob);
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const res = await this.db.query('DELETE FROM jobs WHERE id = ANY($1::uuid[]) RETURNING id', [ids]);
+    return res.rowCount ?? (Array.isArray(res.rows) ? res.rows.length : 0);
   }
 }
 
@@ -361,6 +467,8 @@ export class InMemoryJobRepository implements IJobRepository {
       startedAt: null,
       completedAt: null,
       expiresAt,
+      leaseOwner: null,
+      leaseExpiresAt: null,
       updatedAt: now,
     };
     this.jobs.set(job.id, job);
@@ -411,6 +519,8 @@ export class InMemoryJobRepository implements IJobRepository {
     if (updates.startedAt !== undefined) job.startedAt = updates.startedAt;
     if (updates.completedAt !== undefined) job.completedAt = updates.completedAt;
     if (updates.expiresAt !== undefined) job.expiresAt = updates.expiresAt;
+    if (updates.leaseOwner !== undefined) job.leaseOwner = updates.leaseOwner;
+    if (updates.leaseExpiresAt !== undefined) job.leaseExpiresAt = updates.leaseExpiresAt;
     job.updatedAt = new Date();
 
     this.jobs.set(id, job);
@@ -443,6 +553,8 @@ export class InMemoryJobRepository implements IJobRepository {
           job.errorCode = errorCode;
           job.errorMessage = errorMessage;
           job.completedAt = now;
+          job.leaseOwner = null;
+          job.leaseExpiresAt = null;
           job.updatedAt = now;
           job.progress = {
             phase: 'failed',
@@ -454,6 +566,23 @@ export class InMemoryJobRepository implements IJobRepository {
       }
     }
     return reaped;
+  }
+
+  async findOrphanedProcessingJobs(): Promise<Job[]> {
+    const now = new Date();
+    return Array.from(this.jobs.values())
+      .filter((job) => {
+        if (job.status !== JobStatus.PROCESSING) return false;
+        if (job.id.startsWith('00000000-0000-4000-a000-')) return false;
+        if (!job.leaseExpiresAt) return true;
+        return job.leaseExpiresAt.getTime() < now.getTime();
+      })
+      .sort((a, b) => {
+        const as = a.startedAt?.getTime() ?? a.createdAt.getTime();
+        const bs = b.startedAt?.getTime() ?? b.createdAt.getTime();
+        return as - bs;
+      })
+      .map((j) => ({ ...j }));
   }
 
   async list(
@@ -468,6 +597,54 @@ export class InMemoryJobRepository implements IJobRepository {
     const offset = options.offset ?? 0;
     const limit = options.limit ?? 20;
     return list.slice(offset, offset + limit).map((j) => ({ ...j }));
+  }
+
+  async listJobIds(tenantId: string): Promise<string[]> {
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    return Array.from(this.jobs.values())
+      .filter((j) => isAllTenants || j.tenantId === tenantId)
+      .map((j) => j.id);
+  }
+
+  async findMatching(filters: JobDeleteMatchFilters): Promise<Job[]> {
+    const isAllTenants =
+      !filters.tenantId ||
+      filters.tenantId === 'ALL' ||
+      filters.tenantId === 'all' ||
+      filters.tenantId === '*';
+    const search = filters.search?.trim().toLowerCase() ?? '';
+    const providerWanted = filters.provider && filters.provider !== 'ALL' ? filters.provider.toLowerCase() : null;
+    const modelWanted = filters.modelId && filters.modelId !== 'ALL' ? filters.modelId : null;
+    const statusWanted = filters.status && filters.status !== 'ALL' ? filters.status : null;
+
+    return Array.from(this.jobs.values())
+      .filter((j) => {
+        if (!isAllTenants && j.tenantId !== filters.tenantId) return false;
+        if (statusWanted === 'IN_FLIGHT') {
+          if (!['PROCESSING', 'RETRYING'].includes(j.status)) return false;
+        } else if (statusWanted === 'QUEUED') {
+          if (!['QUEUED', 'SUBMITTED'].includes(j.status)) return false;
+        } else if (statusWanted && j.status !== statusWanted) {
+          return false;
+        }
+        if (providerWanted && (j.provider ?? '').toLowerCase() !== providerWanted) return false;
+        if (modelWanted && j.modelId !== modelWanted) return false;
+        if (search) {
+          const hay = `${j.id} ${j.modelId} ${j.provider ?? ''} ${j.tenantId}`.toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((j) => ({ ...j }));
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    let deleted = 0;
+    for (const id of ids) {
+      if (this.jobs.delete(id)) deleted += 1;
+    }
+    return deleted;
   }
 
   clear(): void {

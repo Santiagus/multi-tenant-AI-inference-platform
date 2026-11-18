@@ -193,6 +193,8 @@ export class JobService {
     const updated = await this.jobRepo.update(tenantId, jobId, {
       status: JobStatus.CANCELLED,
       completedAt: new Date(),
+      leaseOwner: null,
+      leaseExpiresAt: null,
     });
 
     return updated ?? job;
@@ -354,10 +356,17 @@ export class JobService {
   }
 
   /**
-   * Scans and expires stale/stuck jobs exceeding expiration time (TTL) or maximum retries.
-   * Transitions them to FAILED, increments telemetry counters, and redrives to DLQ.
+   * Scans and expires stale/stuck jobs exceeding expiration time (TTL) or maximum retries,
+   * then reclaims orphaned PROCESSING jobs (lost worker / API restart) via retry or fail.
    */
-  async reapExpiredJobs(options?: { defaultExpirationSeconds?: number }): Promise<{ reapedCount: number; jobs: Job[] }> {
+  async reapExpiredJobs(options?: {
+    defaultExpirationSeconds?: number;
+  }): Promise<{
+    reapedCount: number;
+    jobs: Job[];
+    reclaimedOrphans: number;
+    orphanJobs: Job[];
+  }> {
     const effectiveExpSec = options?.defaultExpirationSeconds ?? this.defaultExpirationSeconds;
     const expiredJobs = await this.jobRepo.expireStaleJobs({ defaultExpirationSeconds: effectiveExpSec });
 
@@ -371,7 +380,6 @@ export class JobService {
         model_id: job.modelId,
       });
 
-      // Send failure notice to DLQ for operational review
       await this.queueClient
         .sendToDlq({
           jobId: job.id,
@@ -394,7 +402,119 @@ export class JobService {
         });
     }
 
-    return { reapedCount: expiredJobs.length, jobs: expiredJobs };
+    const orphanResult = await this.reclaimOrphanedProcessing();
+
+    return {
+      reapedCount: expiredJobs.length,
+      jobs: expiredJobs,
+      reclaimedOrphans: orphanResult.reclaimedCount,
+      orphanJobs: orphanResult.jobs,
+    };
+  }
+
+  /**
+   * Reclaim PROCESSING jobs whose worker lease is missing or expired (API restart / crashed child).
+   * Retries by re-enqueueing when retries remain; otherwise marks FAILED + DLQ.
+   */
+  async reclaimOrphanedProcessing(): Promise<{ reclaimedCount: number; jobs: Job[]; retried: number; failed: number }> {
+    const orphans = await this.jobRepo.findOrphanedProcessingJobs();
+    const touched: Job[] = [];
+    let retried = 0;
+    let failed = 0;
+
+    for (const job of orphans) {
+      const canRetry = job.maxRetries <= 0 || job.retryCount < job.maxRetries;
+      if (canRetry) {
+        const nextRetry = job.retryCount + 1;
+        const updated = await this.jobRepo.update(job.tenantId, job.id, {
+          status: JobStatus.QUEUED,
+          expectedCurrentStatuses: [JobStatus.PROCESSING],
+          retryCount: nextRetry,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+          provider: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          progressPct: 0,
+          progress: {
+            phase: 'queued',
+            percent: 0,
+            message: 'Requeued after orphaned worker (lease lost / API restart)',
+          },
+          errorCode: 'ORPHANED_WORKER',
+          errorMessage: 'Worker lost (API restart or crashed process); auto-retried',
+        });
+        if (!updated) continue;
+
+        await this.queueClient.sendMessage({
+          jobId: updated.id,
+          tenantId: updated.tenantId,
+          modelId: updated.modelId,
+          routingPreference: updated.routingPreference,
+          priority: updated.priority,
+          correlationId: updated.correlationId ?? randomUUID(),
+          traceparent: updated.traceparent ?? undefined,
+          inputUri: updated.inputUri,
+          inputPayload: updated.inputPayload,
+          createdAt: new Date().toISOString(),
+        });
+
+        this.metrics.incCounter('jobs_orphaned_reclaimed_total', {
+          outcome: 'retried',
+          model_id: updated.modelId,
+        });
+        retried += 1;
+        touched.push(updated);
+        continue;
+      }
+
+      const message =
+        'Worker lost (API restart or crashed process); retries exhausted';
+      const updated = await this.jobRepo.update(job.tenantId, job.id, {
+        status: JobStatus.FAILED,
+        expectedCurrentStatuses: [JobStatus.PROCESSING],
+        completedAt: new Date(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        errorCode: 'ORPHANED_WORKER',
+        errorMessage: message,
+        progress: {
+          phase: 'failed',
+          percent: job.progressPct ?? 0,
+          message,
+        },
+      });
+      if (!updated) continue;
+
+      await this.queueClient
+        .sendToDlq({
+          jobId: updated.id,
+          tenantId: updated.tenantId,
+          modelId: updated.modelId,
+          routingPreference: updated.routingPreference,
+          priority: updated.priority,
+          correlationId: updated.correlationId ?? undefined,
+          traceparent: updated.traceparent ?? undefined,
+          inputUri: updated.inputUri,
+          inputPayload: updated.inputPayload,
+          failureReason: message,
+          errorCode: 'ORPHANED_WORKER',
+          retryCount: updated.retryCount,
+          createdAt: updated.createdAt.toISOString(),
+          failedAt: updated.completedAt?.toISOString() ?? new Date().toISOString(),
+        })
+        .catch(() => undefined);
+
+      this.metrics.incCounter('jobs_orphaned_reclaimed_total', {
+        outcome: 'failed',
+        model_id: updated.modelId,
+      });
+      failed += 1;
+      touched.push(updated);
+    }
+
+    return { reclaimedCount: touched.length, jobs: touched, retried, failed };
   }
 
   /**
@@ -426,6 +546,8 @@ export class JobService {
       startedAt: null,
       completedAt: null,
       durationMs: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
       progressPct: 0,
       progress: {
         phase: 'queued',
