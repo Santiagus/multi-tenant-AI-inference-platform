@@ -1962,13 +1962,24 @@ export function SubmitJobModal({
                     />
                   </div>
                 </div>
+                <div style={{ marginBottom: '12px' }}>
+                  <FieldLabel tip={INFERENCE_PARAM_TOOLTIPS.negativePrompt}>Negative prompt</FieldLabel>
+                  <input
+                    type="text"
+                    placeholder="optional — blurry, watermark, text…"
+                    value={inferenceParams.negativePrompt}
+                    onChange={(e) => patchInference({ negativePrompt: e.target.value })}
+                    style={selectStyle}
+                    data-testid="param-image-negative-prompt"
+                  />
+                </div>
               </>
             )}
 
             {paramSections.video && (
               <>
                 <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, marginBottom: '6px' }}>
-                  Video (Wan2.1) — model defaults apply on select (tight geometry for 16 GB offload)
+                  Video — model defaults apply on select (LTX few-minute local geometry; Wan uses tighter offload defaults)
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '10px' }}>
                   <div>
@@ -2053,6 +2064,17 @@ export function SubmitJobModal({
                       style={selectStyle}
                     />
                   </div>
+                </div>
+                <div style={{ marginBottom: '12px' }}>
+                  <FieldLabel tip={INFERENCE_PARAM_TOOLTIPS.negativePrompt}>Negative prompt</FieldLabel>
+                  <input
+                    type="text"
+                    placeholder="optional — blurry, watermark, text, logo…"
+                    value={inferenceParams.negativePrompt}
+                    onChange={(e) => patchInference({ negativePrompt: e.target.value })}
+                    style={selectStyle}
+                    data-testid="param-video-negative-prompt"
+                  />
                 </div>
               </>
             )}

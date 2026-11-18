@@ -86,6 +86,7 @@ export interface ModelInferenceDefaults {
   guidanceScale?: number;
   fps?: number;
   durationSeconds?: number;
+  negativePrompt?: string;
   /** Must be a value from EXECUTION_ENGINES when set. */
   engine?: 'auto' | 'eager' | 'torchscript' | 'torch-compile' | 'numpy' | 'onnx' | 'vllm';
   device?: '' | 'cpu' | 'cuda';
@@ -279,23 +280,24 @@ export const POPULAR_MODELS: PopularModelDef[] = [
     id: 'Lightricks/LTX-Video',
     label: 'LTX-Video',
     purpose: 'text_to_video',
-    minVramGb: 10,
-    minRamGb: 16,
-    quantization: 'BF16 / FP16 Diffusers',
+    minVramGb: 16,
+    minRamGb: 24,
+    quantization: 'BF16 / FP16 Diffusers (CPU offload on 16 GB)',
     proprietary: false,
     diskGbHint: 28,
-    localFit: 'fits_vram',
+    localFit: 'offload',
     notes:
-      'VRAM ~10 GB resident (fits 16 GB) · disk ~28 GB Diffusers only — ignore mono-repo Comfy checkpoints (~250 GB)',
+      'Peak denoise ~24–30 GB without offload (measured on RTX 5070 Ti) · local worker uses CPU offload on ≤16 GB · disk ~28 GB Diffusers only',
     promptTips:
-      'Single continuous scene + one camera move. LTX is fast on 16 GB without CPU offload at default 704×480. Disk size ≠ VRAM: T5 text encoder dominates disk, transformer stays ~10 GB on GPU.',
+      'Single continuous scene + one camera move. Defaults stay at 544×320 / 12 steps / 2 s so 16 GB + offload finishes in a few minutes. Disk size ≠ VRAM: T5 dominates disk; activations dominate peak VRAM.',
     defaults: {
-      width: 704,
-      height: 480,
-      numInferenceSteps: 30,
+      // Few-minute local default (full 704×480 / 30 steps / 4s+ can exceed 20–40 min on 16 GB).
+      width: 544,
+      height: 320,
+      numInferenceSteps: 12,
       guidanceScale: 3,
       fps: 24,
-      durationSeconds: 4,
+      durationSeconds: 2,
       device: 'cuda',
       prompt:
         'A blue hatchback on a quiet coastal road at golden hour, slow dolly from the front three-quarter, soft wind, cinematic.',
@@ -866,6 +868,8 @@ export interface InferenceParamFormState {
   guidanceScale: number;
   fps: number;
   durationSeconds: number;
+  /** Optional diffusion negative prompt (image/video). */
+  negativePrompt: string;
   /** Whisper / ASR language hint (empty = auto-detect). */
   language: string;
   /** Whisper task. */
@@ -891,6 +895,7 @@ export const DEFAULT_INFERENCE_PARAMS: InferenceParamFormState = {
   guidanceScale: 0,
   fps: 24,
   durationSeconds: 3,
+  negativePrompt: '',
   language: '',
   audioTask: 'transcribe',
   mediaAssetUri: '',
@@ -914,7 +919,10 @@ export const INFERENCE_PARAM_TOOLTIPS = {
   guidanceScale:
     'Classifier-free guidance. 0 for distilled image models (FLUX schnell / SD-Turbo); ~5 for Wan / CogVideoX.',
   fps: 'Frames per second for text-to-video synthesis (Wan commonly 16).',
-  durationSeconds: 'Clip length in seconds (frames ≈ fps × duration). Keep ≤5 s for Wan 1.3B.',
+  durationSeconds:
+    'Clip length in seconds (frames ≈ fps × duration). LTX local default is 2 s; keep ≤2–3 s on 16 GB for few-minute jobs.',
+  negativePrompt:
+    'Optional negative prompt for diffusion image/video (things to avoid). Applied by local Diffusers pipelines when set.',
   mediaAssetUri: 'Optional nested media URI under input.parameters (auto-filled from upload).',
   inputUri: 'Top-level S3/object URI for multimodal input. Upload files below to generate and save URIs.',
   expiresInSeconds: 'Job TTL before expiry reap (seconds). API default 3600; max 604800.',
@@ -1037,6 +1045,12 @@ export function buildInferenceParameters(
     parameters.height = form.height;
     parameters.num_inference_steps = form.numInferenceSteps;
     parameters.guidance_scale = form.guidanceScale;
+  }
+
+  if (sections.image || sections.video) {
+    if (form.negativePrompt.trim()) {
+      parameters.negative_prompt = form.negativePrompt.trim();
+    }
   }
 
   if (sections.video) {

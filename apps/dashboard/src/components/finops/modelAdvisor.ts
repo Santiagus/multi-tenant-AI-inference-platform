@@ -147,6 +147,14 @@ export const MODEL_PUBLIC_BENCHMARKS: Record<string, ModelBenchmarkRef> = {
     concernUnitLabel: '100 clips (3s)',
     tokensPerConcernUnit: 1_200_000,
   },
+  'Lightricks/LTX-Video': {
+    benchmarkSuite: 'VBench / Local RTX 5070 Ti · LTX-Video Diffusers',
+    taskProfile: '704×480 · 161 frames · 30 steps ≈ 24,000 spatio-temporal tokens/clip',
+    referenceUrl: 'https://vchitect.github.io/VBench-project/',
+    referenceTaskTokens: 24_000,
+    concernUnitLabel: '100 clips (≈6.7s @24fps)',
+    tokensPerConcernUnit: 2_400_000,
+  },
   'THUDM/CogVideoX-2b': {
     benchmarkSuite: 'Local RTX 5070 Ti · CogVideoX-2b FP16 (measured harness)',
     taskProfile: 'Short clip denoising path ≈ 8,000–12,000 tokens/clip',
