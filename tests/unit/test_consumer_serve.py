@@ -21,9 +21,20 @@ def test_video_pipeline_cache_hit_sets_warm_flag() -> None:
     got = adapter._get_video_pipeline("Lightricks/LTX-Video", "cuda")
     assert got is fake_pipe
     assert adapter._last_pipe_warm is True
+    assert adapter._last_pipe_used is True
+    assert adapter._last_pipe_load_ms == 0.0
     status = adapter.resident_status()
     assert status["gpu"]["model_id"] == "Lightricks/LTX-Video"
     assert status["gpu"]["warm"] is True
+
+
+def test_mark_pipe_cold_load_records_elapsed_ms() -> None:
+    adapter = LocalPyTorchAdapter()
+    started = __import__("time").perf_counter() - 0.05
+    adapter._mark_pipe_cold_load(started)
+    assert adapter._last_pipe_warm is False
+    assert adapter._last_pipe_used is True
+    assert adapter._last_pipe_load_ms >= 40.0
 
 
 def test_clear_pipes_unloads_resident() -> None:

@@ -664,6 +664,8 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           production_weights: false,
           warm_start: true,
           model_load_ms: 1.2,
+          inference_ms: 12,
+          total_provider_ms: 13.2,
           model_footprint_mb: 0.32,
           engine_requested: engineRequested,
           engine_executed: engineExecuted,
@@ -1253,7 +1255,11 @@ export class ProfilingInferenceExecutor implements IInferenceExecutor {
     const result = await this.inner.execute(job, resolvedInput, checkCancelled, onProgress);
     const measuredMs = Math.max(Number(process.hrtime.bigint() - startNs) / 1_000_000, 1);
     const durationMs = result.durationMs > 0 ? result.durationMs : Math.round(measuredMs);
-    const tokensPerSec = Number(((result.tokensOut / durationMs) * 1000).toFixed(2));
+    const existingTps = result.metadata?.tokens_per_sec;
+    const tokensPerSec =
+      typeof existingTps === 'number' && Number.isFinite(existingTps)
+        ? existingTps
+        : Number(((result.tokensOut / durationMs) * 1000).toFixed(2));
 
     return {
       ...result,

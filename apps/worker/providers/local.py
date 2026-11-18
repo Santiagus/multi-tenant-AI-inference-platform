@@ -5,8 +5,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from typing import Any
 
+from apps.worker.accounting_tokens import (
+    account_asr_tokens,
+    account_image_tokens,
+    account_text_tokens,
+    account_video_tokens,
+    accounting_metadata,
+)
 from apps.worker.contracts import (
     InferenceError,
     InferenceRequest,
@@ -39,10 +47,25 @@ class LocalPyTorchAdapter(InferenceProvider):
         self._whisper_pipes: dict[str, Any] = {}
         self._transformers_pipes: dict[str, Any] = {}
         self._last_pipe_warm: bool = False
+        # Measured HF/Diffusers/transformers from_pretrained (+ device place) for this request.
+        self._last_pipe_load_ms: float = 0.0
+        self._last_pipe_used: bool = False
         self._gpu_resident_model_id: str | None = None
         self._cpu_resident_model_id: str | None = None
         self._gpu_resident_footprint_mb: float = 0.0
         self._cpu_resident_footprint_mb: float = 0.0
+
+    def _mark_pipe_cache_hit(self) -> None:
+        """Resident pipe reused — cold-start contribution is zero for this request."""
+        self._last_pipe_warm = True
+        self._last_pipe_load_ms = 0.0
+        self._last_pipe_used = True
+
+    def _mark_pipe_cold_load(self, started_at: float) -> None:
+        """Record wall time spent downloading/loading/placing a production checkpoint."""
+        self._last_pipe_warm = False
+        self._last_pipe_load_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
+        self._last_pipe_used = True
 
     @staticmethod
     def resolve_hub_video_model_id(model_id: str) -> str:
@@ -140,6 +163,7 @@ class LocalPyTorchAdapter(InferenceProvider):
 
     def _get_production_transformers_pipeline(self, model_id: str, device: str) -> Any:
         if model_id in self._transformers_pipes:
+            self._mark_pipe_cache_hit()
             return self._transformers_pipes[model_id]
         try:
             import torch  # type: ignore[import-not-found]
@@ -149,6 +173,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                 BitsAndBytesConfig,
             )
 
+            load_t0 = time.perf_counter()
             is_cuda = device.startswith("cuda") and torch.cuda.is_available()
             target_model, hf_token = self._resolve_hf_repo_and_token(model_id)
 
@@ -223,6 +248,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                 **model_kwargs,
             )
             self._transformers_pipes[model_id] = (tokenizer, model)
+            self._mark_pipe_cold_load(load_t0)
             return self._transformers_pipes[model_id]
         except Exception as exc:
             sys.stderr.write(f"[TRANSFORMERS_PRODUCTION_LOAD_WARNING] Could not load full model '{model_id}': {exc}\n")
@@ -230,6 +256,7 @@ class LocalPyTorchAdapter(InferenceProvider):
 
     def _get_diffusion_pipeline(self, model_id: str, device: str) -> Any:
         if self._diffusion_pipe is not None:
+            self._mark_pipe_cache_hit()
             return self._diffusion_pipe
         try:
             import torch  # type: ignore[import-not-found]
@@ -238,6 +265,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                 FluxPipeline,
             )
 
+            load_t0 = time.perf_counter()
             is_flux = "flux" in model_id.lower()
             if is_flux:
                 # Pre-quantized 4-bit NormalFloat (NF4) FLUX.1-schnell (~6.2 GB weights, fits within 16 GB VRAM)
@@ -259,6 +287,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                     pipe.to("cuda")
 
             self._diffusion_pipe = pipe
+            self._mark_pipe_cold_load(load_t0)
             return self._diffusion_pipe
         except Exception as exc:
             sys.stderr.write(f"[DIFFUSION_LOAD_WARNING] {exc}\n")
@@ -266,32 +295,40 @@ class LocalPyTorchAdapter(InferenceProvider):
 
     def _get_clip_pipeline(self, model_id: str, device: str) -> Any:
         if "clip_pipe" in self._transformers_pipes:
+            self._mark_pipe_cache_hit()
             return self._transformers_pipes["clip_pipe"]
         try:
             import torch  # type: ignore[import-not-found]
             from transformers import CLIPModel, CLIPProcessor  # type: ignore[import-not-found]
 
+            load_t0 = time.perf_counter()
             processor: Any = CLIPProcessor.from_pretrained(model_id)
             model: Any = CLIPModel.from_pretrained(model_id)
             if device.startswith("cuda") and torch.cuda.is_available():
                 model.to("cuda")
             self._transformers_pipes["clip_pipe"] = (processor, model)
+            self._mark_pipe_cold_load(load_t0)
             return self._transformers_pipes["clip_pipe"]
         except Exception as exc:
             sys.stderr.write(f"[CLIP_PRODUCTION_LOAD_WARNING] {exc}\n")
             return None
 
     def _estimate_video_vram_gb(self, model_id: str) -> float:
+        """Estimated *peak* VRAM (weights + activations), not disk/weight size alone.
+
+        LTX transformer weights can look ~10 GB, but measured 544×320 / 12-step denoise
+        on RTX 5070 Ti peaked ~29–30 GB allocated without CPU offload.
+        """
         mid = model_id.lower()
         if "ltx" in mid:
-            return 10.0
+            return 24.0
         if "wan" in mid and "1.3" in mid:
-            return 16.0
+            return 18.0
         if "cogvideo" in mid and "2b" in mid:
-            return 12.0
-        if "cogvideo" in mid:
             return 16.0
-        return 14.0
+        if "cogvideo" in mid:
+            return 20.0
+        return 16.0
 
     @staticmethod
     def classify_device_slot(model_id: str, estimated_vram_mb: float, modality: str) -> str:
@@ -425,18 +462,42 @@ class LocalPyTorchAdapter(InferenceProvider):
             except Exception:
                 pass
 
+    def _evict_non_video_gpu_residents(self) -> None:
+        """Free image/LLM CUDA residents before loading a heavy video Diffusers pipe."""
+        freed = False
+        if self._diffusion_pipe is not None:
+            self._diffusion_pipe = None
+            self._diffusion_model_id = None
+            freed = True
+        # Transformers text pipes can pin several GB; drop them for video denoise budget.
+        if self._transformers_pipes:
+            self._transformers_pipes.clear()
+            freed = True
+        if freed:
+            self._gpu_resident_model_id = None
+            self._gpu_resident_footprint_mb = 0.0
+            try:
+                import torch  # type: ignore[import-not-found]
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception:
+                pass
+
     def _get_video_pipeline(self, model_id: str, device: str) -> Any:
         """Load Diffusers text-to-video checkpoints (LTX / Wan / CogVideoX)."""
         if model_id in self._video_pipes:
-            self._last_pipe_warm = True
+            self._mark_pipe_cache_hit()
             self._mark_resident(model_id, device, self._estimate_video_vram_gb(model_id) * 1024.0)
             return self._video_pipes[model_id]
-        self._last_pipe_warm = False
+        self._evict_non_video_gpu_residents()
         self._ensure_single_resident_video(model_id)
         try:
             import torch  # type: ignore[import-not-found]
             from diffusers import CogVideoXPipeline, WanPipeline  # type: ignore[import-not-found]
 
+            load_t0 = time.perf_counter()
             hub_id = self.resolve_hub_video_model_id(model_id)
             mid = model_id.lower()
             use_cuda = device.startswith("cuda") and torch.cuda.is_available()
@@ -466,13 +527,16 @@ class LocalPyTorchAdapter(InferenceProvider):
             if use_cuda:
                 total_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 need_gb = self._estimate_video_vram_gb(model_id)
-                use_offload = need_gb > (total_gb * 0.92)
+                # Consumer 16 GB cards cannot hold LTX/Wan peak activations resident.
+                # Measured LTX 544×320 denoise peaked ~29 GB without offload.
+                force_offload = ("ltx" in mid or "wan" in mid) and total_gb < 22.0
+                use_offload = force_offload or need_gb > (total_gb * 0.85)
                 emit_job_progress(
                     {
                         "phase": "loading_model",
                         "percent": 24,
                         "message": (
-                            f"Placing '{hub_id}' on CUDA ({need_gb:.0f} GB est / {total_gb:.0f} GB card)"
+                            f"Placing '{hub_id}' on CUDA ({need_gb:.0f} GB peak est / {total_gb:.0f} GB card)"
                             + (" via CPU offload" if use_offload else " resident in VRAM")
                         ),
                     }
@@ -484,15 +548,20 @@ class LocalPyTorchAdapter(InferenceProvider):
                         pipe.to("cuda")
                 else:
                     pipe.to("cuda")
-                    try:
-                        pipe.vae.enable_tiling()
-                    except Exception:
-                        pass
+                try:
+                    pipe.vae.enable_tiling()
+                except Exception:
+                    pass
+                try:
+                    pipe.vae.enable_slicing()
+                except Exception:
+                    pass
             else:
                 pipe.to("cpu")
 
             self._video_pipes[model_id] = pipe
             self._mark_resident(model_id, device, self._estimate_video_vram_gb(model_id) * 1024.0)
+            self._mark_pipe_cold_load(load_t0)
             return pipe
         except Exception as exc:
             sys.stderr.write(f"[VIDEO_PRODUCTION_LOAD_WARNING] Could not load video model '{model_id}': {exc}\n")
@@ -500,14 +569,14 @@ class LocalPyTorchAdapter(InferenceProvider):
 
     def _get_whisper_pipeline(self, model_id: str, device: str) -> Any:
         if model_id in self._whisper_pipes:
-            self._last_pipe_warm = True
+            self._mark_pipe_cache_hit()
             self._mark_resident(model_id, device, 150.0)
             return self._whisper_pipes[model_id]
-        self._last_pipe_warm = False
         try:
             import torch  # type: ignore[import-not-found]
             from transformers import pipeline as hf_pipeline  # type: ignore[import-not-found]
 
+            load_t0 = time.perf_counter()
             use_cuda = device.startswith("cuda") and torch.cuda.is_available()
             emit_job_progress(
                 {
@@ -523,6 +592,7 @@ class LocalPyTorchAdapter(InferenceProvider):
             )
             self._whisper_pipes[model_id] = pipe
             self._mark_resident(model_id, device, 150.0)
+            self._mark_pipe_cold_load(load_t0)
             return pipe
         except Exception as exc:
             sys.stderr.write(f"[WHISPER_PRODUCTION_LOAD_WARNING] Could not load '{model_id}': {exc}\n")
@@ -591,6 +661,8 @@ class LocalPyTorchAdapter(InferenceProvider):
 
         self._telemetry.reset_peak_memory()
         self._last_pipe_warm = False
+        self._last_pipe_load_ms = 0.0
+        self._last_pipe_used = False
         device = request.parameters.get("device")
         routing_pref = str(request.parameters.get("routing_preference", "")).lower()
         if not device:
@@ -688,7 +760,11 @@ class LocalPyTorchAdapter(InferenceProvider):
             # Pipeline is loaded lazily in the diffusion branch below.
             pass
 
-        if explicit_production:
+        # Real inference mode (mock off): never silently fall back to synthetic stubs.
+        require_production = bool(
+            explicit_production or (use_prod_weights and not is_ci_or_mock and not explicit_synthetic)
+        )
+        if require_production:
             missing: str | None = None
             if modality == "text_to_text" and prod_text_pipe is None:
                 missing = "causal LM Transformers checkpoint"
@@ -700,11 +776,18 @@ class LocalPyTorchAdapter(InferenceProvider):
                 missing = "Whisper ASR checkpoint"
             if missing:
                 raise InferenceError(
-                    f"Pretrained checkpoint requested for '{request.model_id}' but failed to load {missing}. "
-                    "Install transformers/diffusers (and HF auth for gated repos) or disable Pretrained Model Checkpoint.",
+                    f"Pretrained checkpoint required for '{request.model_id}' in real inference mode "
+                    f"but failed to load {missing}. Install transformers/diffusers (and HF auth for gated repos) "
+                    "or set weights=synthetic / enable mock providers.",
                     "PRODUCTION_WEIGHTS_UNAVAILABLE",
                     False,
                 )
+
+        token_accounting_meta: dict[str, Any] = {
+            "token_accounting": "tokenizer",
+            "token_unit_label": "tokenizer tokens",
+        }
+        media_geometry: dict[str, Any] = {}
 
         if prod_text_pipe is not None:
             import contextlib
@@ -813,6 +896,9 @@ class LocalPyTorchAdapter(InferenceProvider):
                     output_text = clean_output
 
             used_production_checkpoint = True
+            acct = account_text_tokens(tokens_in=tokens_in, tokens_out=tokens_out)
+            tokens_in, tokens_out = acct.tokens_in, acct.tokens_out
+            token_accounting_meta = accounting_metadata(acct)
             emit_job_progress(
                 {
                     "phase": "encoding_artifact",
@@ -870,6 +956,12 @@ class LocalPyTorchAdapter(InferenceProvider):
                 ttft_ms = max(compute_ms * 0.4, 0.5)
                 tokens_in = int(inps["input_ids"].shape[1])
                 tokens_out = 128
+                acct = account_text_tokens(tokens_in=tokens_in, tokens_out=tokens_out)
+                token_accounting_meta = {
+                    **accounting_metadata(acct),
+                    "token_accounting": "multimodal_embedding",
+                    "token_unit_label": "CLIP embedding tokens",
+                }
                 prob_pct = round(probs[0] * 100.0, 2)
                 sim_score = round(float(logits[0][0].detach().cpu().item()) / 100.0, 4)
                 used_production_checkpoint = True
@@ -883,12 +975,22 @@ class LocalPyTorchAdapter(InferenceProvider):
                     f"3. {candidate_labels[2]} ({round(probs[2] * 100.0, 2)}%).\n"
                     f"- Prompt Alignment: Target prompt features align directly with visual patch embeddings."
                 )
+            elif require_production:
+                raise InferenceError(
+                    f"CLIP real inference requires a readable local image for '{request.model_id}'",
+                    "MISSING_IMAGE_INPUT",
+                    False,
+                )
             else:
                 output_text, tokens_in, tokens_out, ttft_ms, compute_ms = loaded.backend.generate(
                     prompt=request.prompt,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                 )
+                token_accounting_meta = {
+                    "token_accounting": "synthetic",
+                    "token_unit_label": "synthetic tokens",
+                }
         elif whisper_pipe is not None:
             import time
 
@@ -913,51 +1015,41 @@ class LocalPyTorchAdapter(InferenceProvider):
             ttft_ms = max(compute_ms * 0.2, 0.5)
             transcript = asr_out.get("text", str(asr_out)) if isinstance(asr_out, dict) else str(asr_out)
             output_text = f"[{request.model_id}] Whisper transcript: {transcript.strip()}"
-            tokens_in = max(len(request.prompt.split()), 1)
-            tokens_out = max(len(transcript.split()), 1)
+            acct = account_asr_tokens(prompt=request.prompt, transcript=transcript.strip())
+            tokens_in, tokens_out = acct.tokens_in, acct.tokens_out
+            token_accounting_meta = accounting_metadata(acct)
             used_production_checkpoint = True
+        elif modality in ("text_to_image", "media_video") and use_prod_weights:
+            # Defer stub generate — production Diffusers path below owns timing/tokens.
+            output_text = ""
+            tokens_in = 1
+            tokens_out = 1
+            ttft_ms = 0.5
+            compute_ms = 1.0
         else:
-            # Stub/reference geometry path (synthetic weights or production load unavailable).
+            # Stub/reference geometry path (synthetic weights or mock mode only).
+            if require_production:
+                raise InferenceError(
+                    f"Real inference mode has no production path for '{request.model_id}' ({modality}).",
+                    "PRODUCTION_WEIGHTS_UNAVAILABLE",
+                    False,
+                )
             output_text, tokens_in, tokens_out, ttft_ms, compute_ms = loaded.backend.generate(
                 prompt=request.prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
             )
-
-        is_cpu_backend = (
-            loaded.backend.backend_name.endswith("_cpu") or loaded.backend.backend_name == "numpy_cpu_fallback"
-        )
-        hw_telemetry = self._telemetry.capture_snapshot(
-            active_backend=loaded.backend.backend_name,
-            model_footprint_mb=loaded.backend.footprint_mb,
-            force_cpu=is_cpu_backend,
-        )
-
-        total_tokens = tokens_in + tokens_out
-        cost_microcents = total_tokens * loaded.spec.cost_microcents_per_token
-        tokens_per_sec = round((tokens_out / max(compute_ms, 0.001)) * 1000.0, 2)
-
-        usage = UsageMetrics(
-            prompt_tokens=tokens_in,
-            completion_tokens=tokens_out,
-            total_tokens=total_tokens,
-            compute_duration_ms=compute_ms,
-            time_to_first_token_ms=ttft_ms,
-            tokens_per_sec=tokens_per_sec,
-            estimated_cost_microcents=cost_microcents,
-        )
-
-        if modality in ("text_to_image", "media_photo", "media_video", "speech_to_text"):
-            finish_reason = "stop"
-        else:
-            finish_reason = "length" if tokens_out >= max_new_tokens else "stop"
+            token_accounting_meta = {
+                "token_accounting": "synthetic",
+                "token_unit_label": "synthetic tokens",
+            }
 
         image_base64: str | None = None
         if use_prod_weights and modality == "text_to_image":
             pipe = self._get_diffusion_pipeline(request.model_id, resolved_device)
-            if pipe is None and explicit_production:
+            if pipe is None and require_production:
                 raise InferenceError(
-                    f"Pretrained checkpoint requested for '{request.model_id}' but Diffusers T2I load failed.",
+                    f"Pretrained checkpoint required for '{request.model_id}' but Diffusers T2I load failed.",
                     "PRODUCTION_WEIGHTS_UNAVAILABLE",
                     False,
                 )
@@ -1018,6 +1110,21 @@ class LocalPyTorchAdapter(InferenceProvider):
                     gen_image.save(buf, format="PNG")
                     image_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
                     compute_ms = diff_compute_ms
+                    ttft_ms = max(compute_ms * 0.15, 0.5)
+                    acct = account_image_tokens(
+                        model_id=request.model_id,
+                        prompt=request.prompt,
+                        width=width,
+                        height=height,
+                        steps=steps,
+                    )
+                    tokens_in, tokens_out = acct.tokens_in, acct.tokens_out
+                    token_accounting_meta = accounting_metadata(acct)
+                    media_geometry = {
+                        "width": width,
+                        "height": height,
+                        "num_inference_steps": steps,
+                    }
                     used_production_checkpoint = True
                     output_text = (
                         f"[{request.model_id}] Image generated with pretrained Diffusers checkpoint "
@@ -1025,7 +1132,7 @@ class LocalPyTorchAdapter(InferenceProvider):
                     )
                 except Exception as exc:
                     sys.stderr.write(f"[FUNCTIONAL_DIFFUSION_ERROR] {exc}\n")
-                    if explicit_production:
+                    if require_production:
                         raise InferenceError(
                             f"Pretrained image checkpoint inference failed for '{request.model_id}': {exc}",
                             "PRODUCTION_INFERENCE_FAILED",
@@ -1089,7 +1196,28 @@ class LocalPyTorchAdapter(InferenceProvider):
                         "blurry, low quality, still image, distorted, watermark, text, logo"
                     )
 
-                result = prod_video_pipe(**video_pipe_kwargs)
+                def on_video_step_end(_p: Any, step_idx: int, _timestep: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+                    current_step = step_idx + 1
+                    pct = int(min(max(30 + ((current_step / max(steps, 1)) * 60), 30), 90))
+                    emit_job_progress(
+                        {
+                            "phase": "denoising",
+                            "step": current_step,
+                            "total_steps": steps,
+                            "percent": pct,
+                            "message": (
+                                f"Denoising step {current_step}/{steps} ({width}x{height}, {num_frames} frames)"
+                            ),
+                        }
+                    )
+                    return kwargs
+
+                try:
+                    video_pipe_kwargs["callback_on_step_end"] = on_video_step_end
+                    result = prod_video_pipe(**video_pipe_kwargs)
+                except TypeError:
+                    video_pipe_kwargs.pop("callback_on_step_end", None)
+                    result = prod_video_pipe(**video_pipe_kwargs)
                 frames_out = result.frames
                 # Diffusers video outputs vary: nested batch list, flat PIL list, or ndarray batch.
                 if isinstance(frames_out, (list, tuple)) and len(frames_out) > 0:
@@ -1119,8 +1247,27 @@ class LocalPyTorchAdapter(InferenceProvider):
                 frames = [_as_uint8_frame(f) for f in raw_video_frames]
                 compute_ms = max((time.perf_counter() - t0) * 1000.0, 1.0)
                 ttft_ms = max(compute_ms * 0.15, 0.5)
-                tokens_in = max(len(request.prompt.split()), 1)
-                tokens_out = max(num_frames, 1)
+                actual_frames = len(frames) if hasattr(frames, "__len__") else num_frames
+                actual_duration_s = round(float(actual_frames) / max(fps, 1), 3)
+                acct = account_video_tokens(
+                    model_id=request.model_id,
+                    prompt=request.prompt,
+                    width=width,
+                    height=height,
+                    frames=int(actual_frames),
+                    steps=steps,
+                )
+                tokens_in, tokens_out = acct.tokens_in, acct.tokens_out
+                token_accounting_meta = accounting_metadata(acct)
+                media_geometry = {
+                    "width": width,
+                    "height": height,
+                    "fps": fps,
+                    "num_frames": int(actual_frames),
+                    "num_inference_steps": steps,
+                    "requested_duration_s": duration_s,
+                    "actual_duration_s": actual_duration_s,
+                }
 
                 emit_job_progress(
                     {"phase": "encoding_artifact", "percent": 92, "message": "Encoding pretrained video MP4 artifact"}
@@ -1160,12 +1307,19 @@ class LocalPyTorchAdapter(InferenceProvider):
                 )
             except Exception as vid_err:
                 sys.stderr.write(f"[VIDEO_PRODUCTION_INFERENCE_ERROR] {vid_err}\n")
-                if explicit_production:
+                if require_production:
                     raise InferenceError(
                         f"Pretrained video checkpoint inference failed for '{request.model_id}': {vid_err}",
                         "PRODUCTION_INFERENCE_FAILED",
                         True,
                     ) from vid_err
+
+        if modality == "media_video" and video_base64 is None and require_production:
+            raise InferenceError(
+                f"Real inference mode refused procedural video stub for '{request.model_id}'.",
+                "PRODUCTION_INFERENCE_FAILED",
+                False,
+            )
 
         if modality == "media_video" and video_base64 is None:
             try:
@@ -1485,15 +1639,76 @@ class LocalPyTorchAdapter(InferenceProvider):
             except Exception as vid_err:
                 sys.stderr.write(f"[FUNCTIONAL_VIDEO_ERROR] {vid_err}\n")
 
+        if modality == "text_to_image" and image_base64 is None and require_production:
+            raise InferenceError(
+                f"Real inference mode refused image stub for '{request.model_id}'.",
+                "PRODUCTION_INFERENCE_FAILED",
+                False,
+            )
+
+        # Rebuild usage + telemetry AFTER real compute (never freeze stub timings for media).
+        try:
+            import torch  # type: ignore[import-not-found]
+
+            if str(resolved_device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
+        is_cpu_backend = (
+            loaded.backend.backend_name.endswith("_cpu") or loaded.backend.backend_name == "numpy_cpu_fallback"
+        )
+        hw_telemetry = self._telemetry.capture_snapshot(
+            active_backend=(
+                "pytorch_cuda"
+                if str(resolved_device).startswith("cuda") and used_production_checkpoint
+                else loaded.backend.backend_name
+            ),
+            model_footprint_mb=loaded.backend.footprint_mb,
+            force_cpu=is_cpu_backend and not used_production_checkpoint,
+        )
+
+        total_tokens = tokens_in + tokens_out
+        cost_microcents = total_tokens * loaded.spec.cost_microcents_per_token
+        tokens_per_sec = round((tokens_out / max(compute_ms, 0.001)) * 1000.0, 2)
+        usage = UsageMetrics(
+            prompt_tokens=tokens_in,
+            completion_tokens=tokens_out,
+            total_tokens=total_tokens,
+            compute_duration_ms=compute_ms,
+            time_to_first_token_ms=ttft_ms,
+            tokens_per_sec=tokens_per_sec,
+            estimated_cost_microcents=cost_microcents,
+        )
+
+        if modality in ("text_to_image", "media_photo", "media_video", "speech_to_text"):
+            finish_reason = "stop"
+        else:
+            finish_reason = "length" if tokens_out >= max_new_tokens else "stop"
+
         pipe_warm = bool(self._last_pipe_warm)
-        effective_warm = bool(is_warm or pipe_warm)
+        pipe_used = bool(self._last_pipe_used or used_production_checkpoint)
+        pipe_load_ms = float(self._last_pipe_load_ms or 0.0)
+        # Synthetic ModelLoader cache hit is independent of HF/Diffusers pipe residency.
+        # Production checkpoints report pipe_load_ms only (ignore synthetic loader ms).
+        loader_load_ms = 0.0 if (is_warm or used_production_checkpoint) else float(loaded.load_duration_ms)
+        model_load_ms = round(loader_load_ms + pipe_load_ms, 3)
+        inference_ms = round(float(compute_ms), 3)
+        total_provider_ms = round(model_load_ms + inference_ms, 3)
+        # Warm only when every load path that ran was a cache hit (no cold download/place).
+        effective_warm = bool((pipe_warm if pipe_used else is_warm) and model_load_ms <= 0.0)
         metadata: dict[str, Any] = {
             "execution_mode": "live",
             "is_mocked": False,
             # True only when a real HF/Diffusers checkpoint produced the result (not stub/procedural).
             "production_weights": bool(used_production_checkpoint),
             "warm_start": effective_warm,
-            "model_load_ms": 0.0 if effective_warm else loaded.load_duration_ms,
+            # Cold-start / residency breakdown (measured). duration_ms on the job stays inference-only.
+            "model_load_ms": model_load_ms,
+            "loader_load_ms": round(0.0 if used_production_checkpoint else loader_load_ms, 3),
+            "pipe_load_ms": round(pipe_load_ms, 3),
+            "inference_ms": inference_ms,
+            "total_provider_ms": total_provider_ms,
             "model_footprint_mb": loaded.backend.footprint_mb,
             "estimated_full_weights_vram_mb": loaded.spec.estimated_vram_mb,
             "engine_requested": loaded.engine_requested,
@@ -1503,6 +1718,9 @@ class LocalPyTorchAdapter(InferenceProvider):
             "weights": "production" if used_production_checkpoint else "synthetic",
             "device_slot": "gpu" if resolved_device.lower().startswith("cuda") else "cpu",
             "resident_status": self.resident_status(),
+            "measurement_mode": "measured",
+            **token_accounting_meta,
+            **media_geometry,
         }
         if image_base64 is not None:
             metadata["image_base64"] = image_base64

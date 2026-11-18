@@ -153,6 +153,16 @@ class WorkerRuntime:
                     "traceparent": request.traceparent,
                     "ttft_ms": result.usage.time_to_first_token_ms,
                     "tokens_per_sec": result.usage.tokens_per_sec,
+                    # Prefer provider-measured inference_ms; fall back to compute_duration_ms.
+                    "inference_ms": float(result.metadata.get("inference_ms", result.usage.compute_duration_ms)),
+                    "model_load_ms": float(result.metadata.get("model_load_ms", 0.0) or 0.0),
+                    "total_provider_ms": float(
+                        result.metadata.get(
+                            "total_provider_ms",
+                            float(result.metadata.get("model_load_ms", 0.0) or 0.0)
+                            + float(result.usage.compute_duration_ms),
+                        )
+                    ),
                     "telemetry": result.telemetry.to_dict(),
                     "resident_status": self.resident_status(),
                 },

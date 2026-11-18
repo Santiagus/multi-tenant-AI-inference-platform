@@ -727,6 +727,28 @@ class ProductionWeightRoutingTests(unittest.TestCase):
             self.assertFalse(bool(result.metadata.get("production_weights")))
             self.assertEqual(result.metadata.get("weights"), "synthetic")
 
+    def test_timing_metadata_exposes_cold_load_vs_inference(self) -> None:
+        adapter = LocalPyTorchAdapter()
+        req = InferenceRequest(
+            job_id="job-timing-meta",
+            tenant_id="tenant-dev",
+            model_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            prompt="hello timing",
+            parameters={"tier": 1, "max_new_tokens": 8, "device": "cpu", "weights": "synthetic"},
+        )
+        result = asyncio.run(adapter.predict(req))
+        self.assertIn("model_load_ms", result.metadata)
+        self.assertIn("inference_ms", result.metadata)
+        self.assertIn("total_provider_ms", result.metadata)
+        self.assertIn("pipe_load_ms", result.metadata)
+        self.assertGreater(float(result.metadata["inference_ms"]), 0.0)
+        self.assertAlmostEqual(
+            float(result.metadata["total_provider_ms"]),
+            float(result.metadata["model_load_ms"]) + float(result.metadata["inference_ms"]),
+            places=2,
+        )
+        self.assertEqual(float(result.metadata["inference_ms"]), float(result.usage.compute_duration_ms))
+
 
 if __name__ == "__main__":
     unittest.main()
