@@ -2,6 +2,10 @@
 
 Can be invoked programmatically via `WorkerRuntime` or as a CLI/JSON-RPC
 bridge (`python3 -m apps.worker.consumer`) by the control plane or container daemon.
+
+Modes:
+  --payload / stdin JSON  → one-shot job (CI / legacy)
+  --serve                 → persistent NDJSON loop; keeps Diffusers pipes warm across jobs
 """
 
 from __future__ import annotations
@@ -11,7 +15,8 @@ import asyncio
 import json
 import os
 import sys
-from pathlib import Path
+import threading
+import time
 from typing import Any
 
 from apps.worker.artifacts import ArtifactHandler
@@ -49,10 +54,35 @@ class WorkerRuntime:
     def registry(self) -> ProviderRegistry:
         return self._registry
 
+    @property
+    def local_adapter(self) -> LocalPyTorchAdapter | None:
+        if isinstance(self._provider, LocalPyTorchAdapter):
+            return self._provider
+        try:
+            candidate = self._registry.get("local_pytorch")
+        except Exception:
+            return None
+        return candidate if isinstance(candidate, LocalPyTorchAdapter) else None
+
     def resolve_provider(self, requested_name: str | None = None) -> InferenceProvider:
         if requested_name and requested_name.strip():
             return self._registry.get(requested_name.strip())
         return self._provider
+
+    def resident_status(self) -> dict[str, Any]:
+        adapter = self.local_adapter
+        if adapter is None:
+            return {
+                "gpu": {"model_id": None, "warm": False, "footprint_mb": 0},
+                "cpu": {"model_id": None, "warm": False, "footprint_mb": 0},
+                "idle_ttl_sec": int(os.environ.get("WORKER_IDLE_TTL_SEC", "900")),
+            }
+        return adapter.resident_status()
+
+    def clear_idle_pipes(self) -> None:
+        adapter = self.local_adapter
+        if adapter is not None:
+            adapter.clear_pipes()
 
     async def process_job_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a single inference job payload and return structured response envelope."""
@@ -124,6 +154,7 @@ class WorkerRuntime:
                     "ttft_ms": result.usage.time_to_first_token_ms,
                     "tokens_per_sec": result.usage.tokens_per_sec,
                     "telemetry": result.telemetry.to_dict(),
+                    "resident_status": self.resident_status(),
                 },
             }
         except InferenceError as exc:
@@ -146,6 +177,106 @@ class WorkerRuntime:
             }
 
 
+def _emit_serve_event(event: dict[str, Any]) -> None:
+    """Control/status events on stdout as NDJSON (same channel as job responses)."""
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
+
+
+def run_serve_loop(runtime: WorkerRuntime) -> int:
+    """Persistent NDJSON worker: one JSON request per stdin line → one JSON response per stdout line."""
+    idle_ttl = float(os.environ.get("WORKER_IDLE_TTL_SEC", "900"))
+    stop = threading.Event()
+    activity = {"ts": time.monotonic()}
+
+    def _idle_watch() -> None:
+        unloaded_at = 0.0
+        while not stop.is_set():
+            time.sleep(5.0)
+            idle_for = time.monotonic() - activity["ts"]
+            if idle_for >= idle_ttl and (time.monotonic() - unloaded_at) >= idle_ttl:
+                runtime.clear_idle_pipes()
+                unloaded_at = time.monotonic()
+                _emit_serve_event(
+                    {
+                        "ok": True,
+                        "type": "idle_unload",
+                        "resident_status": runtime.resident_status(),
+                    }
+                )
+
+    watcher = threading.Thread(target=_idle_watch, name="worker-idle-ttl", daemon=True)
+    watcher.start()
+    _emit_serve_event({"ok": True, "type": "ready", "resident_status": runtime.resident_status()})
+
+    try:
+        for raw_line in sys.stdin:
+            line = raw_line.strip()
+            if not line:
+                continue
+            activity["ts"] = time.monotonic()
+            try:
+                payload = json.loads(line)
+            except Exception as exc:
+                _emit_serve_event(
+                    {
+                        "ok": False,
+                        "type": "job_result",
+                        "error": {
+                            "code": "INVALID_WORKER_PAYLOAD",
+                            "message": f"Invalid JSON payload: {exc}",
+                            "is_transient": False,
+                        },
+                    }
+                )
+                continue
+
+            if not isinstance(payload, dict):
+                _emit_serve_event(
+                    {
+                        "ok": False,
+                        "type": "job_result",
+                        "error": {
+                            "code": "INVALID_WORKER_PAYLOAD",
+                            "message": "Payload must be a JSON object",
+                            "is_transient": False,
+                        },
+                    }
+                )
+                continue
+
+            msg_type = str(payload.get("type") or "job").lower()
+            if msg_type in ("status", "ping", "health"):
+                _emit_serve_event(
+                    {
+                        "ok": True,
+                        "type": "status",
+                        "resident_status": runtime.resident_status(),
+                    }
+                )
+                continue
+            if msg_type == "unload":
+                runtime.clear_idle_pipes()
+                _emit_serve_event(
+                    {
+                        "ok": True,
+                        "type": "idle_unload",
+                        "resident_status": runtime.resident_status(),
+                    }
+                )
+                continue
+
+            response = asyncio.run(runtime.process_job_payload(payload))
+            response["type"] = "job_result"
+            response["resident_status"] = runtime.resident_status()
+            _emit_serve_event(response)
+            activity["ts"] = time.monotonic()
+    finally:
+        stop.set()
+
+    return 0
+
+
 def run_cli(argv: list[str] | None = None) -> int:
     """CLI entrypoint accepting a JSON request via --payload or stdin."""
     parser = argparse.ArgumentParser(description="Execute Python/PyTorch inference worker job.")
@@ -154,6 +285,11 @@ def run_cli(argv: list[str] | None = None) -> int:
         type=str,
         default=None,
         help="Inline JSON job payload. If omitted, reads JSON from stdin.",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Run persistent NDJSON serve loop (keeps models warm across jobs).",
     )
     parser.add_argument(
         "--healthcheck",
@@ -186,10 +322,14 @@ def run_cli(argv: list[str] | None = None) -> int:
                     "provider": runtime._provider.name,
                     "all_healthy": all_healthy,
                     "providers": all_health,
+                    "resident_status": runtime.resident_status(),
                 }
             )
         )
         return 0 if local_healthy else 1
+
+    if args.serve:
+        return run_serve_loop(runtime)
 
     raw_input = args.payload if args.payload is not None else sys.stdin.read()
     try:

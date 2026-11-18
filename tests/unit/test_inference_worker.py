@@ -676,5 +676,57 @@ class TestInferenceWorkerAndBenchmark(unittest.TestCase):
         self.assertLessEqual(len(loader._cache), 4)
 
 
+class ProductionWeightRoutingTests(unittest.TestCase):
+    """Pretrained checkpoint toggle must map every open-weight modality to a real HF path."""
+
+    def test_video_hub_alias_maps_wan_catalog_id_to_diffusers_repo(self) -> None:
+        self.assertEqual(
+            LocalPyTorchAdapter.resolve_hub_video_model_id("Wan-AI/Wan2.1-T2V-1.3B"),
+            "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        )
+        self.assertEqual(
+            LocalPyTorchAdapter.resolve_hub_video_model_id("THUDM/CogVideoX-2b"),
+            "THUDM/CogVideoX-2b",
+        )
+
+    def test_effective_modality_infers_whisper_and_video(self) -> None:
+        self.assertEqual(
+            LocalPyTorchAdapter.resolve_effective_modality("openai/whisper-tiny", "text_to_text"),
+            "speech_to_text",
+        )
+        self.assertEqual(
+            LocalPyTorchAdapter.resolve_effective_modality("Wan-AI/Wan2.1-T2V-1.3B", "media_video"),
+            "media_video",
+        )
+
+    def test_explicit_production_video_fails_when_checkpoint_unavailable(self) -> None:
+        adapter = LocalPyTorchAdapter()
+        with mock.patch.object(adapter, "_get_video_pipeline", return_value=None):
+            req = InferenceRequest(
+                job_id="job-prod-video",
+                tenant_id="tenant-dev",
+                model_id="Wan-AI/Wan2.1-T2V-1.3B",
+                prompt="A red car rotating",
+                parameters={"weights": "production", "max_new_tokens": 4, "device": "cpu"},
+            )
+            with self.assertRaises(InferenceError) as ctx:
+                asyncio.run(adapter.predict(req))
+            self.assertEqual(ctx.exception.code, "PRODUCTION_WEIGHTS_UNAVAILABLE")
+
+    def test_synthetic_video_still_runs_without_hf_checkpoint(self) -> None:
+        adapter = LocalPyTorchAdapter()
+        with mock.patch.object(adapter, "_get_video_pipeline", return_value=None):
+            req = InferenceRequest(
+                job_id="job-synth-video",
+                tenant_id="tenant-dev",
+                model_id="Wan-AI/Wan2.1-T2V-1.3B",
+                prompt="A red car rotating",
+                parameters={"weights": "synthetic", "tier": 1, "max_new_tokens": 4, "device": "cpu"},
+            )
+            result = asyncio.run(adapter.predict(req))
+            self.assertFalse(bool(result.metadata.get("production_weights")))
+            self.assertEqual(result.metadata.get("weights"), "synthetic")
+
+
 if __name__ == "__main__":
     unittest.main()

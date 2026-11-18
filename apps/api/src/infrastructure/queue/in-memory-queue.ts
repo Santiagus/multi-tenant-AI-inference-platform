@@ -51,7 +51,11 @@ export class InMemoryQueueClient implements IQueueClient {
     return id;
   }
 
-  async receiveMessages(maxMessages = 1): Promise<ReceivedMessage[]> {
+  async receiveMessages(
+    maxMessages = 1,
+    _waitTimeSeconds = 0,
+    options?: { preferModelId?: string | null }
+  ): Promise<ReceivedMessage[]> {
     const now = Date.now();
 
     // Check if any in-flight messages timed out and return them to the queue
@@ -82,11 +86,26 @@ export class InMemoryQueueClient implements IQueueClient {
       }
     }
 
-    const results: ReceivedMessage[] = [];
-    const remainingQueue: QueuedItem[] = [];
-
+    const prefer = options?.preferModelId?.trim() || null;
+    const visible: QueuedItem[] = [];
+    const notYet: QueuedItem[] = [];
     for (const item of this.queue) {
-      if (results.length < maxMessages && item.visibleAfter <= now) {
+      if (item.visibleAfter <= now) visible.push(item);
+      else notYet.push(item);
+    }
+
+    // Model-affinity: pull matching modelId messages to the front of the visible window.
+    if (prefer) {
+      const preferred = visible.filter((i) => i.body.modelId === prefer);
+      const others = visible.filter((i) => i.body.modelId !== prefer);
+      visible.splice(0, visible.length, ...preferred, ...others);
+    }
+
+    const results: ReceivedMessage[] = [];
+    const remainingVisible: QueuedItem[] = [];
+
+    for (const item of visible) {
+      if (results.length < maxMessages) {
         const nextReceiveCount = item.receiveCount + 1;
         const receiptHandle = randomUUID();
         this.inFlight.set(receiptHandle, {
@@ -104,11 +123,11 @@ export class InMemoryQueueClient implements IQueueClient {
           approximateReceiveCount: nextReceiveCount,
         });
       } else {
-        remainingQueue.push(item);
+        remainingVisible.push(item);
       }
     }
 
-    this.queue = remainingQueue;
+    this.queue = [...remainingVisible, ...notYet];
     return results;
   }
 

@@ -8,8 +8,13 @@ import {
   getJobOutputModality,
   getInferenceExecutionMode,
   setInferenceExecutionMode,
+  getMockProvidersEnabled,
+  setMockProvidersEnabled,
   isTestEnvironment,
+  probeLocalGpuInfo,
+  getLocalResidentStatus,
 } from '../application/job-worker.js';
+import { resolveArtifactFlags } from '../application/artifact-hygiene.js';
 import type { IStorageClient } from '../infrastructure/storage/storage-client.js';
 import { type Job, type JobStatusType, type RoutingPreferenceType } from '../domain/job.js';
 import { ForbiddenError, ValidationError } from '../domain/errors.js';
@@ -98,6 +103,13 @@ const SUPPORTED_UPLOAD_CONTENT_TYPES = [
   'image/webp',
   'video/mp4',
   'video/quicktime',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/webm',
+  'audio/mp4',
+  'audio/flac',
   'application/pdf',
   'jpeg',
   'jpg',
@@ -105,6 +117,11 @@ const SUPPORTED_UPLOAD_CONTENT_TYPES = [
   'webp',
   'mp4',
   'quicktime',
+  'mp3',
+  'mpeg',
+  'wav',
+  'webm',
+  'flac',
   'pdf',
 ] as const;
 
@@ -116,7 +133,8 @@ const UploadUrlSchema = z.object({
     .refine(
       (ct) => (SUPPORTED_UPLOAD_CONTENT_TYPES as readonly string[]).includes(ct.trim().toLowerCase()),
       {
-        message: 'Unsupported content_type. Supported: jpeg, png, webp, mp4, quicktime, pdf',
+        message:
+          'Unsupported content_type. Supported: jpeg, png, webp, mp4, quicktime, mp3, wav, webm, flac, pdf',
       }
     ),
   expires_in_seconds: z.number().int().positive().max(86400).optional().default(3600),
@@ -392,6 +410,7 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
             routing_preference: job.routingPreference,
             priority: job.priority,
             provider: job.provider,
+            ...resolveArtifactFlags(job),
             ...resolveJobInferenceMode(job),
             ...resolveJobInputFields(job),
             retry_count: job.retryCount,
@@ -510,6 +529,43 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
     }
   );
 
+  // GET /v1/worker/local-gpu - Probe CUDA VRAM on the API/worker host
+  fastify.get(
+    '/v1/worker/local-gpu',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Probe Local GPU VRAM',
+        description:
+          'Returns CUDA device name and total/free VRAM so the dashboard can forecast resident vs CPU-offload placement.',
+      },
+    },
+    async (_req, reply) => {
+      const gpu = await probeLocalGpuInfo();
+      return reply.status(200).send(gpu);
+    }
+  );
+
+  // GET /v1/worker/local-status - Models currently resident on local GPU/CPU
+  fastify.get(
+    '/v1/worker/local-status',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Local Worker Resident Models',
+        description:
+          'Returns which models the persistent local Python worker currently holds in GPU and CPU memory (warm cache).',
+      },
+    },
+    async (_req, reply) => {
+      return reply.status(200).send({
+        ok: true,
+        inferenceMode: getInferenceExecutionMode(),
+        resident: getLocalResidentStatus(),
+      });
+    }
+  );
+
   // GET /v1/worker/inference-mode - Get current local inference execution mode (mock vs real)
   fastify.get(
     '/v1/worker/inference-mode',
@@ -556,11 +612,70 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
         return reply.status(200).send({
           ok: true,
           mode: getInferenceExecutionMode(),
+          mockProviders: getMockProvidersEnabled(),
           message: `Local inference execution mode set to ${targetMode}.`,
         });
       } catch (err: any) {
         return reply.status(400).send({
           error: err.message || 'Failed to set inference execution mode',
+        });
+      }
+    }
+  );
+
+  // GET /v1/worker/mock-providers - Whether MOCK_PROVIDERS gate is active
+  fastify.get(
+    '/v1/worker/mock-providers',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Get MOCK_PROVIDERS Flag',
+        description:
+          'Returns whether live provider/worker inference is gated (simulated). Local-dev only semantics.',
+      },
+    },
+    async (_req, reply) => {
+      return reply.status(200).send({
+        enabled: getMockProvidersEnabled(),
+        inferenceMode: getInferenceExecutionMode(),
+        description: getMockProvidersEnabled()
+          ? 'MOCK_PROVIDERS on — providers and local worker use simulated responses (no cloud spend / no PyTorch forward pass).'
+          : 'MOCK_PROVIDERS off — live local/cloud inference paths are allowed (requires Python/CUDA in the runtime).',
+      });
+    }
+  );
+
+  // POST /v1/worker/mock-providers - Toggle MOCK_PROVIDERS at runtime
+  fastify.post<{ Body?: { enabled?: boolean } }>(
+    '/v1/worker/mock-providers',
+    {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Set MOCK_PROVIDERS Flag',
+        description:
+          'Enables or disables the MOCK_PROVIDERS gate at runtime (mutates process env for this API process).',
+      },
+    },
+    async (req, reply) => {
+      if (typeof req.body?.enabled !== 'boolean') {
+        return reply.status(400).send({
+          error: 'Invalid body. Expected { "enabled": true | false }.',
+        });
+      }
+
+      try {
+        const result = setMockProvidersEnabled(req.body.enabled);
+        return reply.status(200).send({
+          ok: true,
+          enabled: result.mockProviders,
+          inferenceMode: result.inferenceMode,
+          message: result.mockProviders
+            ? 'MOCK_PROVIDERS enabled — inference is simulated.'
+            : 'MOCK_PROVIDERS disabled — real inference gate opened for this API process.',
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          error: err.message || 'Failed to set MOCK_PROVIDERS',
         });
       }
     }
@@ -812,7 +927,8 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       schema: {
         tags: ['Jobs'],
         summary: 'Reap Expired Jobs',
-        description: 'Scans non-terminal jobs exceeding queue TTL expiration or maximum retries and marks them FAILED.',
+        description:
+          'Expires jobs past queue TTL / max retries, and reclaims orphaned PROCESSING jobs (lost worker lease) by auto-retry or FAIL.',
       },
     },
     async (_req, reply) => {
@@ -820,6 +936,13 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       return reply.status(200).send({
         reaped_count: result.reapedCount,
         reaped_jobs: result.jobs.map((j) => ({
+          job_id: j.id,
+          status: j.status,
+          error_code: j.errorCode,
+          error_message: j.errorMessage,
+        })),
+        reclaimed_orphans: result.reclaimedOrphans,
+        orphan_jobs: result.orphanJobs.map((j) => ({
           job_id: j.id,
           status: j.status,
           error_code: j.errorCode,

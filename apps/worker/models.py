@@ -1548,6 +1548,16 @@ class ModelLoader:
             spec = PRODUCTION_MODEL_REGISTRY[model_id]
         else:
             # Dynamically construct a default spec for custom/unregistered model IDs
+            mid = model_id.lower()
+            modality = "text_to_text"
+            if "whisper" in mid:
+                modality = "speech_to_text"
+            elif any(tag in mid for tag in ("wan", "cogvideo", "t2v", "i2v")):
+                modality = "media_video"
+            elif any(tag in mid for tag in ("flux", "sd-turbo", "stable-diffusion")):
+                modality = "text_to_image"
+            elif "clip" in mid:
+                modality = "media_photo"
             spec = ModelSpec(
                 model_id=model_id,
                 hidden_dim=96,
@@ -1557,6 +1567,7 @@ class ModelLoader:
                 max_context_length=4096,
                 cost_microcents_per_token=5,
                 estimated_vram_mb=8.0,
+                modality=modality,
             )
         if quantization and spec.quantization != quantization:
             return replace(spec, quantization=quantization)

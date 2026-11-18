@@ -6,6 +6,11 @@ import {
   DefaultLocalInferenceExecutor,
   isMockInferenceEnabled,
   shouldRunRealInference,
+  getMockProvidersEnabled,
+  setMockProvidersEnabled,
+  getInferenceExecutionMode,
+  setInferenceExecutionMode,
+  resetInferenceExecutionMode,
   isTestEnvironment,
   type IInferenceExecutor,
   type InferenceExecutionResult,
@@ -605,6 +610,57 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     // Reset back to enabled mock mode for tests
     process.env.MOCK_PROVIDERS = '1';
     process.env.MOCK_INFERENCE = '1';
+    resetInferenceExecutionMode();
+  });
+
+  test('setMockProvidersEnabled turns the mock gate on and syncs inference mode', () => {
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    const on = setMockProvidersEnabled(true);
+    assert.equal(on.mockProviders, true);
+    assert.equal(getMockProvidersEnabled(), true);
+    assert.equal(on.inferenceMode, 'mock');
+
+    if (isTestEnvironment()) {
+      assert.throws(
+        () => setMockProvidersEnabled(false),
+        /Cannot disable MOCK_PROVIDERS in test|Real inference is strictly forbidden/
+      );
+    }
+
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+    resetInferenceExecutionMode();
+  });
+
+  test('setInferenceExecutionMode(mock) keeps MOCK_PROVIDERS enabled and forbids real in tests', () => {
+    process.env.MOCK_PROVIDERS = '0';
+    process.env.FORCE_REAL_INFERENCE = '1';
+    setInferenceExecutionMode('mock');
+    assert.equal(process.env.MOCK_PROVIDERS, '1');
+    assert.equal(process.env.FORCE_REAL_INFERENCE, '0');
+    assert.equal(getInferenceExecutionMode(), 'mock');
+    assert.equal(getMockProvidersEnabled(), true);
+
+    if (isTestEnvironment()) {
+      assert.throws(
+        () => setInferenceExecutionMode('real'),
+        /Real inference is strictly forbidden/
+      );
+    } else {
+      // Outside NODE_ENV=test, REAL clears the mock gate (production/dev behavior).
+      setInferenceExecutionMode('real');
+      assert.equal(process.env.MOCK_PROVIDERS, '0');
+      assert.equal(process.env.FORCE_REAL_INFERENCE, '1');
+      assert.equal(getInferenceExecutionMode(), 'real');
+      assert.equal(getMockProvidersEnabled(), false);
+    }
+
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+    resetInferenceExecutionMode();
   });
 });
 

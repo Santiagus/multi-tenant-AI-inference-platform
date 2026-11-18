@@ -1,6 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -19,12 +20,19 @@ import {
   type Job,
   type JobProgress,
   JobStatus,
+  DEFAULT_WORKER_LEASE_SECONDS,
   calculateBackoffSeconds,
 } from '../domain/job.js';
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const VENV_PYTHON = path.resolve(REPO_ROOT, '.venv/bin/python');
+const WORKER_LEASE_OWNER = `${os.hostname()}:${process.pid}`;
+const WORKER_LEASE_SECONDS = Number(process.env.WORKER_LEASE_SECONDS ?? DEFAULT_WORKER_LEASE_SECONDS);
+
+function leaseExpiry(fromMs = Date.now()): Date {
+  return new Date(fromMs + Math.max(WORKER_LEASE_SECONDS, 30) * 1000);
+}
 
 const PNG_CRC_TABLE = new Uint32Array(256);
 for (let n = 0; n < 256; n++) {
@@ -391,11 +399,84 @@ export function setInferenceExecutionMode(mode: 'mock' | 'real'): void {
   if (mode === 'real' && isTestEnvironment()) {
     throw new Error('Real inference is strictly forbidden during testing. Mock inference must remain active.');
   }
+  // Keep MOCK_PROVIDERS / FORCE_REAL_INFERENCE in lockstep with the mode override so the
+  // dashboard form REAL gate, header MOCK_PROVIDERS toggle, and Python child env agree.
+  if (mode === 'real') {
+    process.env.MOCK_PROVIDERS = '0';
+    process.env.FORCE_REAL_INFERENCE = '1';
+    for (const alias of ['MOCK_INFERENCE', 'INFERENCE_MOCK_MODE', 'INFERENCE_MOCK'] as const) {
+      if (process.env[alias] !== undefined) {
+        process.env[alias] = '0';
+      }
+    }
+  } else {
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+  }
   runtimeInferenceModeOverride = mode;
 }
 
 export function resetInferenceExecutionMode(): void {
   runtimeInferenceModeOverride = null;
+}
+
+export interface LocalGpuProbe {
+  available: boolean;
+  device_count: number;
+  device_name: string | null;
+  total_vram_mb: number | null;
+  free_vram_mb: number | null;
+  allocated_vram_mb: number | null;
+  total_vram_gb: number | null;
+  free_vram_gb: number | null;
+  source: 'cuda' | 'unavailable' | 'error';
+  error?: string;
+}
+
+/** Probe host/container CUDA VRAM for Submit Job offload forecasts. */
+export async function probeLocalGpuInfo(): Promise<LocalGpuProbe> {
+  const pythonBin = resolveDefaultPythonBin();
+  const script = [
+    'import json',
+    'out={"available":False,"device_count":0,"device_name":None,"total_vram_mb":None,"free_vram_mb":None,"allocated_vram_mb":None,"total_vram_gb":None,"free_vram_gb":None,"source":"unavailable"}',
+    'try:',
+    ' import torch',
+    ' if torch.cuda.is_available():',
+    '  props=torch.cuda.get_device_properties(0)',
+    '  free,total=torch.cuda.mem_get_info(0)',
+    '  alloc=torch.cuda.memory_allocated(0)',
+    '  out.update(available=True,device_count=torch.cuda.device_count(),device_name=props.name,',
+    '   total_vram_mb=round(total/1048576),free_vram_mb=round(free/1048576),allocated_vram_mb=round(alloc/1048576),',
+    '   total_vram_gb=round(total/1073741824,2),free_vram_gb=round(free/1073741824,2),source="cuda")',
+    'except Exception as e:',
+    ' out={"available":False,"device_count":0,"device_name":None,"total_vram_mb":None,"free_vram_mb":None,"allocated_vram_mb":None,"total_vram_gb":None,"free_vram_gb":None,"source":"error","error":str(e)}',
+    'print(json.dumps(out))',
+  ].join('\n');
+
+  try {
+    const { stdout } = await execFileAsync(pythonBin, ['-c', script], {
+      timeout: 8000,
+      maxBuffer: 256 * 1024,
+      env: process.env,
+    });
+    const line = stdout.trim().split('\n').filter(Boolean).pop() || '{}';
+    const parsed = JSON.parse(line) as LocalGpuProbe;
+    return parsed;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      available: false,
+      device_count: 0,
+      device_name: null,
+      total_vram_mb: null,
+      free_vram_mb: null,
+      allocated_vram_mb: null,
+      total_vram_gb: null,
+      free_vram_gb: null,
+      source: 'error',
+      error: message,
+    };
+  }
 }
 
 export function shouldRunRealInference(): boolean {
@@ -413,6 +494,40 @@ export function shouldRunRealInference(): boolean {
     return true;
   }
   return !isMockInferenceEnabled();
+}
+
+/** True when MOCK_PROVIDERS (or aliases) currently gate live provider/worker execution. */
+export function getMockProvidersEnabled(): boolean {
+  return isMockInferenceEnabled();
+}
+
+/**
+ * Local-dev runtime toggle for MOCK_PROVIDERS.
+ * Mutates process.env and syncs the inference execution override.
+ * Does not install Python/CUDA — the container image must already include them for REAL mode.
+ */
+export function setMockProvidersEnabled(enabled: boolean): {
+  mockProviders: boolean;
+  inferenceMode: 'mock' | 'real';
+} {
+  if (enabled) {
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+    runtimeInferenceModeOverride = 'mock';
+  } else {
+    if (isTestEnvironment()) {
+      throw new Error(
+        'Cannot disable MOCK_PROVIDERS in test: real inference is strictly forbidden.'
+      );
+    }
+    process.env.MOCK_PROVIDERS = '0';
+    process.env.FORCE_REAL_INFERENCE = '1';
+    setInferenceExecutionMode('real');
+  }
+  return {
+    mockProviders: getMockProvidersEnabled(),
+    inferenceMode: getInferenceExecutionMode(),
+  };
 }
 
 const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
@@ -631,7 +746,16 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
           if (line.includes('[JOB_PROGRESS]')) {
             try {
               const jsonStr = line.split('[JOB_PROGRESS]')[1].trim();
-              const progressObj = JSON.parse(jsonStr) as JobProgress;
+              const raw = JSON.parse(jsonStr) as Record<string, unknown>;
+              // Python emits snake_case (total_steps); persist camelCase for the dashboard contract.
+              const totalStepsRaw = raw.totalSteps ?? raw.total_steps;
+              const progressObj: JobProgress = {
+                phase: String(raw.phase ?? 'generating') as JobProgress['phase'],
+                percent: Number(raw.percent ?? 0),
+                message: typeof raw.message === 'string' ? raw.message : undefined,
+                step: raw.step !== undefined ? Number(raw.step) : undefined,
+                totalSteps: totalStepsRaw !== undefined ? Number(totalStepsRaw) : undefined,
+              };
               onProgress(progressObj);
             } catch {
               // ignore malformed progress log
@@ -643,17 +767,247 @@ const defaultCommandRunner: CommandRunner = (cmd, args, onProgress) => {
   });
 };
 
+export type LocalResidentSlot = {
+  model_id: string | null;
+  warm: boolean;
+  footprint_mb: number;
+};
+
+export type LocalResidentStatus = {
+  gpu: LocalResidentSlot;
+  cpu: LocalResidentSlot;
+  idle_ttl_sec: number;
+};
+
+const EMPTY_RESIDENT_STATUS: LocalResidentStatus = {
+  gpu: { model_id: null, warm: false, footprint_mb: 0 },
+  cpu: { model_id: null, warm: false, footprint_mb: 0 },
+  idle_ttl_sec: 900,
+};
+
+let cachedResidentStatus: LocalResidentStatus = { ...EMPTY_RESIDENT_STATUS, gpu: { ...EMPTY_RESIDENT_STATUS.gpu }, cpu: { ...EMPTY_RESIDENT_STATUS.cpu } };
+
+export function getLocalResidentStatus(): LocalResidentStatus {
+  return cachedResidentStatus;
+}
+
+function parseResidentStatus(raw: unknown): LocalResidentStatus | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const gpu = (obj.gpu ?? {}) as Record<string, unknown>;
+  const cpu = (obj.cpu ?? {}) as Record<string, unknown>;
+  return {
+    gpu: {
+      model_id: typeof gpu.model_id === 'string' ? gpu.model_id : null,
+      warm: Boolean(gpu.warm),
+      footprint_mb: Number(gpu.footprint_mb ?? 0),
+    },
+    cpu: {
+      model_id: typeof cpu.model_id === 'string' ? cpu.model_id : null,
+      warm: Boolean(cpu.warm),
+      footprint_mb: Number(cpu.footprint_mb ?? 0),
+    },
+    idle_ttl_sec: Number(obj.idle_ttl_sec ?? 900),
+  };
+}
+
+/**
+ * Long-lived `python -m apps.worker.consumer --serve` child that keeps Diffusers pipes warm.
+ */
+class PersistentPythonServePool {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private stdoutBuf = '';
+  private pending: Array<{
+    resolve: (value: Record<string, unknown>) => void;
+    reject: (err: Error) => void;
+    onProgress?: (progress: JobProgress) => void;
+  }> = [];
+  private starting: Promise<void> | null = null;
+  private readonly pythonBin: string;
+
+  constructor(pythonBin: string) {
+    this.pythonBin = pythonBin;
+  }
+
+  async ensureStarted(): Promise<void> {
+    if (this.child && !this.child.killed) return;
+    if (this.starting) return this.starting;
+    this.starting = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const child = spawn(this.pythonBin, ['-m', 'apps.worker.consumer', '--serve'], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          ENABLE_JOB_PROGRESS: '1',
+          PYTHONUNBUFFERED: '1',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      this.child = child;
+      this.stdoutBuf = '';
+
+      child.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+        const pending = this.pending.splice(0);
+        for (const p of pending) {
+          p.reject(
+            new InferenceExecutionError(
+              `Persistent Python worker failed to start: ${err.message}`,
+              'PYTHON_WORKER_PROCESS_ERROR',
+              true
+            )
+          );
+        }
+        this.child = null;
+      });
+
+      child.on('exit', (code, signal) => {
+        const pending = this.pending.splice(0);
+        for (const p of pending) {
+          p.reject(
+            new InferenceExecutionError(
+              `Persistent Python worker exited (code=${code}, signal=${signal})`,
+              'PYTHON_WORKER_PROCESS_ERROR',
+              true
+            )
+          );
+        }
+        this.child = null;
+      });
+
+      child.stdout.on('data', (chunk: string | Buffer) => {
+        this.stdoutBuf += chunk.toString();
+        const lines = this.stdoutBuf.split('\n');
+        this.stdoutBuf = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(trimmed) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const status = parseResidentStatus(parsed.resident_status);
+          if (status) cachedResidentStatus = status;
+          const typ = String(parsed.type ?? '');
+          if (typ === 'ready') {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+            continue;
+          }
+          if (typ === 'status' || typ === 'idle_unload') {
+            continue;
+          }
+          const waiter = this.pending.shift();
+          if (waiter) waiter.resolve(parsed);
+        }
+      });
+
+      child.stderr.on('data', (chunk: string | Buffer) => {
+        const text = chunk.toString();
+        for (const line of text.split('\n')) {
+          if (!line.includes('[JOB_PROGRESS]')) continue;
+          try {
+            const jsonStr = line.split('[JOB_PROGRESS]')[1].trim();
+            const raw = JSON.parse(jsonStr) as Record<string, unknown>;
+            const totalStepsRaw = raw.totalSteps ?? raw.total_steps;
+            const progressObj: JobProgress = {
+              phase: String(raw.phase ?? 'generating') as JobProgress['phase'],
+              percent: Number(raw.percent ?? 0),
+              message: typeof raw.message === 'string' ? raw.message : undefined,
+              step: raw.step !== undefined ? Number(raw.step) : undefined,
+              totalSteps: totalStepsRaw !== undefined ? Number(totalStepsRaw) : undefined,
+            };
+            this.pending[0]?.onProgress?.(progressObj);
+          } catch {
+            // ignore
+          }
+        }
+      });
+
+      // Fallback resolve if ready event is delayed.
+      setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      }, 2000);
+    }).finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  async runJob(
+    payload: Record<string, unknown>,
+    onProgress?: (progress: JobProgress) => void
+  ): Promise<Record<string, unknown>> {
+    await this.ensureStarted();
+    const child = this.child;
+    if (!child?.stdin) {
+      throw new InferenceExecutionError(
+        'Persistent Python worker stdin unavailable',
+        'PYTHON_WORKER_PROCESS_ERROR',
+        true
+      );
+    }
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+      child.stdin.write(`${JSON.stringify(payload)}\n`);
+    });
+  }
+
+  async requestStatus(): Promise<LocalResidentStatus> {
+    try {
+      await this.ensureStarted();
+      const child = this.child;
+      if (!child?.stdin) return cachedResidentStatus;
+      child.stdin.write(`${JSON.stringify({ type: 'status' })}\n`);
+      await new Promise((r) => setTimeout(r, 200));
+    } catch {
+      // keep last known
+    }
+    return cachedResidentStatus;
+  }
+}
+
+const globalServePools = new Map<string, PersistentPythonServePool>();
+
+function getServePool(pythonBin: string): PersistentPythonServePool {
+  let pool = globalServePools.get(pythonBin);
+  if (!pool) {
+    pool = new PersistentPythonServePool(pythonBin);
+    globalServePools.set(pythonBin, pool);
+  }
+  return pool;
+}
+
+function usePersistentWorker(): boolean {
+  if (!shouldRunRealInference() || isTestEnvironment()) return false;
+  const flag = (process.env.PERSISTENT_PYTHON_WORKER ?? '1').trim().toLowerCase();
+  return !['0', 'false', 'off', 'no'].includes(flag);
+}
+
 /**
  * Executes inference by invoking the Python/PyTorch worker (`apps.worker.consumer`),
  * capturing real tensor forward-pass metrics and GPU/CPU hardware telemetry.
+ * Uses a persistent `--serve` process when real inference is enabled so models stay warm.
  */
 export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
   private readonly pythonBin: string;
   private readonly runner: CommandRunner;
+  private readonly customRunner: boolean;
 
   constructor(pythonBin?: string, runner: CommandRunner = defaultCommandRunner) {
     this.pythonBin = pythonBin ?? resolveDefaultPythonBin();
     this.runner = runner;
+    this.customRunner = runner !== defaultCommandRunner;
   }
 
   async execute(
@@ -673,7 +1027,7 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
         ? formatTraceparent(ctx.traceId, ctx.spanId, ctx.traceFlags)
         : (job.traceparent ?? null);
 
-    const payload = JSON.stringify({
+    const payloadObj = {
       job_id: job.id,
       tenant_id: job.tenantId,
       model_id: job.modelId,
@@ -682,20 +1036,29 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
       correlation_id: correlationId,
       traceparent,
       input: resolvedInput,
-    });
+    };
 
-    const { stdout } = await this.runner(
-      this.pythonBin,
-      [
-        '-m',
-        'apps.worker.consumer',
-        '--payload',
-        payload,
-      ],
-      onProgress ? (p) => { void onProgress(p); } : undefined
-    );
+    let parsed: Record<string, unknown>;
+    if (usePersistentWorker() && !this.customRunner) {
+      parsed = await getServePool(this.pythonBin).runJob(
+        payloadObj,
+        onProgress ? (p) => { void onProgress(p); } : undefined
+      );
+    } else {
+      const { stdout } = await this.runner(
+        this.pythonBin,
+        ['-m', 'apps.worker.consumer', '--payload', JSON.stringify(payloadObj)],
+        onProgress ? (p) => { void onProgress(p); } : undefined
+      );
+      // One-shot may print a single JSON object; persistent prints NDJSON lines.
+      const line = stdout
+        .trim()
+        .split('\n')
+        .filter((l) => l.trim().startsWith('{'))
+        .pop();
+      parsed = JSON.parse(line ?? stdout.trim()) as Record<string, unknown>;
+    }
 
-    const parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
     if (!parsed.ok) {
       const errObj = (parsed.error ?? {}) as Record<string, unknown>;
       throw new InferenceExecutionError(
@@ -704,6 +1067,10 @@ export class PythonWorkerInferenceExecutor implements IInferenceExecutor {
         Boolean(errObj.is_transient ?? false)
       );
     }
+
+    const status = parseResidentStatus(parsed.resident_status)
+      ?? parseResidentStatus((parsed.metadata as Record<string, unknown> | undefined)?.resident_status);
+    if (status) cachedResidentStatus = status;
 
     return {
       provider: String(parsed.provider ?? 'local_pytorch'),
@@ -916,6 +1283,8 @@ export interface ProcessMessageOutcome {
   backoffSeconds?: number;
 }
 
+const MODEL_AFFINITY_FAIRNESS_CAP = Number(process.env.MODEL_AFFINITY_FAIRNESS_CAP ?? 8);
+
 export class JobWorker {
   private running = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -927,6 +1296,9 @@ export class JobWorker {
   private tracer: DistributedTracer;
   private metrics: MetricsRegistry;
   private activeJobsCount = 0;
+  /** Last local model successfully run — used for queue affinity. */
+  private warmLocalModelId: string | null = null;
+  private stickyJobsForWarmModel = 0;
 
   constructor(
     private jobRepo: IJobRepository,
@@ -977,11 +1349,27 @@ export class JobWorker {
   }
 
   async processNextBatch(maxMessages = 1): Promise<ProcessMessageOutcome[]> {
-    const messages = await this.queueClient.receiveMessages(maxMessages, 0);
+    let preferModelId: string | null =
+      this.warmLocalModelId && this.stickyJobsForWarmModel < MODEL_AFFINITY_FAIRNESS_CAP
+        ? this.warmLocalModelId
+        : null;
+    if (!preferModelId && this.stickyJobsForWarmModel >= MODEL_AFFINITY_FAIRNESS_CAP) {
+      // Fairness yield: one FIFO receive without affinity, then resume sticky preference.
+      this.stickyJobsForWarmModel = 0;
+    }
+    const messages = await this.queueClient.receiveMessages(maxMessages, 0, { preferModelId });
     this.syncQueueDepthGauges();
     const outcomes: ProcessMessageOutcome[] = [];
     for (const msg of messages) {
       const outcome = await this.processMessage(msg);
+      if (outcome.action === 'succeeded') {
+        if (this.warmLocalModelId === msg.body.modelId) {
+          this.stickyJobsForWarmModel += 1;
+        } else {
+          this.warmLocalModelId = msg.body.modelId;
+          this.stickyJobsForWarmModel = 1;
+        }
+      }
       outcomes.push(outcome);
     }
     this.syncQueueDepthGauges();
@@ -1006,11 +1394,13 @@ export class JobWorker {
 
     const startedAt = job.startedAt ?? new Date();
 
-    // Transition to PROCESSING if not already in a terminal state
+    // Transition to PROCESSING if not already in a terminal state; take a renewing worker lease.
     const processingJob = await this.jobRepo.update(tenantId, jobId, {
       status: JobStatus.PROCESSING,
       expectedCurrentStatuses: [JobStatus.QUEUED, JobStatus.RETRYING, JobStatus.PROCESSING],
       startedAt,
+      leaseOwner: WORKER_LEASE_OWNER,
+      leaseExpiresAt: leaseExpiry(),
       progressPct: 15,
       progress: {
         phase: 'loading_model',
@@ -1089,19 +1479,37 @@ export class JobWorker {
               },
             },
             async (infSpan) => {
+              const renewLease = async () => {
+                await this.jobRepo.update(tenantId, jobId, {
+                  leaseOwner: WORKER_LEASE_OWNER,
+                  leaseExpiresAt: leaseExpiry(),
+                  expectedCurrentStatuses: [JobStatus.PROCESSING],
+                });
+              };
               const onProgress = async (prog: JobProgress) => {
                 await this.jobRepo.update(tenantId, jobId, {
                   progress: prog,
                   progressPct: prog.percent,
+                  leaseOwner: WORKER_LEASE_OWNER,
+                  leaseExpiresAt: leaseExpiry(),
                   expectedCurrentStatuses: [JobStatus.PROCESSING],
                 });
               };
-              const execRes = await this.executor.execute(
-                processingJob,
-                resolvedInput,
-                checkCancelled,
-                onProgress
-              );
+              const leaseRenewMs = Math.max(Math.floor((WORKER_LEASE_SECONDS * 1000) / 3), 15_000);
+              const leaseTimer = setInterval(() => {
+                void renewLease();
+              }, leaseRenewMs);
+              let execRes: InferenceExecutionResult;
+              try {
+                execRes = await this.executor.execute(
+                  processingJob,
+                  resolvedInput,
+                  checkCancelled,
+                  onProgress
+                );
+              } finally {
+                clearInterval(leaseTimer);
+              }
               const hwTelemetry = execRes.metadata?.telemetry as
                 | Record<string, unknown>
                 | undefined;
@@ -1262,6 +1670,11 @@ export class JobWorker {
             status: JobStatus.SUCCEEDED,
             expectedCurrentStatuses: [JobStatus.PROCESSING],
             provider: result.provider,
+            // Clear prior RETRYING failure fields so Job Inspection matches SUCCEEDED.
+            errorCode: null,
+            errorMessage: null,
+            leaseOwner: null,
+            leaseExpiresAt: null,
             outputPayload: {
               output_text: result.outputText,
               finish_reason: result.finishReason,
@@ -1542,6 +1955,8 @@ export class JobWorker {
         retryCount: nextRetryCount,
         errorCode,
         errorMessage,
+        leaseOwner: null,
+        leaseExpiresAt: null,
       });
 
       await this.queueClient.changeMessageVisibility(msg.receiptHandle, backoffSeconds);
@@ -1567,6 +1982,8 @@ export class JobWorker {
       errorCode,
       errorMessage,
       completedAt: new Date(),
+      leaseOwner: null,
+      leaseExpiresAt: null,
       progress: {
         phase: 'failed',
         percent: job.progressPct ?? 0,

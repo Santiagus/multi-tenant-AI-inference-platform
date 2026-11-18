@@ -615,6 +615,20 @@ export const ENDPOINT_OPENAPI_CONFIGS: Record<string, EndpointDocsConfig> = {
     description: 'Toggles between mock and real local inference execution.',
   },
 
+  'GET /v1/worker/mock-providers': {
+    tags: ['Jobs'],
+    summary: 'Get MOCK_PROVIDERS Flag',
+    description:
+      'Returns whether live provider/worker inference is gated (simulated). Local-dev only semantics.',
+  },
+
+  'POST /v1/worker/mock-providers': {
+    tags: ['Jobs'],
+    summary: 'Set MOCK_PROVIDERS Flag',
+    description:
+      'Enables or disables the MOCK_PROVIDERS gate at runtime for this API process.',
+  },
+
   'POST /v1/worker/process-next': {
     tags: ['Jobs'],
     summary: 'Process Next Queued Job (Worker Trigger)',
