@@ -182,11 +182,19 @@ This project is built using disciplined agentic pair-programming governed by:
 2. **Option A: Start full platform, dashboards & observability stack via Docker Compose**:
    ```bash
    # Starts PostgreSQL, MinIO (S3), ElasticMQ (SQS), Fastify API (:3000), Product Dashboard (:5173), OTel Collector, Prometheus (:9090), and Grafana (:3001)
+   # Local-only: API image includes Python + PyTorch (CUDA wheels by default; also run on CPU).
+   # Cloud does not use this Compose file (ECS Fargate API + EKS/cloud workers).
    docker compose up -d --build
 
    # Verify all services are healthy
    docker compose ps
    ```
+
+   Inference gate notes (Compose `api` service):
+   - `MOCK_PROVIDERS=0|1` — simulate vs allow live provider/worker paths (also toggleable in the dashboard header).
+   - `FORCE_REAL_INFERENCE=1` — require real Python/PyTorch execution (needs the image’s Python runtime).
+   - `WORKER_ENABLED=false` — jobs are stepped with `POST /v1/worker/process-next` instead of an auto-drain daemon.
+   - `INSTALL_CUDA_TORCH=0` build arg — smaller CPU-only torch wheels if you do not want CUDA packages.
 
    #### Local Services & Endpoints Reference
 

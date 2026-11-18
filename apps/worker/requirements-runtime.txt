@@ -1,0 +1,14 @@
+# Heavy runtime deps for Compose API image (local REAL inference).
+# Kept separate from pyproject so Docker can cache torch/HF wheels when only
+# apps/worker/*.py changes.
+transformers>=4.44.0
+diffusers>=0.31.0
+accelerate>=0.33.0
+huggingface_hub>=0.24.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+ftfy>=6.1.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.0
+safetensors>=0.4.0
+pillow>=10.0.0

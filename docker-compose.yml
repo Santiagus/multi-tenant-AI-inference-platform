@@ -1,5 +1,31 @@
-version: '3.8'
-
+# Local integration stack only. Cloud uses ECS Fargate (API) + EKS/cloud workers — not this file.
+# API image includes Python + PyTorch so REAL local inference works inside Compose.
+#
+# Quick start (CPU is enough for most paths):
+#   docker compose up --build
+#
+# Local GPU (routing_preference=local/gpu → CUDA inside platform-api):
+#   Host needs NVIDIA drivers (nvidia-smi) + NVIDIA Container Toolkit (Docker nvidia runtime).
+#   One-time toolkit install on this Debian/Ubuntu Docker Engine host:
+#     docker compose --profile gpu-setup run --rm nvidia-toolkit-install
+#     sudo service docker restart
+#     docker compose up -d --force-recreate api
+#     docker exec platform-api python3 -c "import torch; print(torch.cuda.is_available())"
+#   Without the toolkit, api.deploy device reservation fails start with:
+#     could not select device driver "nvidia"
+#
+# Build-time toggles (API Dockerfile ARG / compose build.args):
+#   INSTALL_CUDA_TORCH=1  CUDA-capable torch wheels (default; also runs on CPU)
+#   INSTALL_CUDA_TORCH=0  smaller CPU-only wheels
+#   INSTALL_HF_STACK=1    transformers/diffusers/etc for pretrained checkpoints (default; slow first build)
+#   INSTALL_HF_STACK=0    skip HF stack for faster image builds (synthetic weights only)
+# Pip wheels are kept in BuildKit cache mounts — after the first successful build,
+# re-runs of the torch/HF steps are much faster unless those layers truly change.
+#
+# Runtime inference gates (api.environment — hardcoded so .env cannot silently mock):
+#   MOCK_PROVIDERS=0           live local/cloud paths (dashboard can still flip mock)
+#   FORCE_REAL_INFERENCE=1     require Python/PyTorch worker (needs torch in the image)
+#   WORKER_ENABLED=false       drain queue via POST /v1/worker/process-next (or dashboard)
 services:
   postgres:
     image: postgres:16-alpine
@@ -67,6 +93,11 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      args:
+        # 1 = CUDA-capable torch wheels (also run on CPU). 0 = smaller CPU-only wheels.
+        INSTALL_CUDA_TORCH: ${INSTALL_CUDA_TORCH:-1}
+        # 1 = transformers/diffusers for pretrained checkpoints (slow first build). 0 = faster image.
+        INSTALL_HF_STACK: ${INSTALL_HF_STACK:-1}
     container_name: platform-api
     restart: unless-stopped
     env_file:
@@ -90,10 +121,30 @@ services:
       SQS_REGION: us-east-1
       SQS_QUEUE_URL: http://elasticmq:9324/000000000000/inference-jobs
       SQS_DLQ_URL: http://elasticmq:9324/000000000000/inference-jobs-dlq
-      # Set WORKER_ENABLED="true" to auto-process jobs in the background daemon.
-      # Left "false" here so jobs can be stepped through deterministically with POST /v1/worker/process-next.
-      WORKER_ENABLED: "false"
       DEFAULT_TENANT_ID: tenant-default
+      # Python worker invoked by the API for real inference (same container).
+      PYTHON_BIN: python3
+      PYTHONPATH: /app
+      # Share host Hugging Face cache so Compose sees already-downloaded checkpoints.
+      HF_HOME: /root/.cache/huggingface
+      # See file header for MOCK_PROVIDERS / FORCE_REAL_INFERENCE / WORKER_ENABLED.
+      MOCK_PROVIDERS: "0"
+      FORCE_REAL_INFERENCE: "1"
+      WORKER_ENABLED: "false"
+      # Consumed by the NVIDIA Container Toolkit when api.deploy reserves a GPU.
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+    volumes:
+      # Host HF hub cache (models--* under hub/). Override with HF_CACHE_HOST if needed.
+      - ${HF_CACHE_HOST:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
+    # Pass host GPUs into platform-api for local/gpu (requires nvidia-toolkit-install once).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,6 +157,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # One-shot host installer for NVIDIA Container Toolkit (profile: gpu-setup).
+  # Does not install GPU drivers — only the Docker nvidia runtime. Drivers: host nvidia-smi.
+  nvidia-toolkit-install:
+    image: debian:bookworm-slim
+    container_name: platform-nvidia-toolkit-install
+    profiles: ["gpu-setup"]
+    privileged: true
+    pid: host
+    network_mode: host
+    ipc: host
+    volumes:
+      - ./deploy/compose/install-nvidia-container-toolkit.sh:/opt/platform/install-nvidia-container-toolkit.sh:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq util-linux ca-certificates >/dev/null
+        # Run installer in host namespaces so apt/docker config land on the Compose host.
+        nsenter --target 1 --mount --uts --ipc --net --pid -- \
+          bash -s < /opt/platform/install-nvidia-container-toolkit.sh
+    restart: "no"
 
   otel-collector:
     image: otel/opentelemetry-collector:0.104.0
@@ -166,4 +241,3 @@ services:
 volumes:
   postgres_data:
   minio_data:
-
