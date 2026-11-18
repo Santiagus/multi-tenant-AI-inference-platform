@@ -32,9 +32,18 @@ export interface ReceivedDlqMessage {
   approximateReceiveCount: number;
 }
 
+export interface ReceiveMessagesOptions {
+  /** Prefer messages whose body.modelId matches (model-affinity drain). */
+  preferModelId?: string | null;
+}
+
 export interface IQueueClient {
   sendMessage(message: QueueMessage, delaySeconds?: number): Promise<string>;
-  receiveMessages(maxMessages?: number, waitTimeSeconds?: number): Promise<ReceivedMessage[]>;
+  receiveMessages(
+    maxMessages?: number,
+    waitTimeSeconds?: number,
+    options?: ReceiveMessagesOptions
+  ): Promise<ReceivedMessage[]>;
   deleteMessage(receiptHandle: string): Promise<void>;
   changeMessageVisibility(receiptHandle: string, visibilityTimeoutSeconds: number): Promise<void>;
   sendToDlq(message: DlqMessage): Promise<string>;

@@ -14,7 +14,12 @@ from apps.worker.contracts import (
     InferenceResult,
     UsageMetrics,
 )
-from apps.worker.providers.base import InferenceProvider
+from apps.worker.providers.base import (
+    InferenceProvider,
+    assert_no_real_inference_in_test,
+    is_mock_inference_enabled,
+    is_test_environment,
+)
 
 
 class SageMakerAdapter(InferenceProvider):
@@ -32,12 +37,10 @@ class SageMakerAdapter(InferenceProvider):
         has_aws_creds = bool(
             os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
         )
-        is_ci_or_mock = (
-            os.environ.get("CI", "").lower() in ("true", "1", "yes")
-            or os.environ.get("INFERENCE_MOCK_MODE", "").lower() in ("true", "1", "yes")
-            or os.environ.get("SAGEMAKER_MOCK", "1") == "1"
-        )
-        self._mock_mode = mock_mode if mock_mode is not None else (not has_aws_creds or is_ci_or_mock)
+        is_mock = is_mock_inference_enabled() or not has_aws_creds
+        if mock_mode is False and is_test_environment():
+            assert_no_real_inference_in_test("sagemaker")
+        self._mock_mode = mock_mode if mock_mode is not None else is_mock
         self._healthy = healthy
 
     @property
@@ -167,6 +170,7 @@ class SageMakerAdapter(InferenceProvider):
         )
 
     def _predict_live(self, request: InferenceRequest) -> InferenceResult:
+        assert_no_real_inference_in_test(self.name)
         try:
             import boto3  # type: ignore[import-not-found,import-untyped]
             from botocore.exceptions import ClientError  # type: ignore[import-not-found,import-untyped]

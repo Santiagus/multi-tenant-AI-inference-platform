@@ -4,6 +4,14 @@ import {
   JobWorker,
   InferenceExecutionError,
   DefaultLocalInferenceExecutor,
+  isMockInferenceEnabled,
+  shouldRunRealInference,
+  getMockProvidersEnabled,
+  setMockProvidersEnabled,
+  getInferenceExecutionMode,
+  setInferenceExecutionMode,
+  resetInferenceExecutionMode,
+  isTestEnvironment,
   type IInferenceExecutor,
   type InferenceExecutionResult,
 } from '../../src/application/job-worker.js';
@@ -343,7 +351,13 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
       input: { prompt: 'Polled by background daemon' },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    for (let i = 0; i < 50; i++) {
+      const currentJobs = await jobService.listJobs('tenant-1');
+      if (currentJobs[0]?.status === JobStatus.SUCCEEDED) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     await worker.stop();
     assert.equal(worker.isRunning(), false);
 
@@ -562,6 +576,91 @@ describe('JobWorker & Failure Recovery Lifecycle', () => {
     assert.equal((receivedPayload as any).media_metadata.content_type, 'image/jpeg');
     assert.equal((receivedPayload as any).media_metadata.filename, 'telemetry_f1.jpg');
     assert.ok((receivedPayload as any).local_cached_path);
+  });
+
+  test('generalized mock inference flag supports ENABLE/TRUE/1 and forbids real inference in tests', () => {
+    assert.equal(isTestEnvironment(), true);
+    assert.equal(shouldRunRealInference(), false);
+
+    // Truthy values for MOCK_PROVIDERS
+    for (const val of ['1', 'ENABLE', 'enable', 'TRUE', 'true', 'YES', 'yes']) {
+      process.env.MOCK_PROVIDERS = val;
+      assert.equal(isMockInferenceEnabled(), true);
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Truthy values for MOCK_INFERENCE
+    delete process.env.MOCK_PROVIDERS;
+    for (const val of ['1', 'ENABLE', 'enable', 'TRUE', 'true', 'YES', 'yes']) {
+      process.env.MOCK_INFERENCE = val;
+      assert.equal(isMockInferenceEnabled(), true);
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Falsy values must throw in test environment because real inference is strictly forbidden
+    for (const val of ['0', 'DISABLE', 'disable', 'FALSE', 'false', 'NO', 'no']) {
+      process.env.MOCK_PROVIDERS = val;
+      assert.throws(
+        () => isMockInferenceEnabled(),
+        /Real inference in test is strictly forbidden/
+      );
+      assert.equal(shouldRunRealInference(), false);
+    }
+
+    // Reset back to enabled mock mode for tests
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    resetInferenceExecutionMode();
+  });
+
+  test('setMockProvidersEnabled turns the mock gate on and syncs inference mode', () => {
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    const on = setMockProvidersEnabled(true);
+    assert.equal(on.mockProviders, true);
+    assert.equal(getMockProvidersEnabled(), true);
+    assert.equal(on.inferenceMode, 'mock');
+
+    if (isTestEnvironment()) {
+      assert.throws(
+        () => setMockProvidersEnabled(false),
+        /Cannot disable MOCK_PROVIDERS in test|Real inference is strictly forbidden/
+      );
+    }
+
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+    resetInferenceExecutionMode();
+  });
+
+  test('setInferenceExecutionMode(mock) keeps MOCK_PROVIDERS enabled and forbids real in tests', () => {
+    process.env.MOCK_PROVIDERS = '0';
+    process.env.FORCE_REAL_INFERENCE = '1';
+    setInferenceExecutionMode('mock');
+    assert.equal(process.env.MOCK_PROVIDERS, '1');
+    assert.equal(process.env.FORCE_REAL_INFERENCE, '0');
+    assert.equal(getInferenceExecutionMode(), 'mock');
+    assert.equal(getMockProvidersEnabled(), true);
+
+    if (isTestEnvironment()) {
+      assert.throws(
+        () => setInferenceExecutionMode('real'),
+        /Real inference is strictly forbidden/
+      );
+    } else {
+      // Outside NODE_ENV=test, REAL clears the mock gate (production/dev behavior).
+      setInferenceExecutionMode('real');
+      assert.equal(process.env.MOCK_PROVIDERS, '0');
+      assert.equal(process.env.FORCE_REAL_INFERENCE, '1');
+      assert.equal(getInferenceExecutionMode(), 'real');
+      assert.equal(getMockProvidersEnabled(), false);
+    }
+
+    process.env.MOCK_PROVIDERS = '1';
+    process.env.MOCK_INFERENCE = '1';
+    process.env.FORCE_REAL_INFERENCE = '0';
+    resetInferenceExecutionMode();
   });
 });
 

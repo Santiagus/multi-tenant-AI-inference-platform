@@ -42,8 +42,8 @@ const VALID_TRANSITIONS: Record<JobStatusType, ReadonlySet<JobStatusType>> = {
     JobStatus.CANCELLED,
   ]),
   [JobStatus.SUCCEEDED]: new Set(),
-  [JobStatus.FAILED]: new Set(),
-  [JobStatus.CANCELLED]: new Set(),
+  [JobStatus.FAILED]: new Set([JobStatus.QUEUED]),
+  [JobStatus.CANCELLED]: new Set([JobStatus.QUEUED]),
 };
 
 export function canTransitionStatus(from: JobStatusType, to: JobStatusType): boolean {
@@ -163,8 +163,23 @@ export interface Job {
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
+  expiresAt?: Date | null;
+  /** API instance currently holding PROCESSING (null when idle / terminal). */
+  leaseOwner?: string | null;
+  /** When the PROCESSING lease expires without renewal the job is treated as orphaned. */
+  leaseExpiresAt?: Date | null;
   updatedAt: Date;
 }
+
+/** Showcase seed UUID prefix — never auto-reclaim these demo PROCESSING rows. */
+export const SHOWCASE_JOB_ID_PREFIX = '00000000-0000-4000-a000-';
+
+export function isShowcaseSeedJobId(jobId: string): boolean {
+  return jobId.startsWith(SHOWCASE_JOB_ID_PREFIX);
+}
+
+/** Default PROCESSING lease TTL (seconds). Renewed while the worker owns the job. */
+export const DEFAULT_WORKER_LEASE_SECONDS = 90;
 
 export interface NewJobInput {
   tenantId: string;
@@ -178,6 +193,8 @@ export interface NewJobInput {
   inputPayload?: Record<string, unknown> | null;
   inputUri?: string | null;
   maxRetries?: number;
+  expiresInSeconds?: number;
+  expiresAt?: Date | null;
 }
 
 

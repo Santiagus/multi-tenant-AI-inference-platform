@@ -63,6 +63,10 @@ worker:
       cpu: "2000m"
       memory: "2Gi"
       nvidiaGpu: 0
+  secrets:
+    providerSecretsName: platform-provider-secrets
+    runpodApiKeyKey: runpod-api-key
+    runpodEndpointIdKey: runpod-endpoint-id
 
 keda:
   enabled: true

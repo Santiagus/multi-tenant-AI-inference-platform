@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode, MouseEvent } from 'react';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -10,6 +10,8 @@ interface SortableHeaderProps<T extends string> {
   children: ReactNode;
   align?: 'left' | 'center' | 'right';
   style?: CSSProperties;
+  /** Optional filter control rendered under the sort label (clicks do not trigger sort). */
+  filter?: ReactNode;
 }
 
 export function SortableHeader<T extends string>({
@@ -20,43 +22,46 @@ export function SortableHeader<T extends string>({
   children,
   align = 'left',
   style,
+  filter,
 }: SortableHeaderProps<T>) {
   const isActive = currentSortKey === column;
 
   return (
     <th
-      onClick={() => onSort(column)}
       style={{
-        padding: '12px 16px',
+        padding: '8px 8px',
         fontWeight: 600,
         textAlign: align,
-        cursor: 'pointer',
         userSelect: 'none',
-        transition: 'color 0.15s ease, background-color 0.15s ease',
+        verticalAlign: 'bottom',
         color: isActive ? '#f8fafc' : '#94a3b8',
         ...style,
       }}
-      onMouseEnter={(e) => {
-        if (!isActive) e.currentTarget.style.color = '#cbd5e1';
-      }}
-      onMouseLeave={(e) => {
-        if (!isActive) e.currentTarget.style.color = '#94a3b8';
-      }}
-      title={`Click to sort by ${typeof children === 'string' ? children : column}`}
+      title={filter ? undefined : `Click to sort by ${typeof children === 'string' ? children : column}`}
     >
       <div
+        onClick={() => onSort(column)}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: '6px',
+          gap: '4px',
           justifyContent: align === 'right' ? 'flex-end' : align === 'center' ? 'center' : 'flex-start',
           width: '100%',
+          cursor: 'pointer',
+          transition: 'color 0.15s ease',
         }}
+        onMouseEnter={(e) => {
+          if (!isActive) e.currentTarget.style.color = '#cbd5e1';
+        }}
+        onMouseLeave={(e) => {
+          if (!isActive) e.currentTarget.style.color = isActive ? '#f8fafc' : '#94a3b8';
+        }}
+        title={`Click to sort by ${typeof children === 'string' ? children : column}`}
       >
         <span>{children}</span>
         <span
           style={{
-            fontSize: '11px',
+            fontSize: '10px',
             color: isActive ? '#818cf8' : '#475569',
             fontWeight: isActive ? 700 : 400,
           }}
@@ -64,6 +69,15 @@ export function SortableHeader<T extends string>({
           {isActive ? (currentSortDir === 'asc' ? '▲' : '▼') : '↕'}
         </span>
       </div>
+      {filter ? (
+        <div
+          onClick={(e: MouseEvent) => e.stopPropagation()}
+          onMouseDown={(e: MouseEvent) => e.stopPropagation()}
+          style={{ marginTop: '6px', width: '100%' }}
+        >
+          {filter}
+        </div>
+      ) : null}
     </th>
   );
 }
@@ -95,4 +109,3 @@ export function genericSort<T>(
     return dir === 'asc' ? comparison : -comparison;
   });
 }
-

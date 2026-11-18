@@ -29,6 +29,7 @@ export interface SubmitJobRequest {
   routingPreference?: RoutingPreferenceType;
   priority?: number;
   maxRetries?: number;
+  expiresInSeconds?: number;
   correlationId?: string | null;
   traceparent?: string | null;
 }
@@ -55,7 +56,8 @@ export class JobService {
     private queueClient: IQueueClient,
     private storageClient: IStorageClient,
     private tracer: DistributedTracer = defaultTracer,
-    private metrics: MetricsRegistry = defaultMetrics
+    private metrics: MetricsRegistry = defaultMetrics,
+    private defaultExpirationSeconds: number = 86400
   ) {}
 
   async submitJob(
@@ -103,7 +105,10 @@ export class JobService {
     const outboundTraceparent =
       request.traceparent ?? formatTraceparent(traceId, enqueueSpanId, traceFlags);
 
-    // 3. Persist Job to DB in QUEUED state
+    // 3. Persist Job to DB in QUEUED state with expiration timestamp
+    const expiresInSeconds = request.expiresInSeconds ?? this.defaultExpirationSeconds;
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+
     const job = await this.jobRepo.create({
       tenantId,
       modelId: request.modelId,
@@ -116,6 +121,7 @@ export class JobService {
       inputPayload,
       inputUri,
       maxRetries: request.maxRetries ?? 3,
+      expiresAt,
     });
 
     // 4. Publish message envelope to Queue inside a PRODUCER span
@@ -187,6 +193,8 @@ export class JobService {
     const updated = await this.jobRepo.update(tenantId, jobId, {
       status: JobStatus.CANCELLED,
       completedAt: new Date(),
+      leaseOwner: null,
+      leaseExpiresAt: null,
     });
 
     return updated ?? job;
@@ -321,7 +329,261 @@ export class JobService {
 
   async listDlqMessages(tenantId: string, maxMessages = 10): Promise<ReceivedDlqMessage[]> {
     const messages = await this.queueClient.receiveDlqMessages(maxMessages);
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    if (isAllTenants) return messages;
     return messages.filter((msg) => msg.body.tenantId === tenantId);
+  }
+
+  /**
+   * Removes a poison-pill envelope from the DLQ after operator review.
+   * Does not mutate the durable FAILED job row — discard is queue hygiene only.
+   */
+  async discardDlqMessage(tenantId: string, messageId: string): Promise<ReceivedDlqMessage> {
+    const isAllTenants = tenantId === 'ALL' || tenantId === 'all' || tenantId === '*';
+    const messages = await this.queueClient.receiveDlqMessages(10);
+    const target = messages.find((msg) => msg.messageId === messageId);
+
+    if (!target) {
+      throw new NotFoundError(`DLQ message '${messageId}' not found`, 'DLQ_MESSAGE_NOT_FOUND');
+    }
+
+    if (!isAllTenants && target.body.tenantId !== tenantId) {
+      throw new NotFoundError(`DLQ message '${messageId}' not found`, 'DLQ_MESSAGE_NOT_FOUND');
+    }
+
+    await this.queueClient.deleteDlqMessage(target.receiptHandle);
+    return target;
+  }
+
+  /**
+   * Scans and expires stale/stuck jobs exceeding expiration time (TTL) or maximum retries,
+   * then reclaims orphaned PROCESSING jobs (lost worker / API restart) via retry or fail.
+   */
+  async reapExpiredJobs(options?: {
+    defaultExpirationSeconds?: number;
+  }): Promise<{
+    reapedCount: number;
+    jobs: Job[];
+    reclaimedOrphans: number;
+    orphanJobs: Job[];
+  }> {
+    const effectiveExpSec = options?.defaultExpirationSeconds ?? this.defaultExpirationSeconds;
+    const expiredJobs = await this.jobRepo.expireStaleJobs({ defaultExpirationSeconds: effectiveExpSec });
+
+    for (const job of expiredJobs) {
+      this.metrics.incCounter('inference_job_errors_total', {
+        provider: job.provider ?? 'queue',
+        error_code: job.errorCode ?? 'JOB_EXPIRED',
+        is_transient: 'false',
+      });
+      this.metrics.incCounter('inference_job_expired_total', {
+        model_id: job.modelId,
+      });
+
+      await this.queueClient
+        .sendToDlq({
+          jobId: job.id,
+          tenantId: job.tenantId,
+          modelId: job.modelId,
+          routingPreference: job.routingPreference,
+          priority: job.priority,
+          correlationId: job.correlationId ?? undefined,
+          traceparent: job.traceparent ?? undefined,
+          inputUri: job.inputUri,
+          inputPayload: job.inputPayload,
+          failureReason: job.errorMessage ?? 'Job expired in queue',
+          errorCode: job.errorCode ?? 'JOB_EXPIRED',
+          retryCount: job.retryCount,
+          createdAt: job.createdAt.toISOString(),
+          failedAt: job.completedAt?.toISOString() ?? new Date().toISOString(),
+        })
+        .catch(() => {
+          // Non-blocking if DLQ is unavailable
+        });
+    }
+
+    const orphanResult = await this.reclaimOrphanedProcessing();
+
+    return {
+      reapedCount: expiredJobs.length,
+      jobs: expiredJobs,
+      reclaimedOrphans: orphanResult.reclaimedCount,
+      orphanJobs: orphanResult.jobs,
+    };
+  }
+
+  /**
+   * Reclaim PROCESSING jobs whose worker lease is missing or expired (API restart / crashed child).
+   * Retries by re-enqueueing when retries remain; otherwise marks FAILED + DLQ.
+   */
+  async reclaimOrphanedProcessing(): Promise<{ reclaimedCount: number; jobs: Job[]; retried: number; failed: number }> {
+    const orphans = await this.jobRepo.findOrphanedProcessingJobs();
+    const touched: Job[] = [];
+    let retried = 0;
+    let failed = 0;
+
+    for (const job of orphans) {
+      const canRetry = job.maxRetries <= 0 || job.retryCount < job.maxRetries;
+      if (canRetry) {
+        const nextRetry = job.retryCount + 1;
+        const updated = await this.jobRepo.update(job.tenantId, job.id, {
+          status: JobStatus.QUEUED,
+          expectedCurrentStatuses: [JobStatus.PROCESSING],
+          retryCount: nextRetry,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+          provider: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          progressPct: 0,
+          progress: {
+            phase: 'queued',
+            percent: 0,
+            message: 'Requeued after orphaned worker (lease lost / API restart)',
+          },
+          errorCode: 'ORPHANED_WORKER',
+          errorMessage: 'Worker lost (API restart or crashed process); auto-retried',
+        });
+        if (!updated) continue;
+
+        await this.queueClient.sendMessage({
+          jobId: updated.id,
+          tenantId: updated.tenantId,
+          modelId: updated.modelId,
+          routingPreference: updated.routingPreference,
+          priority: updated.priority,
+          correlationId: updated.correlationId ?? randomUUID(),
+          traceparent: updated.traceparent ?? undefined,
+          inputUri: updated.inputUri,
+          inputPayload: updated.inputPayload,
+          createdAt: new Date().toISOString(),
+        });
+
+        this.metrics.incCounter('jobs_orphaned_reclaimed_total', {
+          outcome: 'retried',
+          model_id: updated.modelId,
+        });
+        retried += 1;
+        touched.push(updated);
+        continue;
+      }
+
+      const message =
+        'Worker lost (API restart or crashed process); retries exhausted';
+      const updated = await this.jobRepo.update(job.tenantId, job.id, {
+        status: JobStatus.FAILED,
+        expectedCurrentStatuses: [JobStatus.PROCESSING],
+        completedAt: new Date(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        errorCode: 'ORPHANED_WORKER',
+        errorMessage: message,
+        progress: {
+          phase: 'failed',
+          percent: job.progressPct ?? 0,
+          message,
+        },
+      });
+      if (!updated) continue;
+
+      await this.queueClient
+        .sendToDlq({
+          jobId: updated.id,
+          tenantId: updated.tenantId,
+          modelId: updated.modelId,
+          routingPreference: updated.routingPreference,
+          priority: updated.priority,
+          correlationId: updated.correlationId ?? undefined,
+          traceparent: updated.traceparent ?? undefined,
+          inputUri: updated.inputUri,
+          inputPayload: updated.inputPayload,
+          failureReason: message,
+          errorCode: 'ORPHANED_WORKER',
+          retryCount: updated.retryCount,
+          createdAt: updated.createdAt.toISOString(),
+          failedAt: updated.completedAt?.toISOString() ?? new Date().toISOString(),
+        })
+        .catch(() => undefined);
+
+      this.metrics.incCounter('jobs_orphaned_reclaimed_total', {
+        outcome: 'failed',
+        model_id: updated.modelId,
+      });
+      failed += 1;
+      touched.push(updated);
+    }
+
+    return { reclaimedCount: touched.length, jobs: touched, retried, failed };
+  }
+
+  /**
+   * Manually re-triggers a FAILED, CANCELLED, or stuck job.
+   * Resets execution state and retries, generates a fresh expiration window, and enqueues to worker queue.
+   */
+  async retryJob(
+    tenantId: string,
+    jobId: string,
+    options?: { expiresInSeconds?: number }
+  ): Promise<Job> {
+    const job = await this.getJob(tenantId, jobId);
+
+    if (job.status === JobStatus.PROCESSING) {
+      throw new ConflictError(
+        `Cannot manually retry job '${jobId}' while it is currently in PROCESSING state.`,
+        'JOB_IN_PROGRESS'
+      );
+    }
+
+    const expSec = options?.expiresInSeconds ?? this.defaultExpirationSeconds;
+    const newExpiresAt = new Date(Date.now() + expSec * 1000);
+
+    const updated = await this.jobRepo.update(tenantId, jobId, {
+      status: JobStatus.QUEUED,
+      retryCount: 0,
+      errorCode: null,
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      progressPct: 0,
+      progress: {
+        phase: 'queued',
+        percent: 0,
+        message: 'Manually re-triggered by operator',
+      },
+      expiresAt: newExpiresAt,
+    });
+
+    const activeJob = updated ?? job;
+
+    // Enqueue task message to worker queue
+    const correlationId = activeJob.correlationId ?? randomUUID();
+    await this.queueClient.sendMessage({
+      jobId: activeJob.id,
+      tenantId: activeJob.tenantId,
+      modelId: activeJob.modelId,
+      routingPreference: activeJob.routingPreference,
+      priority: activeJob.priority,
+      correlationId,
+      traceparent: activeJob.traceparent ?? undefined,
+      inputUri: activeJob.inputUri,
+      inputPayload: activeJob.inputPayload,
+      createdAt: new Date().toISOString(),
+    });
+
+    this.metrics.incCounter('jobs_submitted_total', {
+      tenant_id: activeJob.tenantId,
+      model_id: activeJob.modelId,
+    });
+    this.metrics.incCounter('jobs_manually_retried_total', {
+      tenant_id: activeJob.tenantId,
+      model_id: activeJob.modelId,
+    });
+
+    return activeJob;
   }
 }
 

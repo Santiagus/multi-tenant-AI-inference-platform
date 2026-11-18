@@ -1,0 +1,72 @@
+groups:
+  - name: platform_inference_alerts
+    rules:
+      - alert: ServiceTargetDown
+        expr: up == 0
+        for: 15s
+        labels:
+          severity: critical
+          tier: control_plane
+        annotations:
+          summary: "Prometheus target {{ $labels.service }} is down"
+          description: "Service target {{ $labels.instance }} has been unreachable for more than 15s."
+
+      - alert: HighJobErrorRate
+        expr: sum(rate(inference_job_errors_total[2m])) > 0.05
+        for: 30s
+        labels:
+          severity: warning
+          tier: worker_inference
+        annotations:
+          summary: "Elevated inference worker error rate"
+          description: "Inference error rate exceeded 0.05 errors/sec over the last 2 minutes."
+
+      - alert: DeadLetterQueueQuarantine
+        expr: sum(increase(inference_job_dlq_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          tier: storage_queue
+        annotations:
+          summary: "Inference job routed to Dead Letter Queue (DLQ)"
+          description: "One or more inference jobs exceeded maximum retry attempts and were quarantined in DLQ."
+
+      - alert: HighHttp5xxRate
+        expr: sum(rate(http_server_requests_total{status=~"5.."}[1m])) > 0
+        for: 15s
+        labels:
+          severity: critical
+          tier: api_gateway
+        annotations:
+          summary: "API Control Plane returning HTTP 5xx errors"
+          description: "API service is encountering internal server errors on route {{ $labels.route }}."
+
+      - alert: JobSubmissionRejectionSpike
+        expr: sum(rate(jobs_rejected_total[2m])) > 0.1
+        for: 30s
+        labels:
+          severity: warning
+          tier: quota_security
+        annotations:
+          summary: "Tenant job submissions rejected"
+          description: "Control plane is actively rejecting job requests due to rate limits or validation errors."
+
+      - alert: HighInferenceRetryVolume
+        expr: sum(rate(inference_job_retries_total[2m])) > 0.1
+        for: 30s
+        labels:
+          severity: warning
+          tier: worker_inference
+        annotations:
+          summary: "High volume of transient inference retries"
+          description: "Transient inference worker retries elevated across provider pools."
+
+      - alert: OpenTelemetryIngressActive
+        expr: sum(rate(platform_otel_http_server_request_duration_seconds_count[1m])) > 0
+        for: 10s
+        labels:
+          severity: info
+          tier: telemetry_collector
+        annotations:
+          summary: "OpenTelemetry Collector pipeline active"
+          description: "OTel collector successfully ingesting and exporting platform telemetry."

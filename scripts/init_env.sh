@@ -97,6 +97,12 @@ _init_platform_env() {
         echo "WARNING: pnpm not available in .venv/bin; skipping Node.js workspace setup." >&2
     fi
 
+    # 6. Synchronize Model Context Protocol (MCP) server configuration
+    if [[ -f "${repo_root}/scripts/setup_mcp.py" ]]; then
+        echo "==> Configuring Model Context Protocol (MCP) servers..."
+        "${venv_dir}/bin/python" "${repo_root}/scripts/setup_mcp.py" --sync || true
+    fi
+
     echo "==> Environment initialized successfully (all tools in .venv/bin)!"
     echo "    Python : $("${venv_dir}/bin/python" --version 2>&1) (${venv_dir}/bin/python)"
     if [[ -x "${venv_dir}/bin/pnpm" ]]; then

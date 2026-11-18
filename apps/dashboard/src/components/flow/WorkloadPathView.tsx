@@ -326,7 +326,7 @@ export function WorkloadPathView() {
   }, [filterPath]);
 
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="dashboard-container-1200" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Header & Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
@@ -389,7 +389,7 @@ export function WorkloadPathView() {
       </div>
 
       {/* Main Flow Canvas and Inspector Split */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px' }}>
         {/* Canvas */}
         <div
           style={{

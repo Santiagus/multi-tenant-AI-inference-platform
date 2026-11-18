@@ -135,6 +135,31 @@ describe('Observability, End-to-End Trace Correlation & Prometheus Metrics', () 
     assert.ok(corrBody.job_ids.includes(jobId));
     assert.ok(corrBody.span_count >= 6);
 
+    // 6. Query canonical GET /v1/traces/:traceId
+    const directTraceRes = await app.inject({
+      method: 'GET',
+      url: '/v1/traces/4bf92f3577b34da6a3ce929d0e0e4736',
+      headers: {
+        'x-tenant-id': 'tenant-obs',
+      },
+    });
+    assert.equal(directTraceRes.statusCode, 200);
+    const directTraceBody = JSON.parse(directTraceRes.body);
+    assert.equal(directTraceBody.trace_id, '4bf92f3577b34da6a3ce929d0e0e4736');
+    assert.equal(directTraceBody.tenant_id, 'tenant-obs');
+    assert.ok(directTraceBody.span_count >= 6);
+    assert.equal(directTraceBody.status, 'OK');
+
+    // 7. Non-existent trace returns 404 RFC 7807 problem details
+    const notFoundRes = await app.inject({
+      method: 'GET',
+      url: '/v1/traces/00000000000000000000000000000000',
+      headers: {
+        'x-tenant-id': 'tenant-obs',
+      },
+    });
+    assert.equal(notFoundRes.statusCode, 404);
+
     await app.close();
   });
 

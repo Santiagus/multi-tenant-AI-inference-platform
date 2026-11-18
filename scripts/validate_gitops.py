@@ -96,8 +96,15 @@ def validate_ci_workflow(repo_root: Path) -> list[str]:
     # Cost guardrail: verify mock inference environment variables are configured
     env_vars = wf.get("env", {})
     if isinstance(env_vars, dict):
-        if env_vars.get("INFERENCE_MOCK_MODE") != "true" and env_vars.get("BEDROCK_MOCK") != "1":
-            issues.append("ci.yml must set INFERENCE_MOCK_MODE/BEDROCK_MOCK to prevent real inference costs in CI.")
+        has_mock_flag = env_vars.get("INFERENCE_MOCK_MODE") == "true" or env_vars.get("MOCK_INFERENCE") in (
+            "1",
+            "true",
+            "True",
+            "enable",
+            "ENABLE",
+        )
+        if not has_mock_flag:
+            issues.append("ci.yml must set MOCK_INFERENCE/INFERENCE_MOCK_MODE to prevent real inference costs in CI.")
 
     # Jobs check
     jobs = wf.get("jobs", {})

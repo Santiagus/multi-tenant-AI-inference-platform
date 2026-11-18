@@ -1,17 +1,155 @@
+import { useState } from 'react';
 import { StatusBadge } from '../common/Badge';
+import { getJobHardware, getJobInferenceMode, getJobExecutionMode } from './JobsView';
+import { formatLatencyMs, resolveJobTiming } from './jobTiming';
 import type { JobItem } from '../../types';
 
 interface JobDetailModalProps {
   job: JobItem | null;
   isOpen: boolean;
+  /** True while GET /v1/jobs/:id is loading signed artifact URLs. */
+  isLoadingArtifacts?: boolean;
   onClose: () => void;
   onCancelJob: (jobId: string) => Promise<void>;
+  onRetryJob?: (jobId: string) => Promise<void>;
 }
 
-export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailModalProps) {
+function artifactKind(name: string): 'video' | 'image' | 'file' {
+  if (name.includes('video') || name.endsWith('.mp4')) return 'video';
+  if (name.includes('image') || name.includes('poster') || name.endsWith('.png') || name.endsWith('.jpg')) {
+    return 'image';
+  }
+  return 'file';
+}
+
+function artifactKindIcon(kind: 'video' | 'image' | 'file'): string {
+  if (kind === 'video') return '🎬';
+  if (kind === 'image') return '🖼️';
+  return '📄';
+}
+
+function resolveProgressView(job: JobItem): {
+  phase: string;
+  percent: number;
+  message: string | null;
+  step: number | null;
+  totalSteps: number | null;
+} {
+  const progress = job.progress as (JobItem['progress'] & { total_steps?: number }) | null | undefined;
+  const percent = job.progress_pct ?? progress?.percent ?? (job.status === 'SUCCEEDED' ? 100 : 0);
+  const totalSteps =
+    progress?.totalSteps ??
+    progress?.total_steps ??
+    null;
+  return {
+    phase: String(progress?.phase || job.status.toLowerCase()).replace(/_/g, ' '),
+    percent,
+    message: typeof progress?.message === 'string' && progress.message.trim() ? progress.message : null,
+    step: typeof progress?.step === 'number' ? progress.step : null,
+    totalSteps: typeof totalSteps === 'number' ? totalSteps : null,
+  };
+}
+
+function resolveOutputSummary(job: JobItem): {
+  outputText: string | null;
+  finishReason: string | null;
+  productionWeights: boolean | null;
+  weights: string | null;
+  deviceName: string | null;
+  backend: string | null;
+} {
+  const result = (job.result ?? {}) as Record<string, unknown>;
+  const metadata = (result.metadata ?? {}) as Record<string, unknown>;
+  const telemetry = (metadata.telemetry ?? {}) as Record<string, unknown>;
+  return {
+    outputText: typeof result.output_text === 'string' ? result.output_text : null,
+    finishReason: typeof result.finish_reason === 'string' ? result.finish_reason : null,
+    productionWeights:
+      typeof metadata.production_weights === 'boolean' ? metadata.production_weights : null,
+    weights: typeof metadata.weights === 'string' ? metadata.weights : null,
+    deviceName: typeof telemetry.device_name === 'string' ? telemetry.device_name : null,
+    backend: typeof telemetry.backend === 'string' ? telemetry.backend : null,
+  };
+}
+
+const PERMANENT_ERROR_CODES = new Set([
+  'INVALID_MODEL_PARAMETERS',
+  'MODEL_NOT_FOUND',
+  'UNSUPPORTED_MODEL',
+  'VALIDATION_ERROR',
+]);
+
+function resolveInspectedInput(job: JobItem): {
+  prompt: string | null;
+  parameters: Record<string, unknown> | null;
+  inputUri: string | null;
+} {
+  const input = (job.input ?? {}) as Record<string, unknown>;
+  const prompt =
+    (typeof job.prompt === 'string' && job.prompt.length > 0 ? job.prompt : null) ??
+    (typeof input.prompt === 'string' ? input.prompt : null);
+  const nested =
+    job.parameters ??
+    (input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters)
+      ? (input.parameters as Record<string, unknown>)
+      : {});
+  // Surface sibling request fields (engine, device, simulate flags, …) alongside nested parameters.
+  const extras: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (key === 'prompt' || key === 'parameters' || key === '_retry_info') continue;
+    extras[key] = value;
+  }
+  const parameters = { ...nested, ...extras };
+  return {
+    prompt,
+    parameters: Object.keys(parameters).length > 0 ? parameters : null,
+    inputUri: job.input_uri ?? null,
+  };
+}
+
+export function JobDetailModal({
+  job,
+  isOpen,
+  isLoadingArtifacts = false,
+  onClose,
+  onCancelJob,
+  onRetryJob,
+}: JobDetailModalProps) {
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [copiedJobId, setCopiedJobId] = useState(false);
   if (!isOpen || !job) return null;
 
-  const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED';
+  const canCancel = job.status === 'QUEUED' || job.status === 'PROCESSING' || job.status === 'SUBMITTED' || job.status === 'RETRYING';
+  // QUEUED/SUBMITTED included so operators can re-enqueue after SQS/ElasticMQ loss (DB/queue desync).
+  const canRetry =
+    job.status === 'FAILED' ||
+    job.status === 'CANCELLED' ||
+    job.status === 'RETRYING' ||
+    job.status === 'QUEUED' ||
+    job.status === 'SUBMITTED';
+
+  const maxRetries = job.max_retries ?? 3;
+  const retriesUsed = job.retry_count ?? 0;
+  const retriesLeft = Math.max(0, maxRetries - retriesUsed);
+  const { prompt, parameters, inputUri } = resolveInspectedInput(job);
+  const progressView = resolveProgressView(job);
+  const outputSummary = resolveOutputSummary(job);
+  const timing = resolveJobTiming(job);
+  const failedWithoutRetries =
+    job.status === 'FAILED' &&
+    retriesUsed === 0 &&
+    Boolean(job.error?.code) &&
+    (PERMANENT_ERROR_CODES.has(String(job.error?.code)) || maxRetries === 0);
+
+  const copyJobId = async () => {
+    try {
+      await navigator.clipboard.writeText(job.job_id);
+      setCopiedJobId(true);
+      window.setTimeout(() => setCopiedJobId(false), 1500);
+    } catch {
+      setCopiedJobId(false);
+    }
+  };
 
   // Cost and economics calculation
   const inTokens = job.usage?.prompt_tokens ?? 0;
@@ -85,23 +223,119 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
 
         {/* Content Body */}
         <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Progress bar if in flight */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '6px' }}>
-              <span>Phase: <strong style={{ color: '#f8fafc' }}>{job.progress?.phase || job.status.toLowerCase()}</strong></span>
-              <span>{job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0)}%</span>
+          {/* Progress + worker status detail */}
+          <div
+            style={{
+              border: '1px solid #1e293b',
+              borderRadius: '10px',
+              padding: '14px',
+              backgroundColor: '#090d16',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '6px', gap: '12px' }}>
+              <span>
+                Phase:{' '}
+                <strong style={{ color: '#f8fafc', textTransform: 'capitalize' }}>{progressView.phase}</strong>
+              </span>
+              <span style={{ whiteSpace: 'nowrap' }}>
+                {progressView.step !== null && progressView.totalSteps !== null
+                  ? `Step ${progressView.step}/${progressView.totalSteps} · `
+                  : ''}
+                {progressView.percent}%
+              </span>
             </div>
             <div style={{ width: '100%', height: '8px', backgroundColor: '#1e293b', borderRadius: '4px', overflow: 'hidden' }}>
               <div
                 style={{
-                  width: `${job.progress_pct ?? (job.status === 'SUCCEEDED' ? 100 : 0)}%`,
+                  width: `${progressView.percent}%`,
                   height: '100%',
                   backgroundColor: job.status === 'FAILED' ? '#ef4444' : '#6366f1',
                   transition: 'width 0.3s ease',
                 }}
               />
             </div>
+            {progressView.message && (
+              <div
+                style={{
+                  marginTop: '10px',
+                  fontSize: '12px',
+                  lineHeight: 1.45,
+                  color: '#e2e8f0',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {progressView.message}
+              </div>
+            )}
+            {(outputSummary.deviceName ||
+              outputSummary.backend ||
+              outputSummary.weights ||
+              outputSummary.productionWeights !== null) && (
+              <div
+                style={{
+                  marginTop: '10px',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '6px',
+                }}
+              >
+                {outputSummary.deviceName && (
+                  <span style={{ fontSize: '11px', color: '#cbd5e1', backgroundColor: '#1e293b', padding: '3px 8px', borderRadius: '999px' }}>
+                    {outputSummary.deviceName}
+                  </span>
+                )}
+                {outputSummary.backend && (
+                  <span style={{ fontSize: '11px', color: '#cbd5e1', backgroundColor: '#1e293b', padding: '3px 8px', borderRadius: '999px' }}>
+                    {outputSummary.backend}
+                  </span>
+                )}
+                {(outputSummary.weights || outputSummary.productionWeights !== null) && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      color: outputSummary.productionWeights ? '#6ee7b7' : '#fde68a',
+                      backgroundColor: '#1e293b',
+                      padding: '3px 8px',
+                      borderRadius: '999px',
+                    }}
+                  >
+                    weights: {outputSummary.weights ?? (outputSummary.productionWeights ? 'production' : 'synthetic')}
+                  </span>
+                )}
+                {outputSummary.finishReason && (
+                  <span style={{ fontSize: '11px', color: '#cbd5e1', backgroundColor: '#1e293b', padding: '3px 8px', borderRadius: '999px' }}>
+                    finish: {outputSummary.finishReason}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
+
+          {outputSummary.outputText && (
+            <div>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+                Model Output:
+              </h3>
+              <pre
+                style={{
+                  backgroundColor: '#090d16',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#e2e8f0',
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  border: '1px solid #1e293b',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  margin: 0,
+                }}
+              >
+                {outputSummary.outputText}
+              </pre>
+            </div>
+          )}
 
           {/* Key Metadata Grid */}
           <div
@@ -115,8 +349,45 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             }}
           >
             <div>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Job ID</div>
-              <div style={{ fontSize: '12px', color: '#f8fafc', fontFamily: 'monospace', wordBreak: 'break-all' }}>{job.job_id}</div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                  textTransform: 'uppercase',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                Job ID
+                <span
+                  aria-hidden="true"
+                  title={copiedJobId ? 'Copied' : 'Click job id to copy'}
+                  style={{ color: copiedJobId ? '#34d399' : '#64748b', fontSize: '11px' }}
+                >
+                  {copiedJobId ? '✓' : '⧉'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void copyJobId()}
+                title={copiedJobId ? 'Copied' : 'Copy job id'}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  margin: 0,
+                  fontSize: '12px',
+                  color: copiedJobId ? '#34d399' : '#f8fafc',
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-all',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                {job.job_id}
+              </button>
             </div>
             <div>
               <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Model ID</div>
@@ -125,15 +396,133 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             <div>
               <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Provider Placement</div>
               <div style={{ fontSize: '12px', color: job.provider ? '#34d399' : '#94a3b8', fontWeight: 600 }}>
-                {job.provider || 'Pending dispatch'}
+                {job.provider ? job.provider.toUpperCase() : 'Pending dispatch'}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Execution Latency</div>
-              <div style={{ fontSize: '12px', color: '#f8fafc', fontWeight: 600 }}>
-                {job.duration_ms !== null ? `${job.duration_ms} ms` : 'In flight'}
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Placement Mode</div>
+              <div style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 700 }}>
+                {getJobExecutionMode(job).replace('_', ' ').toUpperCase()}
               </div>
             </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Inference Mode</div>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color:
+                    getJobInferenceMode(job) === 'mock'
+                      ? '#fbbf24'
+                      : getJobInferenceMode(job) === 'real'
+                        ? '#34d399'
+                        : '#94a3b8',
+                }}
+              >
+                {getJobInferenceMode(job) === 'mock'
+                  ? 'MOCK'
+                  : getJobInferenceMode(job) === 'real'
+                    ? 'REAL'
+                    : '—'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Hardware Infrastructure</div>
+              <div style={{ fontSize: '12px', color: '#f8fafc', fontWeight: 600 }}>
+                {getJobHardware(job)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Inference</div>
+              <div style={{ fontSize: '12px', color: '#f8fafc', fontWeight: 600 }}>
+                {timing.inferenceMs !== null ? formatLatencyMs(timing.inferenceMs) : job.status === 'PROCESSING' ? 'In flight' : '—'}
+              </div>
+            </div>
+          </div>
+
+          {/* Cold-start vs inference timing (measured) */}
+          <div style={{ border: '1px solid #1e293b', borderRadius: '10px', padding: '16px', backgroundColor: '#090d16' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Latency Breakdown
+              </h3>
+              {timing.warmStart !== null && (
+                <span
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.04em',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    color: timing.warmStart ? '#34d399' : '#fbbf24',
+                    backgroundColor: timing.warmStart ? 'rgba(52, 211, 153, 0.12)' : 'rgba(251, 191, 36, 0.12)',
+                    border: `1px solid ${timing.warmStart ? 'rgba(52, 211, 153, 0.35)' : 'rgba(251, 191, 36, 0.35)'}`,
+                  }}
+                  title={
+                    timing.warmStart
+                      ? 'Model/pipe was already resident — cold load ≈ 0'
+                      : 'Cold start: checkpoint download/load included in model load'
+                  }
+                >
+                  {timing.warmStart ? 'WARM' : 'COLD START'}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Model load (cold)</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: (timing.modelLoadMs ?? 0) > 0 ? '#fbbf24' : '#f8fafc' }}>
+                  {formatLatencyMs(timing.modelLoadMs)}
+                </div>
+                {(timing.pipeLoadMs !== null || timing.loaderLoadMs !== null) && (
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                    {timing.pipeLoadMs !== null && timing.pipeLoadMs > 0
+                      ? `pipe ${formatLatencyMs(timing.pipeLoadMs)}`
+                      : timing.loaderLoadMs !== null && timing.loaderLoadMs > 0
+                        ? `loader ${formatLatencyMs(timing.loaderLoadMs)}`
+                        : 'resident / skipped'}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Inference</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
+                  {formatLatencyMs(timing.inferenceMs)}
+                </div>
+                {timing.tokensPerSec !== null && timing.tokensPerSec > 0 && (
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                    {timing.tokensPerSec.toFixed(1)} tok/s
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Provider total</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#38bdf8' }}>
+                  {formatLatencyMs(timing.totalProviderMs)}
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                  load + inference
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>Wall clock</div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: '#e2e8f0' }}>
+                  {formatLatencyMs(timing.wallMs)}
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+                  started → completed
+                </div>
+              </div>
+            </div>
+            {timing.ttftMs !== null && (
+              <div style={{ marginTop: '10px', fontSize: '11px', color: '#94a3b8' }}>
+                TTFT {formatLatencyMs(timing.ttftMs)}
+                {timing.wallMs !== null &&
+                  timing.totalProviderMs !== null &&
+                  timing.wallMs > timing.totalProviderMs * 1.25 &&
+                  ' · wall includes queue/lease/artifact I/O beyond provider time'}
+              </div>
+            )}
           </div>
 
           {/* Economics & Usage Breakdown */}
@@ -175,6 +564,60 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             </div>
           </div>
 
+          {/* Submitted prompt + model parameters (critical for failed inspections) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+                Prompt
+              </h3>
+              <pre
+                style={{
+                  margin: 0,
+                  backgroundColor: '#090d16',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#e2e8f0',
+                  maxHeight: '140px',
+                  overflowY: 'auto',
+                  border: '1px solid #1e293b',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {prompt && prompt.trim().length > 0
+                  ? prompt
+                  : inputUri
+                    ? `(prompt referenced via input_uri)\n${inputUri}`
+                    : '— (no prompt captured on this job)'}
+              </pre>
+            </div>
+            <div>
+              <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
+                Model Parameters
+              </h3>
+              <pre
+                style={{
+                  margin: 0,
+                  backgroundColor: '#090d16',
+                  padding: '14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  color: '#cbd5e1',
+                  maxHeight: '160px',
+                  overflowY: 'auto',
+                  border: '1px solid #1e293b',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {parameters && Object.keys(parameters).length > 0
+                  ? JSON.stringify(parameters, null, 2)
+                  : '— (no model parameters captured)'}
+              </pre>
+            </div>
+          </div>
+
           {/* Results & Artifacts */}
           {job.result && (
             <div>
@@ -198,68 +641,198 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             </div>
           )}
 
-          {job.artifacts && job.artifacts.length > 0 && (
+          {(isLoadingArtifacts || (job.artifacts && job.artifacts.length > 0)) && (
             <div>
               <h3 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '8px' }}>
-                Signed S3 Storage Artifacts:
+                Job Artifacts:
               </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {job.artifacts.map((artifact) => (
-                  <div
-                    key={artifact.name}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 14px',
-                      backgroundColor: '#1e293b',
-                      borderRadius: '8px',
-                      fontSize: '13px',
-                    }}
-                  >
-                    <span style={{ fontWeight: 600, color: '#f8fafc' }}>{artifact.name}</span>
-                    <a
-                      href={artifact.download_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      download
-                      style={{
-                        color: '#6366f1',
-                        textDecoration: 'none',
-                        fontWeight: 600,
-                        fontSize: '12px',
-                      }}
-                    >
-                      Download Signed Asset ↗
-                    </a>
-                  </div>
-                ))}
+              {isLoadingArtifacts && !(job.artifacts && job.artifacts.length > 0) ? (
+                <div
+                  style={{
+                    padding: '12px 14px',
+                    backgroundColor: '#1e293b',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    color: '#94a3b8',
+                  }}
+                >
+                  Loading signed artifact URLs…
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {(job.artifacts ?? []).map((artifact) => {
+                    const kind = artifactKind(artifact.name);
+                    return (
+                      <div
+                        key={artifact.name}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                          padding: '12px 14px',
+                          backgroundColor: '#1e293b',
+                          borderRadius: '8px',
+                          fontSize: '13px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '12px',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600, color: '#f8fafc', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <span title={kind} aria-hidden="true">
+                              {artifactKindIcon(kind)}
+                            </span>
+                            {artifact.name}
+                          </span>
+                          <a
+                            href={artifact.download_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            download
+                            style={{
+                              color: '#818cf8',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '3px',
+                              fontWeight: 600,
+                              fontSize: '12px',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Open / Download
+                          </a>
+                        </div>
+                        {kind === 'video' && (
+                          <video
+                            src={artifact.download_url}
+                            controls
+                            preload="metadata"
+                            style={{
+                              width: '100%',
+                              maxHeight: '280px',
+                              borderRadius: '6px',
+                              backgroundColor: '#090d16',
+                            }}
+                          />
+                        )}
+                        {kind === 'image' && (
+                          <img
+                            src={artifact.download_url}
+                            alt={artifact.name}
+                            style={{
+                              width: '100%',
+                              maxHeight: '280px',
+                              objectFit: 'contain',
+                              borderRadius: '6px',
+                              backgroundColor: '#090d16',
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Status Alert if Retrying */}
+          {job.status === 'RETRYING' && (
+            <div
+              style={{
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                padding: '14px',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <span style={{ fontSize: '18px' }}>🔄</span>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: '#fbbf24', marginBottom: '2px' }}>
+                  Transient Failure — Retry In Progress
+                </div>
+                <div style={{ fontSize: '13px', color: '#fde68a' }}>
+                  Attempt {retriesUsed} of {maxRetries} executed. <strong>{retriesLeft} {retriesLeft === 1 ? 'retry' : 'retries'} left</strong> before job is quarantined to the Dead-Letter Queue (DLQ).
+                </div>
               </div>
             </div>
           )}
 
-          {/* Error Message if Failed */}
-          {job.error && (
+          {/* Error Message if Failed (hide once SUCCEEDED — prior RETRYING rows can leave a stale error until cleared) */}
+          {job.error && job.status !== 'SUCCEEDED' && (
             <div
               style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
+                backgroundColor: job.error.code === 'JOB_EXPIRED' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: job.error.code === 'JOB_EXPIRED' ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
                 padding: '14px',
                 borderRadius: '8px',
               }}
             >
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#f87171', marginBottom: '4px' }}>
-                Execution Failure [{job.error.code || 'UNKNOWN_ERROR'}]
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: job.error.code === 'JOB_EXPIRED' ? '#fbbf24' : '#f87171',
+                  marginBottom: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>{job.error.code === 'JOB_EXPIRED' ? '⏳' : '⚠️'}</span>
+                {job.error.code === 'JOB_EXPIRED'
+                  ? 'Queue Expiration Timeout Exhausted'
+                  : job.error.code === 'MAX_RETRIES_EXCEEDED'
+                    ? 'Maximum Retry Attempts Exhausted'
+                    : `Execution Failure [${job.error.code || 'UNKNOWN_ERROR'}]`}
               </div>
-              <div style={{ fontSize: '13px', color: '#fca5a5' }}>{job.error.message}</div>
+              <div style={{ fontSize: '13px', color: job.error.code === 'JOB_EXPIRED' ? '#fde68a' : '#fca5a5' }}>
+                {job.error.message}
+              </div>
+              {failedWithoutRetries && (
+                <div style={{ fontSize: '12px', color: '#fde68a', marginTop: '8px' }}>
+                  Failed without retries — permanent error codes skip the retry loop (attempt 0 of {maxRetries}).
+                  Inspect the prompt and model parameters above to diagnose the rejection.
+                </div>
+              )}
             </div>
           )}
 
           {/* Telemetry Trace Context */}
-          <div style={{ fontSize: '11px', color: '#64748b' }}>
+          <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', flexDirection: 'column', gap: '3px' }}>
             <div><strong>Correlation ID:</strong> <span style={{ fontFamily: 'monospace' }}>{job.correlation_id || 'None'}</span></div>
             <div><strong>Trace ID:</strong> <span style={{ fontFamily: 'monospace' }}>{job.trace_id || 'None'}</span></div>
-            <div><strong>Created:</strong> {new Date(job.created_at).toLocaleString()} | <strong>Completed:</strong> {job.completed_at ? new Date(job.completed_at).toLocaleString() : 'In-flight'}</div>
+            <div>
+              <strong>Created:</strong> {new Date(job.created_at).toLocaleString()} |{' '}
+              <strong>Expires:</strong> {job.expires_at ? new Date(job.expires_at).toLocaleString() : 'No TTL'} |{' '}
+              <strong>Completed:</strong> {job.completed_at ? new Date(job.completed_at).toLocaleString() : 'In-flight'}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span>
+                <strong>Retries:</strong> {retriesUsed} / {maxRetries} used
+              </span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  fontWeight: 700,
+                  backgroundColor: retriesLeft === 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                  color: retriesLeft === 0 ? '#f87171' : '#fbbf24',
+                  border: `1px solid ${retriesLeft === 0 ? 'rgba(239, 68, 68, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
+                }}
+              >
+                {retriesLeft} {retriesLeft === 1 ? 'retry' : 'retries'} left
+                {retriesLeft === 0 && ' (Next failure moves to DLQ)'}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -273,25 +846,56 @@ export function JobDetailModal({ job, isOpen, onClose, onCancelJob }: JobDetailM
             alignItems: 'center',
           }}
         >
-          {canCancel ? (
-            <button
-              onClick={() => onCancelJob(job.job_id)}
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                color: '#f87171',
-                border: '1px solid rgba(239, 68, 68, 0.4)',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Cancel In-Flight Job
-            </button>
-          ) : (
-            <div />
-          )}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {canCancel && (
+              <button
+                onClick={() => onCancelJob(job.job_id)}
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel In-Flight Job
+              </button>
+            )}
+
+            {canRetry && onRetryJob && (
+              <button
+                onClick={async () => {
+                  setIsRetrying(true);
+                  try {
+                    await onRetryJob(job.job_id);
+                    onClose();
+                  } finally {
+                    setIsRetrying(false);
+                  }
+                }}
+                disabled={isRetrying}
+                style={{
+                  backgroundColor: '#4f46e5',
+                  color: '#ffffff',
+                  border: '1px solid #6366f1',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: isRetrying ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>⚡</span>
+                {isRetrying ? 'Re-triggering...' : job.status === 'RETRYING' ? 'Retry Now (Skip Backoff)' : 'Trigger Manually / Retry'}
+              </button>
+            )}
+          </div>
 
           <button
             onClick={onClose}

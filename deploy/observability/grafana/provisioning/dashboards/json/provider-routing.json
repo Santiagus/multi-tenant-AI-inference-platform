@@ -27,7 +27,11 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "color": { "mode": "thresholds" },
+          "custom": {
+            "thresholdsStyle": { "mode": "dashed" }
+          },
           "mappings": [
             {
               "type": "value",
@@ -49,7 +53,7 @@
       },
       "targets": [
         {
-          "expr": "provider_is_mock",
+          "expr": "provider_is_mock{provider=~\"$provider\"}",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -64,7 +68,11 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
+          "unit": "short",
           "color": { "mode": "thresholds" },
+          "custom": {
+            "thresholdsStyle": { "mode": "dashed" }
+          },
           "mappings": [
             {
               "type": "value",
@@ -86,7 +94,7 @@
       },
       "targets": [
         {
-          "expr": "provider_health_status",
+          "expr": "provider_health_status{provider=~\"$provider\"}",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -113,12 +121,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (provider, decision_code) (rate(provider_routing_decisions_total[1m]))",
+          "expr": "sum by (provider, decision_code) (rate(provider_routing_decisions_total{provider=~\"$provider\"}[1m]))",
           "legendFormat": "{{provider}} ({{decision_code}})",
           "refId": "A"
         },
         {
-          "expr": "sum by (provider) (rate(provider_routing_spillover_total[1m]))",
+          "expr": "sum by (provider) (rate(provider_routing_spillover_total{provider=~\"$provider\"}[1m]))",
           "legendFormat": "Spillover: {{provider}}",
           "refId": "B"
         }
@@ -153,7 +161,7 @@
       },
       "targets": [
         {
-          "expr": "provider_gross_margin_ratio",
+          "expr": "provider_gross_margin_ratio{provider=~\"$provider\"}",
           "legendFormat": "{{provider}} margin",
           "refId": "A"
         }
@@ -164,7 +172,35 @@
   "schemaVersion": 39,
   "tags": ["inference", "observability", "m08", "routing", "providers"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(provider_health_status, provider)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Provider",
+        "multi": true,
+        "name": "provider",
+        "options": [],
+        "query": {
+          "query": "label_values(provider_health_status, provider)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-15m",
@@ -172,6 +208,5 @@
   },
   "title": "Multi-Tenant AI Inference - Provider Routing & Environments",
   "uid": "platform-provider-routing",
-  "version": 1
+  "version": 2
 }
-

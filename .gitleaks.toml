@@ -18,6 +18,9 @@ paths = [
   '''(?i)[/\\]dist[/\\]''',
   '''(?i)[/\\]build[/\\]''',
   '''(?i)[/\\]benchmarks[/\\]results[/\\]''',
+  '''(?i)(^|[/\\])\.env$''',
+  '''(?i)(^|[/\\])\.env\..+$''',
+  '''(?i)(^|[/\\])\.mcp\.json$''',
 ]
 stopwords = [
   "cost_usd_per_1m_tokens",

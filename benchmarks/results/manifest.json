@@ -1,8 +1,328 @@
 {
   "schema_version": "1.0.0",
-  "updated_at": "2026-10-16T14:39:47Z",
-  "total_runs": 44,
+  "updated_at": "2026-11-11T14:43:39Z",
+  "total_runs": 46,
   "runs": [
+    {
+      "run_id": "2026-11-09T22-31-32Z_local_pytorch_cuda-pytorch-cuda_meta-llama-llama-3-8b-instruct",
+      "generated_at": "2026-11-09T22:31:32Z",
+      "run_date": "2026-11-09",
+      "provider": "local_pytorch",
+      "model_id": "meta-llama/Llama-3-8B-Instruct",
+      "precision": "fp32",
+      "device_type": "cuda",
+      "device_name": "NVIDIA GeForce RTX 5070 Ti",
+      "backend": "pytorch_cuda",
+      "execution_engine": "auto",
+      "prompt_tiers": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "concurrency_levels": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "max_new_tokens": 32,
+      "summary_kpis": {
+        "cold_start_latency_p50_ms": 15.548,
+        "warm_c1_latency_p50_ms": 13.28,
+        "warm_c1_ttft_p50_ms": 0.56,
+        "warm_c1_itl_p50_ms": 0.411,
+        "peak_aggregate_tokens_per_sec": 2403.09,
+        "cost_per_1m_tokens_usd": 0.0039,
+        "tenant_list_price_per_1m_tokens_usd": 5.0,
+        "ram_rss_mb": 980.49,
+        "vram_peak_mb": 568.92,
+        "measurement_mode": "measured"
+      },
+      "chart_series": {
+        "x_axis_concurrency_levels": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "prompt_tiers": [
+          "short",
+          "medium",
+          "long"
+        ],
+        "concurrency_scaling_by_prompt_tier": {
+          "short": [
+            {
+              "concurrency": 1,
+              "throughput_tokens_per_sec": 2351.49,
+              "requests_per_sec": 73.48,
+              "latency_p50_ms": 13.28,
+              "latency_p95_ms": 14.678,
+              "latency_p99_ms": 14.704,
+              "ttft_p50_ms": 0.56,
+              "itl_p50_ms": 0.411
+            },
+            {
+              "concurrency": 2,
+              "throughput_tokens_per_sec": 1128.2,
+              "requests_per_sec": 35.26,
+              "latency_p50_ms": 56.715,
+              "latency_p95_ms": 68.184,
+              "latency_p99_ms": 68.387,
+              "ttft_p50_ms": 2.534,
+              "itl_p50_ms": 1.72
+            },
+            {
+              "concurrency": 4,
+              "throughput_tokens_per_sec": 947.12,
+              "requests_per_sec": 29.6,
+              "latency_p50_ms": 138.786,
+              "latency_p95_ms": 148.57,
+              "latency_p99_ms": 148.63,
+              "ttft_p50_ms": 6.489,
+              "itl_p50_ms": 4.268
+            },
+            {
+              "concurrency": 8,
+              "throughput_tokens_per_sec": 376.6,
+              "requests_per_sec": 11.77,
+              "latency_p50_ms": 676.649,
+              "latency_p95_ms": 677.339,
+              "latency_p99_ms": 677.436,
+              "ttft_p50_ms": 19.935,
+              "itl_p50_ms": 21.056
+            }
+          ],
+          "medium": [
+            {
+              "concurrency": 1,
+              "throughput_tokens_per_sec": 2403.09,
+              "requests_per_sec": 75.1,
+              "latency_p50_ms": 13.361,
+              "latency_p95_ms": 14.281,
+              "latency_p99_ms": 14.38,
+              "ttft_p50_ms": 0.554,
+              "itl_p50_ms": 0.413
+            },
+            {
+              "concurrency": 2,
+              "throughput_tokens_per_sec": 998.06,
+              "requests_per_sec": 31.19,
+              "latency_p50_ms": 63.733,
+              "latency_p95_ms": 71.375,
+              "latency_p99_ms": 72.288,
+              "ttft_p50_ms": 2.341,
+              "itl_p50_ms": 1.985
+            },
+            {
+              "concurrency": 4,
+              "throughput_tokens_per_sec": 982.17,
+              "requests_per_sec": 30.69,
+              "latency_p50_ms": 133.654,
+              "latency_p95_ms": 146.306,
+              "latency_p99_ms": 147.369,
+              "ttft_p50_ms": 7.884,
+              "itl_p50_ms": 4.057
+            },
+            {
+              "concurrency": 8,
+              "throughput_tokens_per_sec": 334.31,
+              "requests_per_sec": 10.45,
+              "latency_p50_ms": 761.094,
+              "latency_p95_ms": 763.412,
+              "latency_p99_ms": 763.442,
+              "ttft_p50_ms": 19.371,
+              "itl_p50_ms": 23.902
+            }
+          ],
+          "long": [
+            {
+              "concurrency": 1,
+              "throughput_tokens_per_sec": 2213.91,
+              "requests_per_sec": 69.18,
+              "latency_p50_ms": 14.454,
+              "latency_p95_ms": 15.487,
+              "latency_p99_ms": 15.67,
+              "ttft_p50_ms": 0.659,
+              "itl_p50_ms": 0.444
+            },
+            {
+              "concurrency": 2,
+              "throughput_tokens_per_sec": 1146.08,
+              "requests_per_sec": 35.81,
+              "latency_p50_ms": 54.758,
+              "latency_p95_ms": 64.675,
+              "latency_p99_ms": 65.326,
+              "ttft_p50_ms": 2.305,
+              "itl_p50_ms": 1.693
+            },
+            {
+              "concurrency": 4,
+              "throughput_tokens_per_sec": 999.25,
+              "requests_per_sec": 31.23,
+              "latency_p50_ms": 129.683,
+              "latency_p95_ms": 141.335,
+              "latency_p99_ms": 142.905,
+              "ttft_p50_ms": 5.452,
+              "itl_p50_ms": 3.997
+            },
+            {
+              "concurrency": 8,
+              "throughput_tokens_per_sec": 353.6,
+              "requests_per_sec": 11.05,
+              "latency_p50_ms": 717.258,
+              "latency_p95_ms": 721.957,
+              "latency_p99_ms": 722.038,
+              "ttft_p50_ms": 19.046,
+              "itl_p50_ms": 22.53
+            }
+          ]
+        },
+        "prompt_tier_latency_breakdown_c1": [
+          {
+            "prompt_tier": "short",
+            "prompt_tokens": 16,
+            "output_tokens": 32,
+            "ttft_p50_ms": 0.56,
+            "decode_mean_ms": 13.031,
+            "itl_p50_ms": 0.411,
+            "e2e_p95_ms": 14.678,
+            "throughput_tokens_per_sec": 2351.49,
+            "cost_per_1m_tokens_usd": 0.0039
+          },
+          {
+            "prompt_tier": "medium",
+            "prompt_tokens": 63,
+            "output_tokens": 32,
+            "ttft_p50_ms": 0.554,
+            "decode_mean_ms": 12.754,
+            "itl_p50_ms": 0.413,
+            "e2e_p95_ms": 14.281,
+            "throughput_tokens_per_sec": 2403.09,
+            "cost_per_1m_tokens_usd": 0.0038
+          },
+          {
+            "prompt_tier": "long",
+            "prompt_tokens": 147,
+            "output_tokens": 32,
+            "ttft_p50_ms": 0.659,
+            "decode_mean_ms": 13.766,
+            "itl_p50_ms": 0.444,
+            "e2e_p95_ms": 15.487,
+            "throughput_tokens_per_sec": 2213.91,
+            "cost_per_1m_tokens_usd": 0.0041
+          }
+        ]
+      },
+      "report_json_path": "runs/2026-11-09T22-31-32Z_local_pytorch_cuda-pytorch-cuda_meta-llama-llama-3-8b-instruct/report.json",
+      "report_md_path": "runs/2026-11-09T22-31-32Z_local_pytorch_cuda-pytorch-cuda_meta-llama-llama-3-8b-instruct/report.md"
+    },
+    {
+      "run_id": "2026-10-26T21-47-01Z_local_pytorch_cuda-pytorch-cuda_tinyllama-tinyllama-1-1b-chat-v1-0",
+      "generated_at": "2026-10-26T21:47:01Z",
+      "run_date": "2026-10-26",
+      "provider": "local_pytorch",
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "precision": "fp32",
+      "device_type": "cuda",
+      "device_name": "NVIDIA GeForce RTX 5070 Ti",
+      "backend": "pytorch_cuda",
+      "execution_engine": "auto",
+      "prompt_tiers": [
+        "short"
+      ],
+      "concurrency_levels": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "max_new_tokens": 32,
+      "summary_kpis": {
+        "cold_start_latency_p50_ms": 82.599,
+        "warm_c1_latency_p50_ms": 11.283,
+        "warm_c1_ttft_p50_ms": 0.597,
+        "warm_c1_itl_p50_ms": 0.345,
+        "peak_aggregate_tokens_per_sec": 2833.57,
+        "cost_per_1m_tokens_usd": 0.0032,
+        "tenant_list_price_per_1m_tokens_usd": 2.0,
+        "ram_rss_mb": 980.01,
+        "vram_peak_mb": 382.7,
+        "measurement_mode": "measured"
+      },
+      "chart_series": {
+        "x_axis_concurrency_levels": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "prompt_tiers": [
+          "short",
+          "medium",
+          "long"
+        ],
+        "concurrency_scaling_by_prompt_tier": {
+          "short": [
+            {
+              "concurrency": 1,
+              "throughput_tokens_per_sec": 2833.57,
+              "requests_per_sec": 88.55,
+              "latency_p50_ms": 11.283,
+              "latency_p95_ms": 11.283,
+              "latency_p99_ms": 11.283,
+              "ttft_p50_ms": 0.597,
+              "itl_p50_ms": 0.345
+            },
+            {
+              "concurrency": 2,
+              "throughput_tokens_per_sec": 1234.95,
+              "requests_per_sec": 38.59,
+              "latency_p50_ms": 50.934,
+              "latency_p95_ms": 51.337,
+              "latency_p99_ms": 51.373,
+              "ttft_p50_ms": 3.989,
+              "itl_p50_ms": 1.514
+            },
+            {
+              "concurrency": 4,
+              "throughput_tokens_per_sec": 1148.91,
+              "requests_per_sec": 35.9,
+              "latency_p50_ms": 109.011,
+              "latency_p95_ms": 110.75,
+              "latency_p99_ms": 110.882,
+              "ttft_p50_ms": 6.673,
+              "itl_p50_ms": 3.293
+            },
+            {
+              "concurrency": 8,
+              "throughput_tokens_per_sec": 451.23,
+              "requests_per_sec": 14.1,
+              "latency_p50_ms": 562.085,
+              "latency_p95_ms": 565.793,
+              "latency_p99_ms": 566.263,
+              "ttft_p50_ms": 16.162,
+              "itl_p50_ms": 17.639
+            }
+          ]
+        },
+        "prompt_tier_latency_breakdown_c1": [
+          {
+            "prompt_tier": "short",
+            "prompt_tokens": 16,
+            "output_tokens": 32,
+            "ttft_p50_ms": 0.597,
+            "decode_mean_ms": 10.686,
+            "itl_p50_ms": 0.345,
+            "e2e_p95_ms": 11.283,
+            "throughput_tokens_per_sec": 2833.57,
+            "cost_per_1m_tokens_usd": 0.0032
+          }
+        ]
+      },
+      "report_json_path": "runs/2026-10-26T21-47-01Z_local_pytorch_cuda-pytorch-cuda_tinyllama-tinyllama-1-1b-chat-v1-0/report.json",
+      "report_md_path": "runs/2026-10-26T21-47-01Z_local_pytorch_cuda-pytorch-cuda_tinyllama-tinyllama-1-1b-chat-v1-0/report.md"
+    },
     {
       "run_id": "2026-10-16T14-39-47Z_local_pytorch_cuda-pytorch-torch-compile-cuda_tinyllama-tinyllama-1-1b-chat-v1-0",
       "generated_at": "2026-10-16T14:39:47Z",
@@ -9378,5 +9698,17 @@
       "report_json_path": "runs/2026-10-11T22-11-43Z_local_pytorch_cpu-numpy-cpu-fallback_tinyllama-tinyllama-1-1b-chat-v1-0/report.json",
       "report_md_path": "runs/2026-10-11T22-11-43Z_local_pytorch_cpu-numpy-cpu-fallback_tinyllama-tinyllama-1-1b-chat-v1-0/report.md"
     }
-  ]
+  ],
+  "provider_comparison_latest": {
+    "run_id": "2026-11-11T14-43-39Z_provider_comparison_api",
+    "generated_at": "2026-11-11T14:43:39Z",
+    "mode": "api",
+    "path": "runs/2026-11-11T14-43-39Z_provider_comparison_api/report.json",
+    "recommendations": {
+      "cheapest": "local_pytorch",
+      "fastest": "runpod",
+      "balanced": "runpod",
+      "recommended": "local_pytorch"
+    }
+  }
 }

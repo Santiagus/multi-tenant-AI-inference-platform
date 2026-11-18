@@ -1,0 +1,533 @@
+{
+  "schema_version": "1.0.0",
+  "benchmark_id": "real-metrics-gpu",
+  "generated_at": "2026-11-18T16:28:30.690680+00:00",
+  "measurement_mode": "measured",
+  "hardware": {
+    "device_name": "NVIDIA GeForce RTX 5070 Ti",
+    "vram_gb": 15.89
+  },
+  "cases": [
+    {
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "purpose": "text_to_text",
+      "prompt": "In two sentences, explain why measured inference latency differs from wall-clock job time.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "max_new_tokens": 64,
+        "temperature": 0.2,
+        "engine": "auto"
+      },
+      "min_vram_gb": 3
+    },
+    {
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "purpose": "text_to_text",
+      "prompt": "List three enterprise metrics for GPU inference jobs: load time, inference time, and token throughput.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "max_new_tokens": 80,
+        "temperature": 0.2,
+        "engine": "auto"
+      },
+      "min_vram_gb": 3
+    },
+    {
+      "model_id": "stabilityai/sd-turbo",
+      "purpose": "text_to_image",
+      "prompt": "A sunlit Mediterranean kitchen with fresh tomatoes and olive oil, photorealistic product photo.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "width": 512,
+        "height": 512,
+        "num_inference_steps": 2,
+        "guidance_scale": 0.0,
+        "engine": "auto"
+      },
+      "min_vram_gb": 5
+    },
+    {
+      "model_id": "stabilityai/sd-turbo",
+      "purpose": "text_to_image",
+      "prompt": "Macro shot of amber perfume bottle on black marble, dramatic golden rim light, sharp glass caustics.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "width": 512,
+        "height": 512,
+        "num_inference_steps": 4,
+        "guidance_scale": 0.0,
+        "engine": "auto"
+      },
+      "min_vram_gb": 5
+    },
+    {
+      "model_id": "openai/clip-vit-large-patch14",
+      "purpose": "media_photo",
+      "prompt": "A Formula 1 driver in a red racing suit standing beside a race car",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "media_asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+        "engine": "auto"
+      },
+      "min_vram_gb": 2
+    },
+    {
+      "model_id": "openai/clip-vit-large-patch14",
+      "purpose": "media_photo",
+      "prompt": "A close-up photograph of a domestic pet dog sitting on snow",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "media_asset_uri": "tests/fixtures/media/fernando_alonso_f1.jpg",
+        "engine": "auto"
+      },
+      "min_vram_gb": 2
+    },
+    {
+      "model_id": "Lightricks/LTX-Video",
+      "purpose": "text_to_video",
+      "prompt": "A blue hatchback on a quiet coastal road at golden hour, slow dolly from the front three-quarter, soft wind, cinematic.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "width": 544,
+        "height": 320,
+        "fps": 24,
+        "duration_seconds": 2,
+        "num_inference_steps": 12,
+        "guidance_scale": 3.0,
+        "engine": "auto"
+      },
+      "min_vram_gb": 10
+    },
+    {
+      "model_id": "Lightricks/LTX-Video",
+      "purpose": "text_to_video",
+      "prompt": "Steam rising from a ceramic espresso cup on a wooden table, soft morning window light, shallow depth of field, one continuous shot.",
+      "parameters": {
+        "device": "cuda",
+        "weights": "production",
+        "width": 544,
+        "height": 320,
+        "fps": 24,
+        "duration_seconds": 2,
+        "num_inference_steps": 12,
+        "guidance_scale": 3.0,
+        "engine": "auto"
+      },
+      "min_vram_gb": 10
+    }
+  ],
+  "results": [
+    {
+      "job_id": "bench-metrics-00",
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "purpose": "text_to_text",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 11920.999,
+      "usage": {
+        "prompt_tokens": 35,
+        "completion_tokens": 64,
+        "total_tokens": 99,
+        "compute_duration_ms": 3414.9016100000013,
+        "time_to_first_token_ms": 1024.4704830000003,
+        "tokens_per_sec": 18.74,
+        "estimated_cost_microcents": 198
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": false,
+        "model_load_ms": 6426.714,
+        "pipe_load_ms": 6426.714,
+        "inference_ms": 3414.902,
+        "total_provider_ms": 9841.616,
+        "tokens_per_sec": null,
+        "token_accounting": "tokenizer",
+        "token_unit_label": "tokenizer tokens",
+        "width": null,
+        "height": null,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": null,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 1408.82,
+        "vram_reserved_mb": 1480.0,
+        "vram_peak_mb": 1465.52,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 24.0,
+        "ram_rss_mb": 2275.38,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "Measured inference latency refers to the time it takes to complete a job, while wall-clock job time refers to the time it takes for a job to complete on a specific machine or system. Inferred inference latency is a measure of the time it ta"
+    },
+    {
+      "job_id": "bench-metrics-01",
+      "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "purpose": "text_to_text",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 1768.287,
+      "usage": {
+        "prompt_tokens": 37,
+        "completion_tokens": 80,
+        "total_tokens": 117,
+        "compute_duration_ms": 1767.5406910000079,
+        "time_to_first_token_ms": 530.2622073000024,
+        "tokens_per_sec": 45.26,
+        "estimated_cost_microcents": 234
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": true,
+        "model_load_ms": 0.0,
+        "pipe_load_ms": 0.0,
+        "inference_ms": 1767.541,
+        "total_provider_ms": 1767.541,
+        "tokens_per_sec": null,
+        "token_accounting": "tokenizer",
+        "token_unit_label": "tokenizer tokens",
+        "width": null,
+        "height": null,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": null,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 1408.82,
+        "vram_reserved_mb": 1480.0,
+        "vram_peak_mb": 1465.64,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 24.0,
+        "ram_rss_mb": 2275.56,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "Yes, here are three enterprise metrics for GPU inference jobs:\n\n1. Load time: The load time is the time it takes for the GPU to process the input data. It measures the time it takes for the GPU to receive the input data, process it, and ret"
+    },
+    {
+      "job_id": "bench-metrics-02",
+      "model_id": "stabilityai/sd-turbo",
+      "purpose": "text_to_image",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 6093.593,
+      "usage": {
+        "prompt_tokens": 24,
+        "completion_tokens": 1024,
+        "total_tokens": 1048,
+        "compute_duration_ms": 975.0876070000061,
+        "time_to_first_token_ms": 146.2631410500009,
+        "tokens_per_sec": 1050.16,
+        "estimated_cost_microcents": 5240
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": false,
+        "model_load_ms": 4023.118,
+        "pipe_load_ms": 4023.118,
+        "inference_ms": 975.088,
+        "total_provider_ms": 4998.206,
+        "tokens_per_sec": null,
+        "token_accounting": "latent",
+        "token_unit_label": "latent patch tokens",
+        "width": 512,
+        "height": 512,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": 2,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 3889.17,
+        "vram_reserved_mb": 5016.0,
+        "vram_peak_mb": 4499.48,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 16.0,
+        "ram_rss_mb": 2820.21,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[stabilityai/sd-turbo] Image generated with pretrained Diffusers checkpoint (2 steps, 512x512): A sunlit Mediterranean kitchen with fresh tomatoes and olive oil, photorealistic product photo."
+    },
+    {
+      "job_id": "bench-metrics-03",
+      "model_id": "stabilityai/sd-turbo",
+      "purpose": "text_to_image",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 190.341,
+      "usage": {
+        "prompt_tokens": 25,
+        "completion_tokens": 2048,
+        "total_tokens": 2073,
+        "compute_duration_ms": 157.07880299999033,
+        "time_to_first_token_ms": 23.56182044999855,
+        "tokens_per_sec": 13038.04,
+        "estimated_cost_microcents": 10365
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": true,
+        "model_load_ms": 0.0,
+        "pipe_load_ms": 0.0,
+        "inference_ms": 157.079,
+        "total_provider_ms": 157.079,
+        "tokens_per_sec": null,
+        "token_accounting": "latent",
+        "token_unit_label": "latent patch tokens",
+        "width": 512,
+        "height": 512,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": 4,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 3889.17,
+        "vram_reserved_mb": 5016.0,
+        "vram_peak_mb": 4499.48,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 16.0,
+        "ram_rss_mb": 2820.21,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[stabilityai/sd-turbo] Image generated with pretrained Diffusers checkpoint (4 steps, 512x512): Macro shot of amber perfume bottle on black marble, dramatic golden rim light, sharp glass caustics."
+    },
+    {
+      "job_id": "bench-metrics-04",
+      "model_id": "openai/clip-vit-large-patch14",
+      "purpose": "media_photo",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 3326.809,
+      "usage": {
+        "prompt_tokens": 17,
+        "completion_tokens": 128,
+        "total_tokens": 145,
+        "compute_duration_ms": 124.54124699999625,
+        "time_to_first_token_ms": 49.8164987999985,
+        "tokens_per_sec": 1027.77,
+        "estimated_cost_microcents": 290
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": false,
+        "model_load_ms": 3149.047,
+        "pipe_load_ms": 3149.047,
+        "inference_ms": 124.541,
+        "total_provider_ms": 3273.588,
+        "tokens_per_sec": null,
+        "token_accounting": "multimodal_embedding",
+        "token_unit_label": "CLIP embedding tokens",
+        "width": null,
+        "height": null,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": null,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 5743.16,
+        "vram_reserved_mb": 5856.0,
+        "vram_peak_mb": 5775.16,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 8.0,
+        "ram_rss_mb": 2855.71,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[openai/clip-vit-large-patch14] CLIP-ViT-L/14 Zero-Shot Multimodal Alignment:\n- Visual Patches: 256 spatial patch embeddings projected to 768-dim joint embedding space.\n- Image Asset: 'tests/fixtures/media/fernando_alonso_f1.jpg'\n- Cosine S"
+    },
+    {
+      "job_id": "bench-metrics-05",
+      "model_id": "openai/clip-vit-large-patch14",
+      "purpose": "media_photo",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 35.354,
+      "usage": {
+        "prompt_tokens": 17,
+        "completion_tokens": 128,
+        "total_tokens": 145,
+        "compute_duration_ms": 34.61377900001139,
+        "time_to_first_token_ms": 13.845511600004556,
+        "tokens_per_sec": 3697.95,
+        "estimated_cost_microcents": 290
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": true,
+        "model_load_ms": 0.0,
+        "pipe_load_ms": 0.0,
+        "inference_ms": 34.614,
+        "total_provider_ms": 34.614,
+        "tokens_per_sec": null,
+        "token_accounting": "multimodal_embedding",
+        "token_unit_label": "CLIP embedding tokens",
+        "width": null,
+        "height": null,
+        "fps": null,
+        "num_frames": null,
+        "num_inference_steps": null,
+        "requested_duration_s": null,
+        "actual_duration_s": null,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 5743.16,
+        "vram_reserved_mb": 5856.0,
+        "vram_peak_mb": 5775.16,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 8.0,
+        "ram_rss_mb": 2864.53,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[openai/clip-vit-large-patch14] CLIP-ViT-L/14 Zero-Shot Multimodal Alignment:\n- Visual Patches: 256 spatial patch embeddings projected to 768-dim joint embedding space.\n- Image Asset: 'tests/fixtures/media/fernando_alonso_f1.jpg'\n- Cosine S"
+    },
+    {
+      "job_id": "bench-metrics-06",
+      "model_id": "Lightricks/LTX-Video",
+      "purpose": "text_to_video",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 825261.511,
+      "usage": {
+        "prompt_tokens": 30,
+        "completion_tokens": 1259,
+        "total_tokens": 1289,
+        "compute_duration_ms": 193786.32894499993,
+        "time_to_first_token_ms": 29067.949341749987,
+        "tokens_per_sec": 6.5,
+        "estimated_cost_microcents": 6445
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": false,
+        "model_load_ms": 630427.04,
+        "pipe_load_ms": 630427.04,
+        "inference_ms": 193786.329,
+        "total_provider_ms": 824213.369,
+        "tokens_per_sec": null,
+        "token_accounting": "spatiotemporal",
+        "token_unit_label": "spatio-temporal tokens",
+        "width": 544,
+        "height": 320,
+        "fps": 24,
+        "num_frames": 41,
+        "num_inference_steps": 12,
+        "requested_duration_s": 2.0,
+        "actual_duration_s": 1.708,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 19326.95,
+        "vram_reserved_mb": 20998.0,
+        "vram_peak_mb": 19993.28,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 0.0,
+        "ram_rss_mb": 3105.4,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[Lightricks/LTX-Video] Video generated with pretrained Diffusers checkpoint (12 steps, 41 frames @ 24 fps): A blue hatchback on a quiet coastal road at golden hour, slow dolly from the front three-quarter, soft wind, cinematic."
+    },
+    {
+      "job_id": "bench-metrics-07",
+      "model_id": "Lightricks/LTX-Video",
+      "purpose": "text_to_video",
+      "ok": true,
+      "errors": [],
+      "wall_ms": 192717.685,
+      "usage": {
+        "prompt_tokens": 33,
+        "completion_tokens": 1259,
+        "total_tokens": 1292,
+        "compute_duration_ms": 192360.04543600007,
+        "time_to_first_token_ms": 28854.00681540001,
+        "tokens_per_sec": 6.55,
+        "estimated_cost_microcents": 6460
+      },
+      "metadata": {
+        "production_weights": true,
+        "warm_start": true,
+        "model_load_ms": 0.0,
+        "pipe_load_ms": 0.0,
+        "inference_ms": 192360.045,
+        "total_provider_ms": 192360.045,
+        "tokens_per_sec": null,
+        "token_accounting": "spatiotemporal",
+        "token_unit_label": "spatio-temporal tokens",
+        "width": 544,
+        "height": 320,
+        "fps": 24,
+        "num_frames": 41,
+        "num_inference_steps": 12,
+        "requested_duration_s": 2.0,
+        "actual_duration_s": 1.708,
+        "measurement_mode": "measured",
+        "device_slot": "gpu"
+      },
+      "telemetry": {
+        "device_type": "cuda",
+        "device_name": "NVIDIA GeForce RTX 5070 Ti",
+        "backend": "pytorch_cuda",
+        "vram_allocated_mb": 19326.95,
+        "vram_reserved_mb": 20998.0,
+        "vram_peak_mb": 19993.28,
+        "vram_total_mb": 16275.75,
+        "gpu_utilization_pct": 0.0,
+        "ram_rss_mb": 3106.9,
+        "measurement_mode": "measured"
+      },
+      "output_preview": "[Lightricks/LTX-Video] Video generated with pretrained Diffusers checkpoint (12 steps, 41 frames @ 24 fps): Steam rising from a ceramic espresso cup on a wooden table, soft morning window light, shallow depth of field, one continuous shot."
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0
+  }
+}

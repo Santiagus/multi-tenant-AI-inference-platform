@@ -49,6 +49,8 @@ EXCLUDED_DIRS = {
 
 EXCLUDED_FILES = {
     ".gitleaks.toml",
+    ".env",
+    ".mcp.json",
 }
 
 

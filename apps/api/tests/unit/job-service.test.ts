@@ -157,6 +157,110 @@ describe('JobService Application Service', () => {
       (err) => err instanceof NotFoundError
     );
   });
+
+  test('reaps expired queued jobs exceeding expiration time (TTL) and marks them FAILED', async () => {
+    // 1. Submit a job that expires in 1 second
+    const { job: expiredCandidate } = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Expiring job' },
+      expiresInSeconds: 1,
+    });
+
+    // Artificially age the job into the past
+    await jobRepo.update('tenant-1', expiredCandidate.id, {
+      expiresAt: new Date(Date.now() - 5000), // 5 seconds ago
+    });
+
+    // 2. Submit a fresh job that expires in 3600 seconds
+    const { job: freshJob } = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Fresh job' },
+      expiresInSeconds: 3600,
+    });
+
+    // Run reaper
+    const result = await service.reapExpiredJobs();
+    assert.equal(result.reapedCount, 1);
+    assert.equal(result.jobs[0].id, expiredCandidate.id);
+
+    // Verify expired job transitioned to FAILED with JOB_EXPIRED
+    const inspected = await service.getJob('tenant-1', expiredCandidate.id);
+    assert.equal(inspected.status, JobStatus.FAILED);
+    assert.equal(inspected.errorCode, 'JOB_EXPIRED');
+    assert.ok(inspected.completedAt);
+    assert.ok(inspected.errorMessage?.includes('queue expiration timeout'));
+
+    // Verify fresh job is untouched
+    const freshInspected = await service.getJob('tenant-1', freshJob.id);
+    assert.equal(freshInspected.status, JobStatus.QUEUED);
+  });
+
+  test('reaps queued jobs exceeding maximum retry count and marks them FAILED', async () => {
+    const { job } = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Max retries job' },
+      maxRetries: 3,
+    });
+
+    // Simulate 3 retries exhausted while remaining queued/retrying
+    await jobRepo.update('tenant-1', job.id, {
+      retryCount: 3,
+    });
+
+    const result = await service.reapExpiredJobs();
+    assert.ok(result.reapedCount >= 1);
+
+    const inspected = await service.getJob('tenant-1', job.id);
+    assert.equal(inspected.status, JobStatus.FAILED);
+    assert.equal(inspected.errorCode, 'MAX_RETRIES_EXCEEDED');
+    assert.ok(inspected.errorMessage?.includes('maximum retry attempts'));
+  });
+
+  test('manually triggers/retries a failed job: resets counters, enqueues to worker, and sets fresh expiration', async () => {
+    // 1. Submit and fail a job
+    const { job } = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Failed job to retry' },
+      expiresInSeconds: 10,
+    });
+
+    await service.transitionJob('tenant-1', job.id, JobStatus.FAILED, {
+      errorCode: 'JOB_EXPIRED',
+      errorMessage: 'Job expired in queue',
+    });
+
+    const initialQueueDepth = queueClient.getQueueLength();
+
+    // 2. Trigger manually
+    const retried = await service.retryJob('tenant-1', job.id, { expiresInSeconds: 7200 });
+
+    assert.equal(retried.status, JobStatus.QUEUED);
+    assert.equal(retried.retryCount, 0);
+    assert.equal(retried.errorCode, null);
+    assert.equal(retried.errorMessage, null);
+    assert.equal(retried.completedAt, null);
+    assert.ok(retried.expiresAt);
+    assert.ok(retried.expiresAt.getTime() > Date.now() + 7000 * 1000);
+
+    // Verify message re-enqueued to worker queue
+    assert.equal(queueClient.getQueueLength(), initialQueueDepth + 1);
+  });
+
+  test('refuses to manually retry a job that is currently in PROCESSING state', async () => {
+    const { job } = await service.submitJob('tenant-1', {
+      modelId: 'meta-llama/Llama-3-8B-Instruct',
+      input: { prompt: 'Processing job' },
+    });
+
+    await service.transitionJob('tenant-1', job.id, JobStatus.PROCESSING);
+
+    await assert.rejects(
+      async () => {
+        await service.retryJob('tenant-1', job.id);
+      },
+      (err: unknown) => err instanceof ConflictError && err.code === 'JOB_IN_PROGRESS'
+    );
+  });
 });
 
 

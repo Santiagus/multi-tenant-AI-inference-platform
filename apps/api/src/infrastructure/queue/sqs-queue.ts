@@ -78,11 +78,17 @@ export class SqsQueueClient implements IQueueClient {
     return response.MessageId ?? '';
   }
 
-  async receiveMessages(maxMessages = 1, waitTimeSeconds = 0): Promise<ReceivedMessage[]> {
+  async receiveMessages(
+    maxMessages = 1,
+    waitTimeSeconds = 0,
+    options?: { preferModelId?: string | null }
+  ): Promise<ReceivedMessage[]> {
+    // Pull a small batch so we can prefer the warm model within the window (SQS cannot global-reorder).
+    const batchSize = Math.min(Math.max(Math.max(maxMessages, options?.preferModelId ? 5 : 1), 1), 10);
     const response = await this.client.send(
       new ReceiveMessageCommand({
         QueueUrl: this.queueUrl,
-        MaxNumberOfMessages: Math.min(Math.max(maxMessages, 1), 10),
+        MaxNumberOfMessages: batchSize,
         WaitTimeSeconds: waitTimeSeconds,
         MessageSystemAttributeNames: ['ApproximateReceiveCount'],
       })
@@ -92,7 +98,7 @@ export class SqsQueueClient implements IQueueClient {
       return [];
     }
 
-    return response.Messages.map((msg) => {
+    let mapped = response.Messages.map((msg) => {
       const body = JSON.parse(msg.Body ?? '{}') as QueueMessage;
       const count = Number(msg.Attributes?.ApproximateReceiveCount ?? '1');
       return {
@@ -102,6 +108,21 @@ export class SqsQueueClient implements IQueueClient {
         approximateReceiveCount: isNaN(count) ? 1 : count,
       };
     });
+
+    const prefer = options?.preferModelId?.trim() || null;
+    if (prefer) {
+      const preferred = mapped.filter((m) => m.body.modelId === prefer);
+      const others = mapped.filter((m) => m.body.modelId !== prefer);
+      mapped = [...preferred, ...others];
+    }
+
+    const selected = mapped.slice(0, maxMessages);
+    const release = mapped.slice(maxMessages);
+    for (const msg of release) {
+      // Make non-selected messages immediately visible again.
+      await this.changeMessageVisibility(msg.receiptHandle, 0).catch(() => undefined);
+    }
+    return selected;
   }
 
   async deleteMessage(receiptHandle: string): Promise<void> {

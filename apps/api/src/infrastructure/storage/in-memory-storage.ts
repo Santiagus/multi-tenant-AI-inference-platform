@@ -39,6 +39,24 @@ export class InMemoryStorageClient implements IStorageClient {
     return this.healthy;
   }
 
+  async listKeysByPrefix(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) {
+        keys.push(key);
+      }
+    }
+    return keys.sort();
+  }
+
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const keys = await this.listKeysByPrefix(prefix);
+    for (const key of keys) {
+      this.store.delete(key);
+    }
+    return keys.length;
+  }
+
   clear(): void {
     this.store.clear();
   }

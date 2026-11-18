@@ -13,7 +13,7 @@
       "title": "API Request Rate (req/sec)",
       "description": "Control-plane HTTP ingress throughput grouped by route and status code.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -45,10 +45,70 @@
     },
     {
       "id": 2,
+      "title": "API Ingress Response Time (P50 / P95 / P99)",
+      "description": "Control-plane HTTP ingress latency percentiles (P50, P95, P99) derived from Fastify request duration histogram. Dashed reference lines mark warning (100ms) and SLA breach (500ms).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.1 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "/^P95.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/^P99.*/" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "P50 ({{route}})",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "P95 ({{route}})",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "P99 ({{route}})",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 3,
       "title": "Queue Depth & Active Worker Slots",
       "description": "Pending SQS messages in inference-jobs queue and active worker concurrency.",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -104,11 +164,11 @@
       ]
     },
     {
-      "id": 3,
+      "id": 4,
       "title": "Queue Wait Latency (P50 / P95 / P99)",
       "description": "Time jobs spend waiting in SQS before worker pickup. Dashed lines mark P95 warning (1.0s) and P99 SLA breach (2.5s).",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -164,11 +224,11 @@
       ]
     },
     {
-      "id": 4,
+      "id": 5,
       "title": "Inference Execution Latency P50 / P95 / P99",
       "description": "End-to-end model execution duration. Dashed reference lines mark P95 warning (0.5s) and P99 SLA breach (1.5s).",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -229,11 +289,11 @@
       ]
     },
     {
-      "id": 5,
+      "id": 6,
       "title": "Token Throughput (tok/s) & TTFT P95 (s)",
       "description": "Prompt and completion token generation rate alongside Time-To-First-Token P95 latency.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -279,11 +339,11 @@
       ]
     },
     {
-      "id": 6,
+      "id": 7,
       "title": "Errors, Transient Retries & DLQ Quarantine (5m window)",
       "description": "Counts of worker errors, transient retries, DLQ poison pills, and API 4xx rejections. Dashed lines mark warning (1) and critical (3) thresholds.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -344,11 +404,11 @@
       ]
     },
     {
-      "id": 7,
+      "id": 8,
       "title": "CPU & Host RAM Telemetry (Measured — Active on CPU Host)",
       "description": "Live measured host process RSS memory (MiB) and CPU compute utilization (%). Dashed lines mark 80% warning and 95% saturation.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -393,11 +453,11 @@
       ]
     },
     {
-      "id": 8,
+      "id": 9,
       "title": "GPU Hardware Telemetry (DCGM — 0 when no GPU present)",
       "description": "NVIDIA DCGM GPU compute utilization (%) and framebuffer VRAM (MiB). Reports 0 on CPU-only hosts in accordance with Evidence Over Claims.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -442,11 +502,11 @@
       ]
     },
     {
-      "id": 9,
+      "id": 10,
       "title": "Provider Execution Mode (Mock vs Live Environment)",
       "description": "Visualizes whether inference provider environments are executing against live remote APIs/CUDA or mocked offline environments.",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -483,11 +543,11 @@
       ]
     },
     {
-      "id": 10,
+      "id": 11,
       "title": "Provider Routing Decisions & Cloud Spillovers",
       "description": "Deterministic provider routing evaluations and spillover count triggered by queue backlog or SLO risk.",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 32 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -527,5 +587,5 @@
   },
   "title": "Multi-Tenant AI Inference Operations & Debugging",
   "uid": "platform-inference-operations",
-  "version": 2
+  "version": 3
 }

@@ -57,6 +57,7 @@ describe('OpenAPI & Swagger Documentation Routes', () => {
     const allowedTags = new Set([
       'Health',
       'Jobs',
+      'Models',
       'Observability',
       'Provider Routing',
       'Kubernetes',
