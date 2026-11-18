@@ -481,12 +481,19 @@ Authorization: Bearer {{apiKey}}
 
 ###
 
-# 4.6 Reap Stale or Retries-Exhausted Queued Jobs (Sweep Queue TTL Expiration)
+# 4.6 Reap Stale / Orphaned Jobs (TTL expire + PROCESSING lease reclaim / auto-retry)
+# Response includes reaped_count (TTL) and reclaimed_orphans (lost worker).
 POST {{baseUrl}}/v1/jobs/reap
 Content-Type: application/json
 x-tenant-id: {{tenantId}}
 Authorization: Bearer {{apiKey}}
 
+###
+
+# 4.7 Local worker resident models (GPU/CPU warm cache from persistent --serve process)
+GET {{baseUrl}}/v1/worker/local-status
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
 
 
 ### ==============================================================================
@@ -1692,6 +1699,25 @@ Authorization: Bearer {{apiKey}}
   "mode": "mock"
 }
 
+###
+
+# 13.19 Inspect MOCK_PROVIDERS Gate
+GET {{baseUrl}}/v1/worker/mock-providers
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 13.20 Toggle MOCK_PROVIDERS Gate (dashboard header control)
+POST {{baseUrl}}/v1/worker/mock-providers
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "enabled": true
+}
+
 ### ==============================================================================
 ### USE CASE 14: Security Boundary, ABAC, Tenant Isolation & Rate Limiting (M09)
 ### Zero-trust authentication, scoped permissions, rate limits, and audit logs
@@ -2188,6 +2214,35 @@ POST {{baseUrl}}/v1/admin/showcase/purge
 
 ###
 
+# 18.9 Purge All Jobs For A Concrete Tenant (cascades S3 outputs/)
+# Local/dev debug: wipes jobs + tenants/{tenantId}/outputs/*
+POST {{baseUrl}}/v1/admin/tenants/tenant-dev/purge
+
+###
+
+# 18.10 Delete Jobs Matching Filters (provider / status / model / search)
+# Cascades related S3 output prefixes. Prefer job_ids from the dashboard filtered view.
+POST {{baseUrl}}/v1/admin/jobs/delete-matching
+Content-Type: application/json
+
+{
+  "tenant_id": "tenant-default",
+  "provider": "runpod",
+  "status": "FAILED"
+}
+
+###
+
+# 18.11 List Orphan Artifact Prefixes For Tenant
+GET {{baseUrl}}/v1/admin/tenants/tenant-default/artifacts/orphans
+
+###
+
+# 18.12 Purge Orphan Artifact Prefixes For Tenant
+POST {{baseUrl}}/v1/admin/tenants/tenant-default/artifacts/orphans/purge
+
+###
+
 ### ==============================================================================
 ### USE CASE 19: Cross-Provider Same-Job Cold/Warm/Load Comparison
 ### Trigger identical jobs across providers, then use recommend-options picks.
@@ -2267,6 +2322,118 @@ Authorization: Bearer {{apiKey}}
   "model_id": "meta-llama/Llama-3-8B-Instruct",
   "prompt_tokens": 128,
   "max_new_tokens": 64
+}
+
+###
+
+
+### ==============================================================================
+### USE CASE 20: Jobs Submit Placement Metadata (dashboard follow-up / TC-97)
+### Routing still uses routing_preference; placement/bid/forecast stored in parameters
+### ==============================================================================
+
+# 20.1 List GPU catalog rows used by Submit Job placement picker
+GET {{baseUrl}}/v1/finops/gpu-pricing
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# 20.2 Submit job with placement forecast metadata (UI-first; does not provision spot bid)
+# @name submitPlacementMetaJob
+POST {{baseUrl}}/v1/jobs
+Content-Type: application/json
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+{
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "routing_preference": "cloud/runpod",
+  "priority": 5,
+  "max_retries": 3,
+  "input": {
+    "prompt": "What are the most popular dishes in Spain?",
+    "parameters": {
+      "weights": "production",
+      "engine": "torch-compile",
+      "device": "cuda",
+      "temperature": 0.7,
+      "max_new_tokens": 128,
+      "allow_auto_upgrade": true,
+      "use_torchscript": false,
+      "width": 1024,
+      "height": 1024,
+      "num_inference_steps": 4,
+      "guidance_scale": 0,
+      "fps": 24,
+      "duration_seconds": 3,
+      "placement": {
+        "provider": "runpod",
+        "pricingModel": "spot_bid",
+        "hardwareSkuId": "nvidia-rtx-4090",
+        "hardwareDisplayName": "RTX 4090 (24 GB)",
+        "bidUsdPerHour": 0.34,
+        "bidMode": "recommended",
+        "tokensPerSec": 85,
+        "forecastedExecutionMs": 1586,
+        "forecastedCostUsd": 0.00015,
+        "interruptionRiskTier": "<5%",
+        "noticeWindowLabel": "2m grace notice",
+        "rateEvidence": "provider-reported",
+        "throughputEvidence": "estimated"
+      }
+    }
+  },
+  "expires_in_seconds": 3600
+}
+
+###
+
+### ==============================================================================
+### USE CASE: Local Hugging Face model cache inventory & ensure/download
+### ==============================================================================
+
+# List cache status for popular catalog models
+GET {{baseUrl}}/v1/models/cache
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# List cache status for selected models
+GET {{baseUrl}}/v1/models/cache?models=TinyLlama/TinyLlama-1.1B-Chat-v1.0,Wan-AI/Wan2.1-T2V-1.3B
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# Start (or join) a Hub download for a missing open-weight model
+POST {{baseUrl}}/v1/models/cache/ensure
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model_id": "Wan-AI/Wan2.1-T2V-1.3B"
+}
+
+###
+
+# Poll download/cache status for one model
+GET {{baseUrl}}/v1/models/cache/status?model_id=Wan-AI/Wan2.1-T2V-1.3B
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+
+###
+
+# Cancel an in-flight Hub download and purge incomplete blobs
+POST {{baseUrl}}/v1/models/cache/cancel
+x-tenant-id: {{tenantId}}
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "model_id": "Lightricks/LTX-Video"
 }
 
 ###
