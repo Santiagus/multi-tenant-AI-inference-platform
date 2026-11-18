@@ -45,7 +45,7 @@ function resolveJobInputFields(job: Job): {
   };
 }
 
-/** Derive mock vs real inference from worker metadata (or explicit mock routing). */
+/** Derive mock vs real inference from worker metadata, then request intent. */
 function resolveJobInferenceMode(job: Job): {
   inference_mode: 'mock' | 'real' | null;
   is_mocked: boolean | null;
@@ -54,6 +54,12 @@ function resolveJobInferenceMode(job: Job): {
   const metadata = (
     (payload.metadata as Record<string, unknown> | undefined) ?? payload
   ) as Record<string, unknown>;
+  const input = (job.inputPayload ?? {}) as Record<string, unknown>;
+  const nestedParams =
+    input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters)
+      ? (input.parameters as Record<string, unknown>)
+      : {};
+  const requestParams = { ...nestedParams };
 
   if (typeof metadata.is_mocked === 'boolean') {
     return {
@@ -78,10 +84,35 @@ function resolveJobInferenceMode(job: Job): {
   if (metadata.production_weights === true || metadata.weights === 'production') {
     return { inference_mode: 'real', is_mocked: false };
   }
+  if (requestParams.weights === 'production' || requestParams.use_production_weights === true) {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+  if (
+    requestParams.weights === 'synthetic' ||
+    requestParams.weights === 'mock' ||
+    requestParams.weights === 'reference'
+  ) {
+    return { inference_mode: 'mock', is_mocked: true };
+  }
 
   const telemetry = (metadata.telemetry as Record<string, unknown> | undefined) ?? {};
   const vramPeak = Number(telemetry.vram_peak_mb ?? metadata.vram_peak_mb ?? 0);
   if (vramPeak > 64 && (job.durationMs ?? 0) > 100) {
+    return { inference_mode: 'real', is_mocked: false };
+  }
+
+  // Explicit non-mock routing implies real intent (FAILED/CANCELLED often lack worker metadata).
+  const routing = String(job.routingPreference || '').toLowerCase();
+  if (
+    routing.startsWith('local') ||
+    routing.startsWith('cloud') ||
+    routing === 'runpod' ||
+    routing === 'bedrock' ||
+    routing === 'sagemaker' ||
+    routing === 'cost_optimized' ||
+    routing === 'low_latency' ||
+    routing === 'local_first'
+  ) {
     return { inference_mode: 'real', is_mocked: false };
   }
 
@@ -142,6 +173,11 @@ const UploadUrlSchema = z.object({
 
 const SubmitJobSchema = z.object({
   model_id: z.string().min(1, 'model_id is required'),
+  /**
+   * Top-level prompt alias (bench harnesses / curl). Preferred nested form is
+   * `input.prompt` (dashboard Submit Job). When both are set, `input.prompt` wins.
+   */
+  prompt: z.string().optional(),
   routing_preference: z
     .enum([
       'auto',
@@ -269,11 +305,17 @@ export const jobRoutes: FastifyPluginAsync<JobRoutesOptions> = async (fastify, o
       ...(((body.input as any)?.parameters as Record<string, unknown>) || {}),
     };
 
+    const nestedPrompt =
+      typeof body.input?.prompt === 'string' ? body.input.prompt : undefined;
+    const topLevelPrompt = typeof body.prompt === 'string' ? body.prompt : undefined;
+    // Nested input.prompt (dashboard) wins; top-level prompt is a harness/curl alias.
+    const resolvedPrompt = nestedPrompt ?? topLevelPrompt ?? '';
+
     const resolvedInput = body.input_uri
       ? body.input
       : {
-          prompt: '',
           ...(body.input || {}),
+          prompt: resolvedPrompt,
           parameters: mergedParameters,
         };
 

@@ -72,6 +72,47 @@ describe('Job Routes & Lifecycle Integration', () => {
 
     // Verify queue received message
     assert.equal(queueClient.getQueueLength(), 1);
+
+    // Prompt must be exposed on GET for job detail / DLQ inspection.
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${body.job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const got = JSON.parse(getRes.body);
+    assert.equal(got.prompt, 'What is distributed systems consensus?');
+    assert.equal(got.input?.prompt, 'What is distributed systems consensus?');
+    await app.close();
+  });
+
+  test('POST /v1/jobs accepts top-level prompt alias used by bench harnesses', async () => {
+    const { app } = createTestApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: { 'x-tenant-id': 'tenant-acme' },
+      payload: {
+        model_id: 'Lightricks/LTX-Video',
+        routing_preference: 'local/gpu',
+        prompt: 'A blue hatchback on a quiet coastal road at golden hour.',
+        parameters: { width: 544, height: 320, num_inference_steps: 12 },
+      },
+    });
+    assert.equal(response.statusCode, 202);
+    const created = JSON.parse(response.body);
+
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/v1/jobs/${created.job_id}`,
+      headers: { 'x-tenant-id': 'tenant-acme' },
+    });
+    assert.equal(getRes.statusCode, 200);
+    const got = JSON.parse(getRes.body);
+    assert.equal(got.prompt, 'A blue hatchback on a quiet coastal road at golden hour.');
+    assert.equal(got.input?.prompt, 'A blue hatchback on a quiet coastal road at golden hour.');
+    assert.equal(got.parameters?.width, 544);
     await app.close();
   });
 
